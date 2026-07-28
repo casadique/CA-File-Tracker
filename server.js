@@ -1,54 +1,53 @@
-const http = require("http");
-const fs = require("fs");
+require("dotenv").config();
+
 const path = require("path");
+const express = require("express");
+const helmet = require("helmet");
+const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 
-const PORT = process.env.PORT || 3000;
-const ROOT = __dirname;
+const { env } = require("./src/config/env");
+const apiRoutes = require("./src/routes");
+const { errorHandler, notFoundHandler } = require("./src/middleware/error");
 
-const mimeTypes = {
-  ".html": "text/html; charset=UTF-8",
-  ".css": "text/css; charset=UTF-8",
-  ".js": "application/javascript; charset=UTF-8",
-  ".json": "application/json; charset=UTF-8",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-};
+const app = express();
+const publicRoot = __dirname;
 
-function safeFilePath(requestUrl) {
-  const cleanUrl = decodeURIComponent((requestUrl || "/").split("?")[0]);
-  const requested = cleanUrl === "/" ? "CA File Tracker.html" : cleanUrl.replace(/^\/+/, "");
-  const resolved = path.resolve(ROOT, requested);
-  return resolved.startsWith(ROOT) ? resolved : null;
-}
+app.set("trust proxy", 1);
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+app.use(cors({
+  origin: env.corsOrigin,
+  credentials: true,
+}));
+app.use(rateLimit({
+  windowMs: env.rateLimitWindowMs,
+  max: env.rateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+}));
+app.use(express.json({ limit: "30mb" }));
+app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
-const server = http.createServer((req, res) => {
-  const filePath = safeFilePath(req.url);
-  if (!filePath) {
-    res.writeHead(403, { "Content-Type": "text/plain; charset=UTF-8" });
-    res.end("Forbidden");
-    return;
-  }
+app.use("/api", apiRoutes);
+app.use(["/src", "/database", "/tools", "/Backups", "/data"], (_req, res) => {
+  res.status(404).send("Not found");
+});
+app.use(express.static(publicRoot, {
+  extensions: ["html"],
+  dotfiles: "deny",
+  maxAge: env.isProduction ? "10m" : 0,
+}));
 
-  fs.readFile(filePath, (error, content) => {
-    if (error) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=UTF-8" });
-      res.end("File not found");
-      return;
-    }
-
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
-      "Content-Type": mimeTypes[ext] || "application/octet-stream",
-      "Cache-Control": "no-cache",
-    });
-    res.end(content);
-  });
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(publicRoot, "index.html"));
 });
 
-server.listen(PORT, () => {
-  console.log(`CA File Tracker running on port ${PORT}`);
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+app.listen(env.port, () => {
+  console.log(`CA File Tracker running on port ${env.port}`);
 });
