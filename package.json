@@ -1,13 +1,28 @@
 {
   "name": "ca-file-tracker",
-  "version": "1.0.0",
-  "description": "CA File Tracker web app served with Node.js for Hostinger deployment",
+  "version": "2.0.0",
+  "description": "Responsive single-page CA File Tracker with Express and Supabase",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "build": "npm install",
+    "start": "node server.js",
+    "dev": "node server.js",
+    "import:backup": "node tools/import-backup-to-supabase.js data/site-data.json"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "chart.js": "^4.4.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "multer": "^1.4.5-lts.1",
+    "pdfkit": "^0.15.0",
+    "xlsx": "^0.18.5"
   },
   "private": true
 }
