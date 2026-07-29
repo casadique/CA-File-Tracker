@@ -1,0 +1,8927 @@
+const STORAGE_KEY = "ma-ca-document-tracker-v1";
+const TAB_SESSION_KEY = `${STORAGE_KEY}-tab-session`;
+const SYNC_EVENT_KEY = `${STORAGE_KEY}-sync-event`;
+const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
+const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
+const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
+const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
+const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
+const COMPLETED_FILES_CHECKED_VERSION = "completed-files-checked-by-chindu-2026-07-14";
+const ACTIVE_FILE_DATES_CLEAR_VERSION = "active-file-dates-cleared-2026-07-14";
+const MASTER_LIST_RESET_VERSION = "approved-master-users-2026-07-13";
+const MS_DAY = 86400000;
+
+const stages = [
+  "Received",
+  "Allotted",
+  "WIP",
+  "Work Done",
+  "On Hold",
+  "Client Pending",
+  "Approval Pending",
+  "Approved",
+  "Completed",
+  "Correction Required",
+  "Billed",
+];
+
+const staff = sortByName([
+  userAccount("CA Sadique", "casadique@gmail.com", "Admin", "Casadique@233487", "u1", "system"),
+  userAccount("Najmunnisa", "pvnajmunnisa123@gmail.com", "Manager", "Najma@696"),
+  userAccount("Chindu", "craveendran06@gmail.com", "Manager", "Chindu#357"),
+  userAccount("Abhinandana", "abhinandanakmadhu@gmail.com", "Staff", "Abhi@369"),
+  userAccount("Althaf", "althafmk2210@gmail.com", "Staff Manager", "Althaf@2210"),
+  userAccount("Anusree", "anusreekvmathil@gmail.com", "Staff Manager", "Anusree@741"),
+  userAccount("Arya", "aryatv142001@gmail.com", "Staff", "Arya@001"),
+  userAccount("Dheeraj", "dheerajvv11@gmail.com", "Staff", "Dheeraj@11"),
+  userAccount("Mirsab", "abdulkareemc796@gmail.com", "Staff", "Mirsab@796"),
+  userAccount("Naveen", "naveenvv001@gmail.com", "Staff", "Naveen@001"),
+  userAccount("Nisha", "nishagireesh986@gmail.com", "Staff Manager", "Nisha@986"),
+  userAccount("Rabiyath", "ckrabiyath@gmail.com", "Staff", "Rabiyath@789"),
+  userAccount("Rasha", "rashamp7@gmail.com", "Staff", "Rasha@007"),
+  userAccount("Rizwana", "rizwanashir06@gmail.com", "Staff Manager", "Rizwana@06"),
+  userAccount("Shada", "shadapp004@gmail.com", "Staff", "Shada@004"),
+  userAccount("Shadiya", "shadiyasadiq7@gmail.com", "Staff", "Shadiya@007"),
+  userAccount("Shurafa", "shurafasameer00@gmail.com", "Staff", "Shurafa@00"),
+  userAccount("Sidharth", "sidharthkorom@gmail.com", "Staff", "Sidharth@456"),
+  userAccount("Sneha", "snehasantosh1952002@gmail.com", "Staff", "Sneha@002"),
+]);
+
+const defaultServices = sortList([
+  "12A/80G Registration",
+  "Accounts Preparation",
+  "Accounts Review",
+  "Annual Compliance",
+  "Bookkeeping",
+  "Certificate- Others",
+  "Company Incorporation",
+  "Deed Drafting",
+  "DSC",
+  "ESI/EPF Registration",
+  "ESI/EPF Return Filing",
+  "Feasibility Studies",
+  "GST Audit",
+  "GST Notice",
+  "GSTR Filing",
+  "IE Code",
+  "Independent Audit",
+  "IT Notice",
+  "ITR Filing",
+  "KGST Audit",
+  "LLP Incorporation",
+  "NSS Certification",
+  "PAN Application",
+  "Project Report",
+  "Share Transfer",
+  "Statutory Audit",
+  "TAN Application",
+  "Tax Audit",
+  "TDS/TCS Returns",
+  "Trade Mark",
+  "Utilization Certificate",
+]);
+
+const defaultCareOfList = sortList([
+  "Bin",
+  "Bygesh",
+  "CA Sadique",
+  "Direct",
+  "Ikey",
+  "Janeesh",
+  "Khidma",
+  "Lakshman",
+  "Mariyama",
+  "Nitheesh",
+  "Rafeeq",
+  "Rajesh Armi",
+  "Rajesh Swift",
+  "Ravi",
+  "Rejin",
+  "Roy",
+  "Shaz",
+  "Staff",
+  "Taxmate",
+  "Valsala",
+  "Viswan",
+]);
+
+const defaultFyList = ["2024-25", "2025-26", "2026-27", "2027-28", "NA"];
+
+const modes = ["Whatsapp", "Physical", "Email"];
+const approvedStaffNames = new Set(staff.map((user) => user.name.toLowerCase()));
+const approvedServices = new Set(defaultServices.map((item) => item.toLowerCase()));
+const approvedCareOfNames = new Set(defaultCareOfList.map((item) => item.toLowerCase()));
+const essentialTeamUserEmails = new Set([
+  "casadique@gmail.com",
+  "anusreekvmathil@gmail.com",
+  "pvnajmunnisa123@gmail.com",
+  "craveendran06@gmail.com",
+]);
+const essentialTeamUserNames = new Set(["ca sadique", "sadique", "anusree", "najmunnisa", "najma", "chindu"]);
+
+const dummyFileNames = new Set([
+  "acme traders",
+  "blue peak foods llp",
+  "crescent infra pvt ltd",
+  "delta medicals",
+  "evergreen exports",
+  "fusion design studio",
+  "galaxy retail mart",
+  "harbour logistics",
+  "iris education trust",
+  "jupiter textiles",
+]);
+
+const forcedNonBilledFileRows = [
+  ["Archana P J - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Adithya. C - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Adithya. M. P - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Gopika N K - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Animol Binoy - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Raihana Cm - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Himatha K - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Nandana P - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Kadeejath Rahna Em - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Bijisha Balakrishnan. K - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["I Key Home Studio Llp", "NA", "ESI/EPF Return Filing"],
+  ["Shyamili K V - Adam & Eve", "NA", "PF Withdrawal"],
+  ["I Key Home Studio Llp", "NA", "TDS/TCS Returns"],
+  ["Adam & Eve Health Solutions Private Limited", "NA", "TDS/TCS Returns"],
+  ["Al Amaan Build Mart Private Limited", "NA", "TDS/TCS Returns"],
+  ["I Key Home Studio", "AAGFI5926B", "GST Notice"],
+  ["Alfiya Vinod - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Bichu Bastian - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Anupama K - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Fathima K - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Kesiya K Sajan - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Parvathi P - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Dhannya K Valsan - Adam & Eve", "NA", "ESI KYC Filing"],
+  ["Sayad Nabeel Shameem M", "FEFPM2859D", "ITR Filing"],
+  ["Zunnun Mandiyan Basheer", "COGPB4228B", "ITR Filing"],
+  ["Thayyib Syed Mohamed", "ASCPT2501M", "ITR Filing"],
+  ["Faizal Mandian", "ABTPF6724E", "ITR Filing"],
+  ["Chokiyatakath Abdul Kareem", "AQMPA0892L", "ITR Filing"],
+  ["Muhammed Kunhi Mandiyan", "BDDPA0382C", "ITR Filing"],
+  ["Niyas Mettammal Puzhakkarayillath", "FBNPP7031R", "ITR Filing"],
+  ["Mohammed Jaseem Mailan Toat Cadavath", "NA", "DIN Activation"],
+  ["Muhammed Nihal Mahamood", "NA", "DIN Activation"],
+  ["Ramya Premrajan", "NA", "DIN Activation"],
+  ["Mohammed Jaseem Mailan Toat Cadavath", "NA", "DSC"],
+];
+
+const forcedNonBilledFileKeys = new Set(forcedNonBilledFileRows.map(([name, pan, service]) => fileMatchKey(name, pan, service)));
+
+const seedFiles = [];
+
+function fileSeed(name, pan, service, receivedOffset, dueOffset, assignedStaff, priority, stageIndexes, billed, remarks) {
+  const now = new Date();
+  const received = new Date(now.getTime() + receivedOffset * MS_DAY);
+  const due = new Date(now.getTime() + dueOffset * MS_DAY);
+  const checked = Object.fromEntries(stages.map((s, i) => [s, stageIndexes.includes(i)]));
+  checked.Billed = billed || checked.Billed;
+  return {
+    id: crypto.randomUUID(),
+    name,
+    pan,
+    serviceType: service,
+    careOf: "Direct",
+    mode: "Whatsapp",
+    fileReceivedDate: dateInput(received),
+    workDone: checked["Work Done"],
+    shared: checked["Approval Pending"],
+    reportPrepared: checked["Work Done"],
+    approved: checked.Approved,
+    filed: checked.Completed,
+    billed: checked.Billed,
+    stages: checked,
+    assignedStaff,
+    workAllotmentDate: dateInput(received),
+    workStartedDate: checked.WIP ? dateInput(received) : "",
+    reAssignedStaff: "",
+    reAssignedDate: "",
+    dueDate: dateInput(due),
+    priority,
+    remarks,
+    attachments: [
+      { id: crypto.randomUUID(), name: `${name.replaceAll(" ", "_")}_working.pdf`, uploadDate: dateInput(received), uploadedBy: assignedStaff },
+    ],
+    lastUpdatedDate: dateInput(new Date(now.getTime() - Math.floor(Math.random() * 5) * MS_DAY)),
+  };
+}
+
+const permissions = {
+  Admin: { edit: true, delete: true, export: true, users: true, invite: true, assign: true, allFiles: true, roles: true },
+  Manager: { edit: true, delete: true, export: true, users: false, invite: false, assign: true, allFiles: true, roles: false },
+  "Staff Manager": { edit: true, delete: false, export: true, users: false, invite: false, assign: false, allFiles: false, roles: false },
+  Staff: { edit: true, delete: false, export: false, users: false, invite: false, assign: false, allFiles: false, roles: false },
+  Guest: { edit: false, delete: false, export: false, users: false, invite: false, assign: false, allFiles: true, roles: false },
+};
+
+const checkingStaffNames = new Set(["nisha", "rizwana", "althaf"]);
+const fileCreatorStaffNames = new Set(["nisha", "anusree"]);
+const notCheckedStaffManagerNames = new Set(["nisha", "rizwana", "althaf"]);
+
+function isRemovedStaff(name) {
+  return ["sadiya", "najuma"].includes((name || "").trim().toLowerCase());
+}
+
+function sortList(items) {
+  return [...new Set(items.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function dedupeByNormalizedText(items) {
+  const map = new Map();
+  (items || []).forEach((item) => {
+    const text = String(item || "").trim().replace(/\s+/g, " ");
+    const key = normalizeDropdownKey(text);
+    if (!key) return;
+    if (!map.has(key) || text.length < map.get(key).length) map.set(key, text);
+  });
+  return sortList([...map.values()]);
+}
+
+function normalizeDropdownKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function sortByName(items) {
+  return [...items].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+}
+
+function properCaseName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").split(" ").map((part) => {
+    if (!part) return "";
+    if (/^ca$/i.test(part)) return "CA";
+    if (/^[a-z]$/i.test(part)) return part.toUpperCase();
+    if (/^[a-z]{2}$/i.test(part) && part === part.toUpperCase()) return part.toUpperCase();
+    return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+  }).join(" ");
+}
+
+function userAccount(name, email, role, password, id = "", source = "team-login") {
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  return {
+    id: id || `user-${cleanEmail.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`,
+    name: properCaseName(name),
+    email: cleanEmail,
+    role,
+    password,
+    source,
+  };
+}
+
+function staffUser(name) {
+  const emailName = name.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+  return {
+    id: `staff-${emailName}`,
+    name,
+    email: `${emailName}@mandaca.in`,
+    role: "Staff",
+    password: "Password@123",
+  };
+}
+
+let state = loadState();
+let editingId = null;
+let activePage = "dashboard";
+let filterTimer = null;
+let remoteSaveTimer = null;
+let lastRemoteSaveSnapshot = "";
+const accessRestoreEmails = new Set();
+let syncChannel = null;
+try {
+  syncChannel = new BroadcastChannel(`${STORAGE_KEY}-channel`);
+  syncChannel.onmessage = () => syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+} catch {
+  syncChannel = null;
+}
+restoreActivePage();
+saveState();
+startAutoBackupScheduler();
+
+window.addEventListener("storage", (event) => {
+  if (event.key === STORAGE_KEY && event.newValue) {
+    syncSharedState(event.newValue, true);
+  }
+  if (event.key === SYNC_EVENT_KEY) {
+    syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+  }
+});
+
+window.addEventListener("focus", () => {
+  syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+});
+
+setInterval(() => {
+  if (state.session?.loggedIn && sessionStorage.getItem(API_MODE_KEY) !== "supabase") {
+    syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+  }
+}, 5000);
+
+function loadState() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) return applyTabSession(normalizeState(JSON.parse(saved)));
+  return applyTabSession(normalizeState({
+    files: seedFiles,
+    services: defaultServices,
+    careOfList: defaultCareOfList,
+    users: staff,
+    invites: [],
+    revokedAccess: [],
+    chatMessages: [],
+    fileNotifications: [],
+    visitors: [],
+    expenses: [],
+    otherCashCollections: [],
+    openingBalances: [],
+    otherCashCollectionSources: ["CA Sadique"],
+    expenseItems: ["Office Expense", "Travelling", "Printing & Stationery", "Staff Welfare"],
+    openingCashBalance: 0,
+    deletedVisitorIds: [],
+    auditLog: [],
+    bulkBillingReports: null,
+    currentRole: "Admin",
+    currentUser: "CA Sadique",
+    company: {
+      name: "",
+      address: "",
+    },
+    theme: "professional",
+    readNotifications: [],
+    session: { loggedIn: false },
+    filters: {
+      search: "",
+      client: "",
+      pan: "",
+      staff: "",
+      service: "",
+      workflow: "",
+      due: "",
+      priority: "",
+      status: "",
+      billing: "",
+      overdue: "",
+      pendingApproval: "",
+      listView: "",
+      dashboardKind: "",
+      fromDashboard: "",
+      reportFrom: "",
+      reportTo: "",
+      fileFrom: "",
+      fileTo: "",
+      staffPerformanceFrom: "",
+      staffPerformanceTo: "",
+      expenseTab: "collections",
+      expenseFrom: "",
+      expenseTo: "",
+      expenseParticulars: "",
+      expenseName: "",
+      expenseMode: "",
+      expensePaidTo: "",
+      expenseVoucher: "",
+      cashFrom: "",
+      cashTo: "",
+      cashParticulars: "",
+      cashMode: "",
+      cashReceivedFrom: "",
+      cashVoucher: "",
+      balanceFrom: "",
+      balanceTo: "",
+    },
+  }));
+}
+
+function normalizeState(appState) {
+  const oldToNewStaff = {
+    "CA": "CA Sadique",
+    "Chindu Raveendran": "Chindu",
+    "Abhinandana K Madhu": "Abhinandana",
+    "Althaf M K": "Althaf",
+    "Anusree KV": "Anusree",
+    "Naveen VV": "Naveen",
+    "Rabiyath CK": "Rabiyath",
+    "Rasha MP": "Rasha",
+    "Rizwana Shirin K A": "Rizwana",
+    "Shada PP": "Shada",
+    "Shurafa Sameer": "Shurafa",
+    "Sidharth V K": "Sidharth",
+    "Meera Anand": "CA Sadique",
+    "Nikhil Batra": "Sidharth",
+    "Riya Sharma": "Nisha",
+    "Amit Jain": "Arya",
+    "Farah Khan": "Anusree",
+    "Office Viewer": "Najmunnisa",
+  };
+  const shouldResetMasterLists = appState.masterListResetVersion !== MASTER_LIST_RESET_VERSION;
+  let savedUsers = (appState.users || []).filter((user) => !isRemovedStaff(user.name));
+  if (shouldResetMasterLists) {
+    savedUsers = savedUsers.filter((user) => approvedStaffNames.has(String(user.name || "").toLowerCase()));
+    appState.invites = (appState.invites || []).filter((invite) => approvedStaffNames.has(String(invite.name || "").toLowerCase()));
+    appState.services = defaultServices;
+    appState.careOfList = defaultCareOfList;
+    appState.masterListResetVersion = MASTER_LIST_RESET_VERSION;
+  }
+  const mergedUsers = [...staff];
+  savedUsers.forEach((saved) => {
+    const existing = mergedUsers.find((user) => user.name === saved.name || user.email === saved.email);
+    if (existing) {
+      existing.email = saved.email || existing.email;
+      existing.role = saved.role === "Viewer" ? "Guest" : (saved.role || existing.role);
+      existing.password = saved.password || existing.password || "Password@123";
+    } else {
+      mergedUsers.push({
+        ...saved,
+        id: saved.id || crypto.randomUUID(),
+        role: saved.role === "Viewer" ? "Guest" : (saved.role || "Staff"),
+        password: saved.password || "Password@123",
+      });
+    }
+  });
+  mergedUsers.forEach((user) => {
+    user.name = oldToNewStaff[user.name] || user.name;
+  });
+  const oldAdmin = mergedUsers.find((user) => user.name === "CA");
+  if (oldAdmin) oldAdmin.name = "CA Sadique";
+  const adminUser = mergedUsers.find((user) => user.name === "CA Sadique") || mergedUsers[0];
+  adminUser.email = "casadique@gmail.com";
+  adminUser.password = "Casadique@233487";
+  adminUser.role = "Admin";
+  const chinduUser = mergedUsers.find((user) =>
+    user.name === "Chindu" ||
+    user.name === "Chindu Raveendran" ||
+    normalizeEmail(user.email) === "craveendran06@gmail.com"
+  );
+  if (chinduUser) {
+    chinduUser.name = "Chindu";
+    chinduUser.email = "craveendran06@gmail.com";
+    chinduUser.role = "Manager";
+    chinduUser.password = "Chindu#357";
+  } else {
+    mergedUsers.push(userAccount("Chindu", "craveendran06@gmail.com", "Manager", "Chindu#357"));
+  }
+  staff.forEach((masterUser) => {
+    const existing = mergedUsers.find((user) =>
+      normalizeEmail(user.email) === normalizeEmail(masterUser.email) ||
+      sameStaffName(user.name, masterUser.name)
+    );
+    if (existing) {
+      existing.name = masterUser.name;
+      existing.email = masterUser.email;
+      existing.role = masterUser.role;
+      existing.password = masterUser.password;
+      existing.id = existing.id || masterUser.id;
+      existing.source = existing.source || masterUser.source;
+    } else {
+      mergedUsers.push({ ...masterUser });
+    }
+  });
+  for (let i = mergedUsers.length - 1; i >= 0; i -= 1) {
+    if (isRemovedStaff(mergedUsers[i].name)) mergedUsers.splice(i, 1);
+  }
+  appState.users = sortByName(mergedUsers.map((user) => ({ ...user, name: properCaseName(user.name) })));
+  restoreMasterTeamUsers(appState);
+  appState.services = sortList([...(appState.services || []), ...defaultServices]);
+  appState.careOfList = sortList([...(appState.careOfList || []), ...defaultCareOfList]);
+  appState.currentUser = properCaseName(oldToNewStaff[appState.currentUser] || appState.currentUser || "CA Sadique");
+  if (!appState.users.some((user) => user.name === appState.currentUser)) appState.currentUser = "CA Sadique";
+  if (appState.currentRole === "Viewer") appState.currentRole = "Guest";
+  appState.currentRole = appState.currentRole || "Admin";
+  appState.company = {
+    name: appState.company?.name || "",
+    address: appState.company?.address || "",
+  };
+  appState.theme = "professional";
+  appState.revokedAccess = appState.revokedAccess || [];
+  appState.deletedFileIds = [...new Set(appState.deletedFileIds || [])];
+  appState.deletedVisitorIds = [...new Set(appState.deletedVisitorIds || [])];
+  const deletedVisitorIds = new Set(appState.deletedVisitorIds || []);
+  appState.visitors = (appState.visitors || [])
+    .filter((visitor) => visitor?.id && !deletedVisitorIds.has(visitor.id))
+    .map((visitor) => ({
+      ...visitor,
+      date: normalizeImportDate(visitor.date) || todayDate(),
+      visitorName: visitor.visitorName || visitor.name || "",
+      purpose: visitor.purpose || "",
+      metWhom: visitor.metWhom || "",
+      followUp: visitor.followUp || visitor.followup || visitor.Followup || visitor["Follow-up"] || "",
+      enteredBy: visitor.enteredBy || appState.currentUser || "CA Sadique",
+      createdAt: Number(visitor.createdAt || 0) || Date.now(),
+      updatedAt: Number(visitor.updatedAt || 0) || Date.now(),
+    }));
+  const revokedEmails = new Set((appState.revokedAccess || []).map((item) => String(item.email || item).toLowerCase()));
+  const revokedIds = new Set((appState.revokedAccess || []).map((item) => String(item.id || "").toLowerCase()).filter(Boolean));
+  for (let i = mergedUsers.length - 1; i >= 0; i -= 1) {
+    const user = mergedUsers[i];
+    if (revokedEmails.has(String(user.email || "").toLowerCase()) || revokedIds.has(String(user.id || "").toLowerCase())) {
+      mergedUsers.splice(i, 1);
+    }
+  }
+  const seenUsers = new Set();
+  const uniqueUsers = [];
+  mergedUsers.forEach((user) => {
+    const key = normalizeEmail(user.email) || normalizePersonName(user.name);
+    if (!key || seenUsers.has(key)) return;
+    seenUsers.add(key);
+    uniqueUsers.push(user);
+  });
+  mergedUsers.splice(0, mergedUsers.length, ...uniqueUsers);
+  appState.users = sortByName(mergedUsers.map((user) => ({ ...user, name: properCaseName(user.name) })));
+  restoreMasterTeamUsers(appState);
+  appState.readNotifications = appState.readNotifications || [];
+  appState.readChatMessages = appState.readChatMessages || [];
+  appState.auditLog = appState.auditLog || [];
+  appState.expenses = (appState.expenses || []).map((item) => ({
+    ...item,
+    id: item.id || crypto.randomUUID(),
+    date: normalizeImportDate(item.date) || todayDate(),
+    particulars: item.particulars || item.expenseItem || "",
+    voucherNo: item.voucherNo || item.voucher || "",
+    amount: Number(item.amount || 0) || 0,
+    mode: item.mode || "Cash",
+    paidTo: item.paidTo || "",
+    remarks: item.remarks || "",
+    attachmentName: item.attachmentName || "",
+    createdAt: Number(item.createdAt || 0) || Date.now(),
+    updatedAt: Number(item.updatedAt || 0) || Date.now(),
+  }));
+  appState.otherCashCollections = (appState.otherCashCollections || []).map((item) => ({
+    ...item,
+    id: item.id || crypto.randomUUID(),
+    date: normalizeImportDate(item.date) || todayDate(),
+    particulars: item.particulars || "",
+    voucherNo: item.voucherNo || item.referenceNo || "",
+    amount: Number(item.amount || 0) || 0,
+    mode: item.mode || "Cash",
+    receivedFrom: properCaseName(item.receivedFrom || ""),
+    remarks: item.remarks || "",
+    attachmentName: item.attachmentName || "",
+    createdAt: Number(item.createdAt || 0) || Date.now(),
+    updatedAt: Number(item.updatedAt || 0) || Date.now(),
+  }));
+  const staffSourceNames = new Set((appState.users || []).map((user) => normalizePersonName(user.name)).filter(Boolean));
+  appState.otherCashCollectionSources = sortList([
+    "CA Sadique",
+    ...(appState.otherCashCollectionSources || []),
+    ...(appState.otherCashCollections || []).map((item) => item.receivedFrom),
+  ].map(properCaseName).filter((name) => name === "CA Sadique" || !staffSourceNames.has(normalizePersonName(name))));
+  appState.openingBalances = (appState.openingBalances || []).map((item) => ({
+    ...item,
+    id: item.id || crypto.randomUUID(),
+    particulars: item.particulars || "",
+    date: normalizeImportDate(item.date) || todayDate(),
+    amount: Number(item.amount || 0) || 0,
+    createdAt: Number(item.createdAt || 0) || Date.now(),
+  }));
+  appState.expenseItems = sortList([...(appState.expenseItems || []), "Office Expense", "Travelling", "Printing & Stationery", "Staff Welfare"]);
+  appState.openingCashBalance = Number(appState.openingCashBalance || 0) || 0;
+  appState.bulkBillingReports = appState.bulkBillingReports || null;
+  appState.bulkFeeReceivedReports = appState.bulkFeeReceivedReports || null;
+  appState.fileNotifications = (appState.fileNotifications || []).map((item) => ({
+    ...item,
+    targetUserId: item.targetUserId || "",
+    targetUserEmail: item.targetUserEmail || "",
+    targetUserName: item.targetUserName || "",
+  }));
+  appState.chatMessages = (appState.chatMessages || []).map((message) => {
+    const sender = findUserByStaffIdentity(message.userId, mergedUsers)
+      || findUserByStaffIdentity(message.userEmail, mergedUsers)
+      || findUserByStaffIdentity(message.user, mergedUsers);
+    const target = findUserByStaffIdentity(message.targetUserId, mergedUsers)
+      || findUserByStaffIdentity(message.targetUserEmail, mergedUsers)
+      || findUserByStaffIdentity(message.targetUserName, mergedUsers);
+    return {
+      ...message,
+      targetType: message.targetType || "group",
+      attachments: message.attachments || [],
+      userId: message.userId || sender?.id || "",
+      user: message.user || sender?.name || "Team Member",
+      userEmail: message.userEmail || sender?.email || "",
+      targetUserId: message.targetUserId || target?.id || "",
+      targetUserName: message.targetUserName || target?.name || "",
+      targetUserEmail: message.targetUserEmail || target?.email || "",
+    };
+  });
+  appState.session = appState.session || { loggedIn: false };
+  appState.filters = {
+    ...(appState.filters || {}),
+    staffPerformanceFrom: appState.filters?.staffPerformanceFrom || "",
+    staffPerformanceTo: appState.filters?.staffPerformanceTo || "",
+    expenseTab: appState.filters?.expenseTab || "collections",
+    expenseFrom: appState.filters?.expenseFrom || "",
+    expenseTo: appState.filters?.expenseTo || "",
+    expenseParticulars: appState.filters?.expenseParticulars || "",
+    expenseName: appState.filters?.expenseName || "",
+    expenseMode: appState.filters?.expenseMode || "",
+    expensePaidTo: appState.filters?.expensePaidTo || "",
+    expenseVoucher: appState.filters?.expenseVoucher || "",
+    cashFrom: appState.filters?.cashFrom || "",
+    cashTo: appState.filters?.cashTo || "",
+    cashParticulars: appState.filters?.cashParticulars || "",
+    cashMode: appState.filters?.cashMode || "",
+    cashReceivedFrom: appState.filters?.cashReceivedFrom || "",
+    cashVoucher: appState.filters?.cashVoucher || "",
+    balanceFrom: appState.filters?.balanceFrom || "",
+    balanceTo: appState.filters?.balanceTo || "",
+  };
+  if (appState.fileDataResetVersion !== FILE_DATA_RESET_VERSION) {
+    appState.files = [];
+    appState.fileDataResetVersion = FILE_DATA_RESET_VERSION;
+  }
+  if (appState.activeFileDataResetVersion !== ACTIVE_FILE_DATA_RESET_VERSION) {
+    const activeFiles = (appState.files || []).filter(isActiveFileRecord);
+    const activeFileIds = activeFiles.map((file) => file.id).filter(Boolean);
+    appState.deletedFileIds = [...new Set([...(appState.deletedFileIds || []), ...activeFileIds])];
+    appState.files = (appState.files || []).filter((file) => !isActiveFileRecord(file));
+    appState.activeFileDataResetVersion = ACTIVE_FILE_DATA_RESET_VERSION;
+  }
+  const deletedFileIds = new Set(appState.deletedFileIds || []);
+  const shouldMarkCompletedChecked = false;
+  appState.files = (appState.files || seedFiles)
+    .filter((file) => !deletedFileIds.has(file.id))
+    .filter((file) => !dummyFileNames.has(String(file.name || "").trim().toLowerCase()))
+    .map((file, index) => {
+    const rawAssignedStaff = oldToNewStaff[file.assignedStaff] || file.assignedStaff || staff[index % staff.length].name;
+    const rawReAssignedStaff = oldToNewStaff[file.reAssignedStaff] || file.reAssignedStaff || "";
+    const assignedStaff = isRemovedStaff(rawAssignedStaff) ? "Not Assigned" : canonicalStaffName(rawAssignedStaff, "Not Assigned", mergedUsers);
+    const reAssignedStaff = isRemovedStaff(rawReAssignedStaff) ? "" : canonicalStaffName(rawReAssignedStaff, "", mergedUsers);
+    const assignedUser = findUserByStaffIdentity(assignedStaff, mergedUsers) || {};
+    const reAssignedUser = findUserByStaffIdentity(reAssignedStaff, mergedUsers) || {};
+    const normalizedStages = normalizeStages(file);
+    const shouldSetChecked = shouldMarkCompletedChecked && (file.filed || normalizedStages.Completed);
+    const fileReceivedDate = normalizeImportDate(file.fileReceivedDate);
+    const workAllotmentDate = normalizeImportDate(file.workAllotmentDate) || fileReceivedDate;
+    const workStartedDate = normalizeImportDate(file.workStartedDate);
+    const reAssignedDate = normalizeImportDate(file.reAssignedDate);
+    const dueDate = normalizeImportDate(file.dueDate);
+    const billedDate = normalizeImportDate(file.billedDate);
+    const feeReceivedDate = normalizeImportDate(file.feeReceivedDate);
+    const checkedDate = normalizeImportDate(file.checkedDate);
+    const lastUpdatedDate = normalizeImportDate(file.lastUpdatedDate);
+    return {
+      ...file,
+      careOf: file.careOf || "Direct",
+      fy: file.fy || file.financialYear || "NA",
+      mode: modes.includes(file.mode) ? file.mode : "Whatsapp",
+      fileReceivedDate,
+      assignedStaff,
+      assignedStaffId: assignedUser.id || "",
+      assignedStaffEmail: assignedUser.email || "",
+      workAllotmentDate,
+      workStartedDate,
+      reAssignedStaff,
+      reAssignedStaffId: reAssignedUser.id || "",
+      reAssignedStaffEmail: reAssignedUser.email || "",
+      reAssignedDate,
+      dueDate,
+      billed: Boolean(file.billed),
+      billedDate,
+      billingType: ["Billable", "Non-Billable"].includes(file.billingType) ? file.billingType : "",
+      feeReceived: Boolean(file.feeReceived),
+      feeReceivedDate,
+      feeReceivedAmount: file.feeReceivedAmount || "",
+      receivedBy: properCaseName(file.receivedBy || ""),
+      receivedById: file.receivedById || "",
+      receivedByEmail: file.receivedByEmail || "",
+      allottedBy: properCaseName(file.allottedBy || ""),
+      allottedById: file.allottedById || "",
+      allottedByEmail: file.allottedByEmail || "",
+      previousAllottedTo: properCaseName(file.previousAllottedTo || ""),
+      completionDate: normalizeImportDate(file.completionDate) || (file.filed || normalizedStages.Completed ? (normalizeImportDate(file.completedDate) || normalizeImportDate(file.lastUpdatedDate) || "") : ""),
+      workDoneBy: properCaseName(file.workDoneBy || ""),
+      workDoneById: file.workDoneById || "",
+      workDoneByEmail: file.workDoneByEmail || "",
+      completedBy: properCaseName(file.completedBy || ""),
+      completedById: file.completedById || "",
+      completedByEmail: file.completedByEmail || "",
+      checkedBy: shouldSetChecked ? "Chindu" : properCaseName(oldToNewStaff[file.checkedBy] || file.checkedBy || ""),
+      checkedDate: shouldSetChecked ? "2026-07-14" : checkedDate,
+      checkingRemarks: file.checkingRemarks || "",
+      correctionRemarks: file.correctionRemarks || "",
+      returnedBy: file.returnedBy || "",
+      returnedDate: normalizeImportDate(file.returnedDate),
+      lastUpdatedDate: lastUpdatedDate || file.lastUpdatedDate || "",
+      updatedAt: file.updatedAt || Date.parse(lastUpdatedDate || file.lastUpdatedDate || "") || 0,
+      stages: normalizedStages,
+    };
+  });
+  if (shouldMarkCompletedChecked) appState.completedFilesCheckedVersion = COMPLETED_FILES_CHECKED_VERSION;
+  appState.invites = (appState.invites || [])
+    .filter((invite) => !["karan@example.com", "pooja@example.com"].includes((invite.email || "").toLowerCase()))
+    .filter((invite) => !isRemovedStaff(invite.name))
+    .filter((invite) => !revokedEmails.has((invite.email || "").toLowerCase()))
+    .map((invite) => ({
+      ...invite,
+      role: invite.role === "Viewer" ? "Guest" : invite.role,
+    }));
+  ensureInviteRecord(appState.invites, mergedUsers.find((user) => user.email.toLowerCase() === "craveendran06@gmail.com"));
+  ensureInviteRecord(appState.invites, mergedUsers.find((user) => user.email.toLowerCase() === "pvnajmunnisa123@gmail.com"));
+  appState.filters = {
+    search: "",
+    client: "",
+    pan: "",
+    staff: "",
+    service: "",
+    careOfFilter: "",
+    workflow: "",
+    due: "",
+    receivedSort: "Oldest First",
+    priority: "",
+    status: "",
+    billing: "",
+    overdue: "",
+    pendingApproval: "",
+    listView: "",
+    dashboardKind: "",
+    fromDashboard: "",
+    reportFrom: "",
+    reportTo: "",
+    fileFrom: "",
+    fileTo: "",
+    staffFileName: "",
+    staffCareOf: "",
+    staffAllottedDate: "",
+    staffDueDate: "",
+    staffPriority: "",
+    visitorDate: "",
+    visitorFrom: "",
+    visitorTo: "",
+    visitorName: "",
+    visitorPurpose: "",
+      visitorMetWhom: "",
+      checkingStatus: "",
+      dailyReportDate: todayDate(),
+    ...(appState.filters || {}),
+  };
+  cleanDropdownMasterData(appState);
+  return refreshFileStaffLinks(appState);
+}
+
+function cleanDropdownMasterData(appState = state) {
+  const before = {
+    services: [...(appState.services || [])],
+    careOfList: [...(appState.careOfList || [])],
+  };
+  const usedServices = dedupeByNormalizedText((appState.files || []).map((file) => file.serviceType));
+  const usedCareOf = dedupeByNormalizedText((appState.files || []).map((file) => file.careOf || "Direct"));
+  appState.services = usedServices.length ? usedServices : dedupeByNormalizedText(appState.services || defaultServices);
+  appState.careOfList = usedCareOf.length ? usedCareOf : dedupeByNormalizedText(appState.careOfList || defaultCareOfList);
+  if (JSON.stringify(before.services) !== JSON.stringify(appState.services) || JSON.stringify(before.careOfList) !== JSON.stringify(appState.careOfList)) {
+    appState.auditLog = [
+      ...(appState.auditLog || []),
+      {
+        id: crypto.randomUUID(),
+        action: "Dropdown cleanup performed",
+        details: {
+          servicesBefore: before.services.length,
+          servicesAfter: appState.services.length,
+          careOfBefore: before.careOfList.length,
+          careOfAfter: appState.careOfList.length,
+          actionTaken: "Unused and duplicate Service Type/C/o dropdown entries removed from master lists only; file records preserved.",
+        },
+        user: appState.currentUser || "System",
+        role: appState.currentRole || "",
+        at: new Date().toISOString(),
+      },
+    ].slice(-1000);
+  }
+}
+
+function saveState(options = {}) {
+  if (!options.skipMerge) mergeLatestSharedStateBeforeSave();
+  refreshFileStaffLinks();
+  saveTabSession();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedStateForStorage(state)));
+  localStorage.setItem(SYNC_EVENT_KEY, String(Date.now()));
+  if (!options.skipRemote) saveStateToApi();
+  if (syncChannel) syncChannel.postMessage({ type: "state-updated", at: Date.now() });
+}
+
+function saveViewState() {
+  saveTabSession();
+}
+
+function apiToken() {
+  return sessionStorage.getItem(API_TOKEN_KEY) || "";
+}
+
+function setApiToken(token) {
+  if (token) sessionStorage.setItem(API_TOKEN_KEY, token);
+  else sessionStorage.removeItem(API_TOKEN_KEY);
+}
+
+async function apiJson(path, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+  const token = apiToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(path, {
+    ...options,
+    headers,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Server request failed.");
+  return payload;
+}
+
+async function saveStateToApi() {
+  if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase") return;
+  const shared = sharedStateForStorage(state);
+  const snapshot = JSON.stringify(shared);
+  if (snapshot === lastRemoteSaveSnapshot) return;
+  clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = setTimeout(async () => {
+    try {
+      await apiJson("/api/state", {
+        method: "PUT",
+        body: JSON.stringify({ state: shared }),
+      });
+      lastRemoteSaveSnapshot = snapshot;
+    } catch (error) {
+      console.warn("Central database save failed", error);
+    }
+  }, 700);
+}
+
+async function saveFileToApi(file) {
+  if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase" || !file?.id) return;
+  try {
+    await apiJson(`/api/files/${encodeURIComponent(file.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ file }),
+    });
+  } catch (error) {
+    console.warn("Central file save failed", error);
+  }
+}
+
+async function loadStateFromApi() {
+  if (!apiToken()) return false;
+  try {
+    const payload = await apiJson("/api/state");
+    if (!payload.state) return false;
+    restoreSharedData(payload.state, "Central data loaded", { targetPage: activePage || "dashboard", skipRemote: true });
+    sessionStorage.setItem(API_MODE_KEY, "supabase");
+    return true;
+  } catch (error) {
+    console.warn("Central database load failed", error);
+    return false;
+  }
+}
+
+function saveAccessState() {
+  restoreEssentialTeamUsers(state);
+  state.revokedAccess = mergeRevokedAccess([], state.revokedAccess || []);
+  state.users = mergeUsers([], state.users || [], state.revokedAccess);
+  state.invites = mergeInvitesByEmail(state.invites || []).filter((invite) => !isRevokedAccess(invite, state.revokedAccess));
+  saveState({ skipMerge: true });
+}
+
+function mergeLatestSharedStateBeforeSave() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const latest = normalizeState(JSON.parse(raw));
+    state.deletedFileIds = [...new Set([...(latest.deletedFileIds || []), ...(state.deletedFileIds || [])])];
+    state.deletedVisitorIds = [...new Set([...(latest.deletedVisitorIds || []), ...(state.deletedVisitorIds || [])])];
+    const deleted = new Set(state.deletedFileIds || []);
+    const deletedVisitors = new Set(state.deletedVisitorIds || []);
+    state.files = mergeFilesByLatestChange(
+      (latest.files || []).filter((file) => !deleted.has(file.id)),
+      (state.files || []).filter((file) => !deleted.has(file.id)),
+    );
+    state.visitors = mergeVisitorsByLatestChange(
+      (latest.visitors || []).filter((visitor) => !deletedVisitors.has(visitor.id)),
+      (state.visitors || []).filter((visitor) => !deletedVisitors.has(visitor.id)),
+    );
+    state.chatMessages = mergeById(latest.chatMessages || [], state.chatMessages || []).slice(-300);
+    state.fileNotifications = mergeById(latest.fileNotifications || [], state.fileNotifications || []).slice(-500);
+    state.auditLog = mergeById(latest.auditLog || [], state.auditLog || []).slice(-1000);
+    state.revokedAccess = mergeRevokedAccess(latest.revokedAccess || [], state.revokedAccess || []);
+    state.users = mergeUsers(latest.users || [], state.users || [], state.revokedAccess);
+    restoreEssentialTeamUsers(state);
+    state.invites = mergeInvitesByEmail([...(latest.invites || []), ...(state.invites || [])]).filter((invite) => !isRevokedAccess(invite, state.revokedAccess));
+    state.services = sortList([...(latest.services || []), ...(state.services || [])]);
+    state.careOfList = sortList([...(latest.careOfList || []), ...(state.careOfList || [])]);
+    state.company = { ...(latest.company || {}), ...(state.company || {}) };
+  } catch {
+    // If stored data cannot be read, continue with the current tab state.
+  }
+}
+
+function mergeById(existingRows, currentRows) {
+  const map = new Map();
+  existingRows.forEach((row) => map.set(row.id || crypto.randomUUID(), row));
+  currentRows.forEach((row) => map.set(row.id || crypto.randomUUID(), row));
+  return [...map.values()];
+}
+
+function mergeInvitesByEmail(rows = []) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = normalizeEmail(row.email) || row.id || crypto.randomUUID();
+    map.set(key, { ...(map.get(key) || {}), ...row, email: normalizeEmail(row.email) });
+  });
+  return [...map.values()];
+}
+
+function mergeRevokedAccess(existingRows, currentRows) {
+  const map = new Map();
+  [...existingRows, ...currentRows].forEach((row) => {
+    const key = String(row.email || row.id || row || crypto.randomUUID()).toLowerCase();
+    map.set(key, typeof row === "string" ? { email: row } : row);
+  });
+  return [...map.values()].filter((row) => !accessRestoreEmails.has(String(row.email || row || "").toLowerCase()));
+}
+
+function isRevokedAccess(item, revokedRows = state.revokedAccess || []) {
+  const email = String(item.email || "").toLowerCase();
+  const name = normalizePersonName(item.name || item);
+  const id = String(item.id || "").toLowerCase();
+  if (essentialTeamUserEmails.has(email) || essentialTeamUserNames.has(name)) return false;
+  return revokedRows.some((row) =>
+    String(row.email || row || "").toLowerCase() === email ||
+    (id && String(row.id || "").toLowerCase() === id)
+  );
+}
+
+function restoreEssentialTeamUsers(appState = state) {
+  const essentials = staff.filter((user) =>
+    essentialTeamUserEmails.has(normalizeEmail(user.email)) ||
+    essentialTeamUserNames.has(normalizePersonName(user.name))
+  );
+  appState.users = appState.users || [];
+  appState.revokedAccess = (appState.revokedAccess || []).filter((item) =>
+    !essentialTeamUserEmails.has(normalizeEmail(item.email || item)) &&
+    !essentialTeamUserNames.has(normalizePersonName(item.name || item))
+  );
+  essentials.forEach((masterUser) => {
+    const existing = appState.users.find((user) =>
+      normalizeEmail(user.email) === normalizeEmail(masterUser.email) ||
+      sameStaffName(user.name, masterUser.name)
+    );
+    if (existing) {
+      existing.name = masterUser.name;
+      existing.email = masterUser.email;
+      existing.role = masterUser.role;
+      existing.password = masterUser.password || existing.password;
+      existing.id = existing.id || masterUser.id;
+      existing.source = existing.source || "team-login";
+    } else {
+      appState.users.push({ ...masterUser });
+    }
+  });
+  appState.users = sortByName(appState.users.map((user) => ({ ...user, name: properCaseName(user.name) })));
+  return appState;
+}
+
+function restoreMasterTeamUsers(appState = state) {
+  appState.users = appState.users || [];
+  staff.forEach((masterUser) => {
+    const existing = appState.users.find((user) =>
+      normalizeEmail(user.email) === normalizeEmail(masterUser.email) ||
+      sameStaffName(user.name, masterUser.name)
+    );
+    if (existing) {
+      existing.name = masterUser.name;
+      existing.email = masterUser.email;
+      existing.role = masterUser.role;
+      existing.password = masterUser.password || existing.password;
+      existing.id = existing.id || masterUser.id;
+      existing.source = existing.source || "team-login";
+    } else {
+      appState.users.push({ ...masterUser });
+    }
+  });
+  restoreEssentialTeamUsers(appState);
+  return appState;
+}
+
+function mergeUsers(existingUsers, currentUsers, revokedRows = []) {
+  const map = new Map();
+  [...existingUsers, ...currentUsers].forEach((user) => {
+    const key = String(user.email || user.id || user.name || crypto.randomUUID()).toLowerCase();
+    map.set(key, { ...(map.get(key) || {}), ...user });
+  });
+  return sortByName([...map.values()].filter((user) => !isRemovedStaff(user.name) && !isRevokedAccess(user, revokedRows)));
+}
+
+function fileChangeTime(file) {
+  return Number(file.updatedAt || 0) || Date.parse(file.lastUpdatedDate || "") || 0;
+}
+
+function mergeFilesByLatestChange(existingFiles, currentFiles) {
+  const map = new Map();
+  existingFiles.forEach((file) => map.set(file.id, file));
+  currentFiles.forEach((file) => {
+    const old = map.get(file.id);
+    if (!old || fileChangeTime(file) >= fileChangeTime(old)) map.set(file.id, file);
+  });
+  return [...map.values()].sort((a, b) => fileChangeTime(b) - fileChangeTime(a));
+}
+
+function visitorChangeTime(visitor) {
+  return Number(visitor.updatedAt || visitor.createdAt || 0) || Date.parse(visitor.date || "") || 0;
+}
+
+function mergeVisitorsByLatestChange(existingVisitors, currentVisitors) {
+  const map = new Map();
+  existingVisitors.forEach((visitor) => map.set(visitor.id, visitor));
+  currentVisitors.forEach((visitor) => {
+    const old = map.get(visitor.id);
+    if (!old || visitorChangeTime(visitor) >= visitorChangeTime(old)) map.set(visitor.id, visitor);
+  });
+  return [...map.values()].sort((a, b) => visitorSortTime(b) - visitorSortTime(a));
+}
+
+function sharedStateForStorage(appState) {
+  const {
+    session,
+    currentUser,
+    currentRole,
+    filters,
+    readNotifications,
+    readChatMessages,
+    ...shared
+  } = appState;
+  return sanitizeSharedState(shared);
+}
+
+function sanitizeSharedState(shared) {
+  return {
+    ...shared,
+    users: (shared.users || []).map(({ password, ...user }) => user),
+    invites: (shared.invites || []).map(({ password, ...invite }) => invite),
+  };
+}
+
+function backupPayload() {
+  const shared = sharedStateForStorage(state);
+  return {
+    app: "CA File Tracker",
+    version: STORAGE_KEY,
+    exportedAt: new Date().toISOString(),
+    exportedBy: state.currentUser || "",
+    backupSummary: backupSummary(shared),
+    includedKeys: Object.keys(shared).sort(),
+    state: shared,
+  };
+}
+
+function backupSummary(appState) {
+  return {
+    files: Array.isArray(appState.files) ? appState.files.length : 0,
+    users: Array.isArray(appState.users) ? appState.users.length : 0,
+    services: Array.isArray(appState.services) ? appState.services.length : 0,
+    careOfList: Array.isArray(appState.careOfList) ? appState.careOfList.length : 0,
+    visitors: Array.isArray(appState.visitors) ? appState.visitors.length : 0,
+    expenses: Array.isArray(appState.expenses) ? appState.expenses.length : 0,
+    otherCashCollections: Array.isArray(appState.otherCashCollections) ? appState.otherCashCollections.length : 0,
+    openingBalances: Array.isArray(appState.openingBalances) ? appState.openingBalances.length : 0,
+    chatMessages: Array.isArray(appState.chatMessages) ? appState.chatMessages.length : 0,
+    fileNotifications: Array.isArray(appState.fileNotifications) ? appState.fileNotifications.length : 0,
+    auditLog: Array.isArray(appState.auditLog) ? appState.auditLog.length : 0,
+    billedFiles: Array.isArray(appState.files) ? appState.files.filter((file) => file.billed).length : 0,
+    completedFiles: Array.isArray(appState.files) ? appState.files.filter((file) => file.filed || file.stages?.Completed).length : 0,
+  };
+}
+
+function downloadJson(name, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${name}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function restoreSharedData(incomingState, message = "Data restored", options = {}) {
+  const currentSession = {
+    session: state.session,
+    currentUser: state.currentUser,
+    currentRole: state.currentRole,
+    filters: state.filters,
+    readNotifications: state.readNotifications,
+    readChatMessages: state.readChatMessages,
+  };
+  state = {
+    ...normalizeState(incomingState),
+    ...currentSession,
+    filters: currentSession.filters,
+    readNotifications: currentSession.readNotifications,
+    readChatMessages: currentSession.readChatMessages,
+  };
+  saveState({ skipMerge: true, skipRemote: Boolean(options.skipRemote) });
+  toast(message);
+  mount();
+  activePage = options.targetPage || "users";
+  renderAll();
+}
+
+async function saveBackupToFolder(reason = "manual") {
+  if (location.protocol === "file:") throw new Error("Folder backup needs the local server.");
+  const payload = { ...backupPayload(), reason };
+  const response = await fetch("/api/backup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "Backup folder save failed.");
+  return result;
+}
+
+async function downloadFullBackup() {
+  if (!canUseBackupPage()) return toast("Only Admin and Manager can create full backups.");
+  const payload = backupPayload();
+  const fileName = `ca-file-tracker-backup-${todayDate()}`;
+  try {
+    const result = await saveBackupToFolder("manual");
+    downloadJson(fileName, payload);
+    toast(`Backup saved in Backups folder and downloaded: ${result.filename}`);
+  } catch (error) {
+    downloadJson(fileName, payload);
+    toast("Backup downloaded. To save directly in the Backups folder, open the app through the local server.");
+  }
+}
+
+function istDateTimeParts(date = new Date()) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date).reduce((map, part) => {
+    map[part.type] = part.value;
+    return map;
+  }, {});
+}
+
+function startAutoBackupScheduler() {
+  const runCheck = async () => {
+    const parts = istDateTimeParts();
+    const istDate = `${parts.year}-${parts.month}-${parts.day}`;
+    if (parts.hour !== "23" || parts.minute !== "59") return;
+    if (localStorage.getItem(AUTO_BACKUP_DONE_KEY) === istDate) return;
+    try {
+      await saveBackupToFolder("auto-2359-ist");
+      localStorage.setItem(AUTO_BACKUP_DONE_KEY, istDate);
+      toast("Daily auto backup saved in Backups folder.");
+    } catch {
+      // Browser-only mode cannot write into the app folder automatically.
+    }
+  };
+  runCheck();
+  setInterval(runCheck, 30000);
+}
+
+function handleBackupRestore(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (state.currentRole !== "Admin") return toast("Only Admin can restore backups.");
+  if (!confirm("Restore this backup? Current site data in this browser will be replaced.")) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(String(reader.result || "{}"));
+      const incomingState = payload.state || payload;
+      restoreSharedData(incomingState, "Backup restored");
+    } catch {
+      toast("Backup restore failed. Please choose a valid JSON backup.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function syncDataToSite() {
+  if (state.currentRole !== "Admin") return toast("Only Admin can sync data to the site.");
+  const button = document.querySelector("#syncSiteData");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch("/api/site-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(backupPayload()),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Site sync failed.");
+    toast(`Site data synced (${result.files || 0} file records)`);
+  } catch (error) {
+    toast(error.message || "Site sync is available only when hosted with the Node server.");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function pullDataFromSite() {
+  if (state.currentRole !== "Admin") return toast("Only Admin can pull site data.");
+  if (!confirm("Pull data from the site? Current browser data will be replaced.")) return;
+  const button = document.querySelector("#pullSiteData");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch("/api/site-data");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "No synced site data found.");
+    restoreSharedData(payload.state || payload, "Site data pulled");
+  } catch (error) {
+    toast(error.message || "Unable to pull site data.");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function autoRecoverAdminDataIfEmpty() {
+  if ((state.files || []).length) return;
+  if (location.protocol === "file:") return;
+  try {
+    const response = await fetch("/api/site-data", { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      autoLoadPreparedDataIfEmpty();
+      return;
+    }
+    const incomingState = payload.state || payload;
+    if (!(incomingState.files || []).length) {
+      autoLoadPreparedDataIfEmpty();
+      return;
+    }
+    restoreSharedData(incomingState, "Site data loaded");
+    toast(`Site data loaded (${state.files.length} files)`);
+  } catch {
+    autoLoadPreparedDataIfEmpty();
+  }
+}
+
+function autoLoadPreparedDataIfEmpty() {
+  if ((state.files || []).length) return false;
+  if (!window.PREPARED_IMPORT_CSV) return false;
+  try {
+    finishImport(parseImportRows(window.PREPARED_IMPORT_CSV), { forceFreshImport: true });
+    toast(`Prepared file data loaded (${state.files.length} files)`);
+    return true;
+  } catch {
+    // Keep login usable; Admin can still restore a backup manually.
+    return false;
+  }
+}
+
+function saveTabSession() {
+  sessionStorage.setItem(TAB_SESSION_KEY, JSON.stringify({
+    session: state.session || { loggedIn: false },
+    currentUser: state.currentUser || "",
+    currentRole: state.currentRole || "",
+    activePage,
+    filters: state.filters || {},
+    readNotifications: state.readNotifications || [],
+    readChatMessages: state.readChatMessages || [],
+  }));
+}
+
+function tabSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem(TAB_SESSION_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function applyTabSession(appState) {
+  const local = tabSession();
+  if (local.session) appState.session = local.session;
+  if (local.currentUser) appState.currentUser = local.currentUser;
+  if (local.currentRole) appState.currentRole = local.currentRole;
+  if (local.filters) appState.filters = { ...(appState.filters || {}), ...local.filters };
+  if (local.readNotifications) appState.readNotifications = local.readNotifications;
+  if (local.readChatMessages) appState.readChatMessages = local.readChatMessages;
+  return appState;
+}
+
+function restoreActivePage() {
+  const local = tabSession();
+  const allowedPages = ["dashboard", "files", "staff", "users", "invites", "visitors", "dailyReport", "expenses", "reports", "verification", "backup"];
+  if (allowedPages.includes(local.activePage)) activePage = local.activePage;
+}
+
+function syncSharedState(raw, rerender = false) {
+  if (!raw) return;
+  const previous = sharedSnapshot(state);
+  const currentSession = {
+    session: state.session,
+    currentUser: state.currentUser,
+    currentRole: state.currentRole,
+    filters: state.filters,
+    readNotifications: state.readNotifications,
+    readChatMessages: state.readChatMessages,
+  };
+  const incoming = normalizeState(JSON.parse(raw));
+  state = {
+    ...incoming,
+    ...currentSession,
+    filters: currentSession.filters || incoming.filters,
+    readNotifications: currentSession.readNotifications || incoming.readNotifications,
+    readChatMessages: currentSession.readChatMessages || incoming.readChatMessages,
+  };
+  saveTabSession();
+  const changed = previous !== sharedSnapshot(state);
+  if (rerender && changed && state.session?.loggedIn) {
+    if (document.querySelector("#teamChatPanel")?.classList.contains("open")) {
+      openTeamChat();
+    } else {
+      renderAll();
+    }
+  }
+}
+
+function sharedSnapshot(appState) {
+  return JSON.stringify({
+    files: appState.files || [],
+    users: appState.users || [],
+    invites: appState.invites || [],
+    revokedAccess: appState.revokedAccess || [],
+    chatMessages: appState.chatMessages || [],
+    fileNotifications: appState.fileNotifications || [],
+    services: appState.services || [],
+    careOfList: appState.careOfList || [],
+    deletedFileIds: appState.deletedFileIds || [],
+    company: appState.company || {},
+    fileDataResetVersion: appState.fileDataResetVersion || "",
+    masterListResetVersion: appState.masterListResetVersion || "",
+  });
+}
+
+function ensureLoginUser(users, account) {
+  const existing = users.find((user) => user.email.toLowerCase() === account.email.toLowerCase());
+  if (existing) {
+    existing.name = account.name;
+    existing.role = account.role;
+    existing.password = account.password;
+  } else {
+    users.push(account);
+  }
+}
+
+function ensureInviteRecord(invites, user) {
+  if (!user || user.email.toLowerCase() === "casadique@gmail.com") return;
+  const exists = invites.some((invite) => invite.email.toLowerCase() === user.email.toLowerCase());
+  if (!exists) {
+    invites.push({
+      id: crypto.randomUUID(),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      status: "Accepted",
+      sentAt: todayDate(),
+    });
+  }
+}
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function normalizeRole(role) {
+  const clean = String(role || "Staff").trim();
+  if (clean === "Viewer") return "Guest";
+  return ["Admin", "Manager", "Staff Manager", "Staff", "Guest"].includes(clean) ? clean : "Staff";
+}
+
+function loginIdentifierMatchesUser(identifier, user) {
+  const rawIdentifier = String(identifier || "").trim();
+  const cleanEmail = normalizeEmail(rawIdentifier);
+  const cleanName = normalizePersonName(rawIdentifier);
+  return Boolean(user && (
+    (cleanEmail && normalizeEmail(user.email) === cleanEmail) ||
+    (cleanName && normalizePersonName(user.name) === cleanName) ||
+    (cleanName && sameStaffName(user.name, rawIdentifier))
+  ));
+}
+
+function upsertInviteForUser(user, password = user?.password || "") {
+  if (!user || normalizeEmail(user.email) === "casadique@gmail.com") return;
+  const email = normalizeEmail(user.email);
+  const existing = state.invites.find((invite) => normalizeEmail(invite.email) === email);
+  const inviteData = {
+    id: existing?.id || crypto.randomUUID(),
+    name: user.name,
+    email,
+    role: normalizeRole(user.role),
+    password: password || user.password || existing?.password || "",
+    status: "Accepted",
+    source: "team-login",
+    sentAt: existing?.sentAt || todayDate(),
+  };
+  if (existing) Object.assign(existing, inviteData);
+  else state.invites.unshift(inviteData);
+}
+
+function activeUserList() {
+  const invitedEmails = new Set((state.invites || [])
+    .filter((invite) => !isRevokedAccess(invite))
+    .map((invite) => normalizeEmail(invite.email)));
+  return (state.users || [])
+    .filter((user) => normalizeEmail(user.email) !== "casadique@gmail.com")
+    .filter((user) => invitedEmails.has(normalizeEmail(user.email)) || user.source === "team-login")
+    .filter((user) => !isRevokedAccess(user))
+    .filter((user, index, list) => list.findIndex((item) => normalizeEmail(item.email) === normalizeEmail(user.email)) === index);
+}
+
+function chatRecipientUsers() {
+  return (state.users || [])
+    .filter((user) => user.id !== state.session?.userId)
+    .filter((user) => !isRevokedAccess(user))
+    .filter((user) => !isRemovedStaff(user.name))
+    .filter((user, index, list) => list.findIndex((item) => normalizeEmail(item.email) === normalizeEmail(user.email)) === index)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+}
+
+function accessPasswordForUser(user) {
+  const email = normalizeEmail(user?.email);
+  const invite = (state.invites || []).find((item) => normalizeEmail(item.email) === email);
+  return String(user?.password || invite?.password || "");
+}
+
+function findUserByStaffIdentity(value, users = state.users) {
+  const clean = String(value || "").trim().toLowerCase();
+  if (!clean || clean === "not assigned") return null;
+  return users.find((user) =>
+    String(user.id || "").toLowerCase() === clean ||
+    String(user.authUserId || "").toLowerCase() === clean ||
+    String(user.email || "").toLowerCase() === clean ||
+    String(user.name || "").toLowerCase() === clean ||
+    sameStaffName(user.name, value)
+  ) || null;
+}
+
+function refreshFileStaffLinks(appState = state) {
+  const users = appState.users || [];
+  appState.files = (appState.files || []).map((file) => {
+    const assignedUser = findUserByStaffIdentity(file.assignedStaff, users)
+      || findUserByStaffIdentity(file.assignedStaffEmail, users)
+      || findUserByStaffIdentity(file.assignedStaffId, users);
+    const reAssignedUser = findUserByStaffIdentity(file.reAssignedStaff, users)
+      || findUserByStaffIdentity(file.reAssignedStaffEmail, users)
+      || findUserByStaffIdentity(file.reAssignedStaffId, users);
+    return {
+      ...file,
+      assignedStaff: assignedUser?.name || properCaseName(file.assignedStaff) || "Not Assigned",
+      assignedStaffId: assignedUser?.id || "",
+      assignedStaffEmail: assignedUser?.email || "",
+      reAssignedStaff: reAssignedUser?.name || properCaseName(file.reAssignedStaff) || "",
+      reAssignedStaffId: reAssignedUser?.id || "",
+      reAssignedStaffEmail: reAssignedUser?.email || "",
+    };
+  });
+  return appState;
+}
+
+function canonicalStaffName(value, fallback = "", users = state.users) {
+  if (!hasAssignedStaffValue(value)) return fallback;
+  const user = findUserByStaffIdentity(value, users);
+  return user?.name || properCaseName(value) || fallback;
+}
+
+function teamMemberPickerField() {
+  return `
+    <div class="field">
+      <label>Select Existing Staff</label>
+      <select id="inviteExistingUser">
+        <option value="">Enter new staff/user</option>
+        ${state.users
+          .filter((user) => user.email.toLowerCase() !== "casadique@gmail.com")
+          .map((user) => `<option value="${user.id}">${escapeHtml(user.name)} - ${escapeHtml(user.role)}</option>`)
+          .join("")}
+      </select>
+    </div>`;
+}
+
+function bindTeamMemberPicker() {
+  const picker = document.querySelector("#inviteExistingUser");
+  if (!picker) return;
+  picker.onchange = () => {
+    const selected = state.users.find((user) => user.id === picker.value);
+    if (!selected) return;
+    document.querySelector("[name='inviteName']").value = selected.name;
+    document.querySelector("[name='inviteEmail']").value = selected.email;
+    document.querySelector("[name='inviteRole']").value = selected.role;
+  };
+}
+
+function createOrUpdateTeamLogin({ name, email, role, password }) {
+  syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+  const cleanName = String(name || "").trim();
+  const cleanEmail = normalizeEmail(email);
+  const cleanPassword = String(password || "");
+  const cleanRole = normalizeRole(role);
+  if (!cleanName || !cleanEmail || !cleanPassword) return { user: null, updated: false, error: "Please enter name, email and password." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return { user: null, updated: false, error: "Please enter a valid email ID." };
+  accessRestoreEmails.add(cleanEmail);
+  state.revokedAccess = (state.revokedAccess || []).filter((item) =>
+    normalizeEmail(item.email || item || "") !== cleanEmail &&
+    String(item.name || "").trim().toLowerCase() !== cleanName.toLowerCase()
+  );
+  const existingByEmail = state.users.find((user) => normalizeEmail(user.email) === cleanEmail);
+  const existingByName = state.users.find((user) => String(user.name || "").trim().toLowerCase() === cleanName.toLowerCase());
+  const user = existingByEmail || existingByName;
+  if (user) {
+    state.revokedAccess = (state.revokedAccess || []).filter((item) => String(item.id || "").toLowerCase() !== String(user.id || "").toLowerCase());
+    const oldName = user.name;
+    const oldEmail = user.email;
+    user.name = cleanName;
+    user.email = cleanEmail;
+    user.role = cleanRole;
+    user.password = cleanPassword;
+    user.source = "team-login";
+    state.files = state.files.map((file) => {
+      const assignedStaff = file.assignedStaff.toLowerCase() === oldName.toLowerCase() || normalizeEmail(file.assignedStaffEmail) === normalizeEmail(oldEmail) ? cleanName : file.assignedStaff;
+      const reAssignedStaff = (file.reAssignedStaff || "").toLowerCase() === oldName.toLowerCase() || normalizeEmail(file.reAssignedStaffEmail) === normalizeEmail(oldEmail) ? cleanName : file.reAssignedStaff;
+      return { ...file, assignedStaff, reAssignedStaff, updatedAt: Date.now() };
+    });
+    state.invites = state.invites.filter((invite) => normalizeEmail(invite.email) !== normalizeEmail(oldEmail) || normalizeEmail(oldEmail) === cleanEmail);
+    upsertInviteForUser(user, cleanPassword);
+    return { user, updated: true };
+  }
+  const created = { id: crypto.randomUUID(), name: cleanName, email: cleanEmail, role: cleanRole, password: cleanPassword, source: "team-login" };
+  state.users.push(created);
+  upsertInviteForUser(created, cleanPassword);
+  return { user: created, updated: false };
+}
+
+function authenticateUser(identifier, password) {
+  const rawIdentifier = String(identifier || "").trim();
+  const cleanEmail = normalizeEmail(rawIdentifier);
+  const cleanName = normalizePersonName(rawIdentifier);
+  const cleanPassword = String(password || "").trim();
+  syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+  restoreMasterTeamUsers(state);
+  const matchesLoginId = (u) => loginIdentifierMatchesUser(rawIdentifier, u);
+  let user = state.users.find((u) => matchesLoginId(u) && !isRevokedAccess(u));
+  const userPassword = String(user?.password || "").trim();
+  if (user && userPassword === cleanPassword) return user;
+  const invite = state.invites.find((item) => (
+    (cleanEmail && normalizeEmail(item.email) === cleanEmail) ||
+    (cleanName && normalizePersonName(item.name) === cleanName) ||
+    (cleanName && sameStaffName(item.name, rawIdentifier))
+  ) && String(item.password || "").trim() === cleanPassword && !isRevokedAccess(item));
+  if (invite) {
+    const result = createOrUpdateTeamLogin({
+      name: invite.name,
+      email: invite.email,
+      role: invite.role || "Staff",
+      password: cleanPassword,
+    });
+    if (result.error) return null;
+    saveAccessState();
+    return result.user;
+  }
+  const masterUser = staff.find((u) => matchesLoginId(u) && String(u.password || "").trim() === cleanPassword);
+  if (masterUser) {
+    const result = createOrUpdateTeamLogin({
+      name: masterUser.name,
+      email: masterUser.email,
+      role: masterUser.role,
+      password: masterUser.password,
+    });
+    if (result.error) return null;
+    saveAccessState();
+    return result.user;
+  }
+  try {
+    const latest = normalizeState(JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"));
+    user = latest.users.find((u) => matchesLoginId(u) && !isRevokedAccess(u, latest.revokedAccess || []));
+    const latestInvite = (latest.invites || []).find((item) => (
+      (cleanEmail && normalizeEmail(item.email) === cleanEmail) ||
+      (cleanName && normalizePersonName(item.name) === cleanName) ||
+      (cleanName && sameStaffName(item.name, rawIdentifier))
+    ) && !isRevokedAccess(item, latest.revokedAccess || []));
+    const latestPassword = String(user?.password || latestInvite?.password || "").trim();
+    if (!user && latestInvite && String(latestInvite.password || "").trim() === cleanPassword) {
+      const result = createOrUpdateTeamLogin({
+        name: latestInvite.name,
+        email: latestInvite.email,
+        role: latestInvite.role || "Staff",
+        password: cleanPassword,
+      });
+      if (result.error) return null;
+      saveAccessState();
+      return result.user;
+    }
+    if (user && latestPassword === cleanPassword) {
+      user.password = cleanPassword;
+      upsertInviteForUser(user, cleanPassword);
+    } else {
+      return null;
+    }
+    const existing = state.users.find((u) => normalizeEmail(u.email) === normalizeEmail(user.email));
+    if (existing) Object.assign(existing, user);
+    else state.users.push(user);
+    return user;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function normalizeStages(file) {
+  const old = file.stages || {};
+  const hasAssigned = hasAssignedStaffValue(file.assignedStaff) || hasAssignedStaffValue(file.assignedStaffEmail) || hasAssignedStaffValue(file.assignedStaffId);
+  return {
+    Received: Boolean(old.Received || old["File Received"] || true),
+    Allotted: Boolean(old.Allotted || old["Work in Progress"] || hasAssigned),
+    "Work Done": Boolean(old["Work Done"] || old["Report Prepared"]),
+    "On Hold": Boolean(old["On Hold"]),
+    "Client Pending": Boolean(old["Client Pending"]),
+    WIP: Boolean(old.WIP),
+    "Approval Pending": Boolean(old["Approval Pending"] || old.Shared),
+    "Correction Required": Boolean(old["Correction Required"]),
+    Approved: Boolean(old.Approved),
+    Completed: Boolean(old.Completed || old.Filed),
+    Billed: Boolean(old.Billed || old["Billed / Completed"] || file.billed),
+  };
+}
+
+function rolePerm() {
+  return permissions[state.currentRole] || permissions.Staff;
+}
+
+function canUseBackupPage() {
+  return ["Admin", "Manager"].includes(state.currentRole);
+}
+
+function canUseVerificationPage() {
+  return ["Admin", "Manager"].includes(state.currentRole);
+}
+
+function isStaffLogin() {
+  return state.currentRole === "Staff" || state.currentRole === "Staff Manager";
+}
+
+function loggedInUser() {
+  return state.users.find((user) => user.id === state.session?.userId)
+    || state.users.find((user) => user.authUserId === state.session?.authUserId)
+    || state.users.find((user) => user.email === state.session?.userEmail)
+    || state.users.find((user) => user.name === state.currentUser)
+    || sessionUserFallback();
+}
+
+function sessionUserFallback() {
+  const name = String(state.currentUser || "").trim();
+  const email = String(state.session?.userEmail || "").trim();
+  const id = String(state.session?.userId || "").trim();
+  if (!name && !email && !id) return null;
+  return {
+    id,
+    authUserId: String(state.session?.authUserId || "").trim(),
+    email,
+    name: name || email || id,
+    role: state.currentRole || "Staff",
+  };
+}
+
+function sameStaffName(a, b) {
+  const left = staffNameVariants(a);
+  const right = staffNameVariants(b);
+  return [...left].some((value) => right.has(value));
+}
+
+function staffNameVariants(value) {
+  const clean = normalizePersonName(value);
+  if (!clean || clean === "not assigned") return new Set();
+  const tokens = clean.split(" ").filter(Boolean);
+  const variants = new Set([clean]);
+  if (tokens[0]) variants.add(tokens[0]);
+  const known = staffAliasMap()[clean] || [];
+  known.forEach((alias) => variants.add(normalizePersonName(alias)));
+  return variants;
+}
+
+function normalizePersonName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function staffAliasMap() {
+  return {
+    "abhinandana k madhu": ["Abhinandana", "Abhainandana", "Abdhinandana", "Abhinandhana"],
+    "abhainandana": ["Abhinandana"],
+    "abdhinandana": ["Abhinandana"],
+    "abhinandana": ["Abhinandana K Madhu", "Abhainandana", "Abdhinandana", "Abhinandhana"],
+    "abhinandhana": ["Abhinandana"],
+    "althaf m k": ["Althaf"],
+    "althaf": ["Althaf M K"],
+    "anusree kv": ["Anusree"],
+    "anusree": ["Anusree KV"],
+    "naveen vv": ["Naveen"],
+    "naveen": ["Naveen VV"],
+    "rabiyath ck": ["Rabiyath"],
+    "rabiyath": ["Rabiyath CK"],
+    "rasha mp": ["Rasha"],
+    "rasha": ["Rasha MP"],
+    "rizwana shirin k a": ["Rizwana"],
+    "rizwana": ["Rizwana Shirin K A"],
+    "shada pp": ["Shada"],
+    "shada": ["Shada PP"],
+    "shurafa sameer": ["Shurafa"],
+    "shurafa": ["Shurafa Sameer"],
+    "sidharth v k": ["Sidharth"],
+    "sidharth": ["Sidharth V K"],
+    "chindu raveendran": ["Chindu"],
+    "chindu": ["Chindu Raveendran"],
+    "ca sadique": ["CA", "Sadique"],
+    "ca": ["CA Sadique"],
+    "sadique": ["CA Sadique"],
+    "najmunnisa": ["Najma"],
+    "najma": ["Najmunnisa"],
+  };
+}
+
+function hasAssignedStaffValue(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return Boolean(clean && clean !== "not assigned");
+}
+
+function sameUserIdentity(user, ...values) {
+  if (!user) return false;
+  const userValues = [user.id, user.authUserId, user.email, user.name, state.currentUser, state.session?.userId, state.session?.authUserId, state.session?.userEmail]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  return values.some((value) => userValues.includes(String(value || "").trim().toLowerCase()));
+}
+
+function chatSenderIsCurrentUser(message, user = loggedInUser()) {
+  return sameUserIdentity(user, message.userId, message.userEmail, message.user);
+}
+
+function currentChatReaderKey(user = loggedInUser()) {
+  return String(user?.id || user?.email || state.session?.userId || state.session?.userEmail || state.currentUser || "guest").trim().toLowerCase();
+}
+
+function chatReadKey(messageId, user = loggedInUser()) {
+  return `${currentChatReaderKey(user)}::${messageId}`;
+}
+
+function isChatMessageRead(message, user = loggedInUser()) {
+  return (state.readChatMessages || []).includes(chatReadKey(message.id, user));
+}
+
+function markChatMessagesRead(messageIds, user = loggedInUser()) {
+  const keys = (messageIds || []).filter(Boolean).map((id) => chatReadKey(id, user));
+  state.readChatMessages = [...new Set([...(state.readChatMessages || []), ...keys])];
+}
+
+function markChatMessageRead(messageId, user = loggedInUser()) {
+  markChatMessagesRead([messageId], user);
+}
+
+function fileBelongsToUser(file, user) {
+  if (!user) return false;
+  return staffNameBelongsToUser(file.assignedStaff, user)
+    || exactStaffIdentity(file.assignedStaffEmail, user.email)
+    || exactStaffIdentity(file.assignedStaffId, user.id)
+    || exactStaffIdentity(file.assignedStaffId, user.authUserId)
+    || staffNameBelongsToUser(file.reAssignedStaff, user)
+    || exactStaffIdentity(file.reAssignedStaffEmail, user.email)
+    || exactStaffIdentity(file.reAssignedStaffId, user.id)
+    || exactStaffIdentity(file.reAssignedStaffId, user.authUserId);
+}
+
+function staffNameBelongsToUser(staffName, user) {
+  if (!hasAssignedStaffValue(staffName) || !user) return false;
+  if (sameStaffName(staffName, user.name)) return true;
+  if (exactStaffIdentity(staffName, user.email) || exactStaffIdentity(staffName, user.id) || exactStaffIdentity(staffName, user.authUserId)) return true;
+  const canonicalFileStaff = canonicalStaffName(staffName);
+  const canonicalUserStaff = canonicalStaffName(user.name);
+  return Boolean(canonicalFileStaff && canonicalUserStaff && sameStaffName(canonicalFileStaff, canonicalUserStaff));
+}
+
+function exactStaffIdentity(left, right) {
+  const a = String(left || "").trim().toLowerCase();
+  const b = String(right || "").trim().toLowerCase();
+  return Boolean(a && b && a === b);
+}
+
+function visibleFiles() {
+  const perm = rolePerm();
+  const user = loggedInUser();
+  if (["Admin", "Manager"].includes(state.currentRole)) return state.files || [];
+  if (state.currentRole === "Staff") return staffOwnedFiles(user);
+  return state.files.filter((file) => perm.allFiles || fileBelongsToUser(file, user));
+}
+
+function staffOwnedFiles(user = loggedInUser()) {
+  return (state.files || []).filter((file) => fileBelongsToUser(file, user));
+}
+
+function filteredFiles() {
+  const f = state.filters;
+  return visibleFiles().filter((file) => {
+    const haystack = `${file.name} ${file.pan} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.remarks}`.toLowerCase();
+    if (f.listView === "active" && isCheckedCompleted(file)) return false;
+    if (f.listView === "completed" && !isCheckedCompleted(file)) return false;
+    if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
+    if (f.listView === "completed" && f.checkingStatus && checkingStatusOf(file).label !== f.checkingStatus) return false;
+    if (f.listView === "billed" && !isBilledFile(file)) return false;
+    if (f.listView === "nonBilled" && !isNonBilledFile(file)) return false;
+    if (f.listView === "feePending" && !isFeePendingFile(file)) return false;
+    if (f.search && !haystack.includes(f.search.toLowerCase())) return false;
+    if (f.client && !file.name.toLowerCase().includes(f.client.toLowerCase())) return false;
+    if (f.pan && !file.pan.toLowerCase().includes(f.pan.toLowerCase())) return false;
+    if (f.careOfFilter && !String(file.careOf || "").toLowerCase().includes(f.careOfFilter.toLowerCase())) return false;
+    if (f.staff && !fileBelongsToUser(file, findUserByStaffIdentity(f.staff))) return false;
+    if (f.service && file.serviceType !== f.service) return false;
+    if (f.workflow && stages[stageIndex(file)] !== f.workflow) return false;
+    if (f.due && file.dueDate !== f.due) return false;
+    if (f.priority && file.priority !== f.priority) return false;
+    if (f.status && statusOf(file).label !== f.status) return false;
+    if (f.billing === "Billed" && !isBilledFile(file)) return false;
+    if (f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
+    if (f.overdue === "Yes" && !isOverdue(file)) return false;
+    if (f.pendingApproval === "Yes" && !pendingApproval(file)) return false;
+    const fileFilterDate = file.workAllotmentDate || file.fileReceivedDate || file.lastUpdatedDate || file.dueDate || "";
+    if (f.fileFrom && fileFilterDate < f.fileFrom) return false;
+    if (f.fileTo && fileFilterDate > f.fileTo) return false;
+    if (f.dashboardKind === "pending" && isCheckedCompleted(file)) return false;
+    if (f.dashboardKind === "shared" && !file.shared) return false;
+    if (f.dashboardKind === "reportsPrepared" && !file.reportPrepared) return false;
+    if (f.dashboardKind === "completed" && !isCheckedCompleted(file)) return false;
+    if (f.dashboardKind === "correctionRequired" && !file.stages?.["Correction Required"]) return false;
+    if (f.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
+    return true;
+  });
+}
+
+function todayDate() {
+  return dateInput(new Date());
+}
+
+function dateInput(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function displayDate(dateString) {
+  if (!dateString) return "";
+  const raw = String(dateString).trim();
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return `${isoMatch[3]}-${isoMatch[2]}-${isoMatch[1]}`;
+  const isoDateTime = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?/);
+  if (isoDateTime) {
+    return `${isoDateTime[3].padStart(2, "0")}-${isoDateTime[2].padStart(2, "0")}-${isoDateTime[1]}`;
+  }
+  const localMatch = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (localMatch) {
+    const first = Number(localMatch[1]);
+    const second = Number(localMatch[2]);
+    const dayValue = first > 12 ? first : second;
+    const monthValue = first > 12 ? second : first;
+    const day = String(dayValue).padStart(2, "0");
+    const month = String(monthValue).padStart(2, "0");
+    const year = localMatch[3].length === 2 ? `20${localMatch[3]}` : localMatch[3];
+    return `${day}-${month}-${year}`;
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${day}-${month}-${date.getFullYear()}`;
+}
+
+function daysUntil(dateString) {
+  const today = new Date(todayDate());
+  const target = new Date(dateString);
+  return Math.ceil((target - today) / MS_DAY);
+}
+
+function isOverdue(file) {
+  return !file.filed && daysUntil(file.dueDate) < 0;
+}
+
+function pendingApproval(file) {
+  return file.shared && !file.approved;
+}
+
+function reportNotFiled(file) {
+  return file.workDone && !file.filed;
+}
+
+function completedNotBilled(file) {
+  return isNonBilledFile(file);
+}
+
+function isActiveFileRecord(file) {
+  return Boolean(file && !isCheckedCompleted(file));
+}
+
+function isBilledFile(file) {
+  return Boolean(file?.billed);
+}
+
+function isNonBilledFile(file) {
+  return Boolean(file?.billingType === "Non-Billable" && !file?.billed);
+}
+
+function isFeePendingFile(file) {
+  return Boolean(isBilledFile(file) && !file?.feeReceived);
+}
+
+function isNotCheckedFile(file) {
+  return checkingStatusOf(file).label === "Not Checked";
+}
+
+function isCheckedFile(file) {
+  return checkingStatusOf(file).label === "Checked";
+}
+
+function canManageChecking() {
+  return ["Admin", "Manager"].includes(state.currentRole) || isAuthorisedCheckingStaff();
+}
+
+function canEditCheckedDate() {
+  return ["Admin", "Manager"].includes(state.currentRole);
+}
+
+function isAuthorisedCheckingStaff(user = loggedInUser()) {
+  return ["Staff", "Staff Manager"].includes(state.currentRole) && checkingStaffNames.has(normalizePersonName(user?.name || state.currentUser));
+}
+
+function isSpecialFileCreator(user = loggedInUser()) {
+  return ["Staff", "Staff Manager"].includes(state.currentRole) && fileCreatorStaffNames.has(normalizePersonName(user?.name || state.currentUser));
+}
+
+function canViewNotCheckedFiles(user = loggedInUser()) {
+  return ["Admin", "Manager"].includes(state.currentRole)
+    || (["Staff", "Staff Manager"].includes(state.currentRole) && notCheckedStaffManagerNames.has(normalizePersonName(user?.name || state.currentUser)));
+}
+
+function fileCreatedByCurrentUser(file = {}) {
+  const user = loggedInUser();
+  if (!user) return false;
+  return sameStaffName(file.createdBy, user.name)
+    || exactStaffIdentity(file.createdByEmail, user.email)
+    || exactStaffIdentity(file.createdById, user.id);
+}
+
+function canCreateFile() {
+  return Boolean(rolePerm().assign || isSpecialFileCreator());
+}
+
+function canAssignFile(file = {}) {
+  return Boolean(rolePerm().assign || (isSpecialFileCreator() && (!file?.id || fileCreatedByCurrentUser(file))));
+}
+
+function canEditFileRecord(file = null) {
+  if (!file) return canCreateFile();
+  if (["Admin", "Manager"].includes(state.currentRole)) return true;
+  if (isAuthorisedCheckingStaff() && isCheckedCompleted(file)) return true;
+  if (isSpecialFileCreator() && fileCreatedByCurrentUser(file)) return true;
+  return fileBelongsToUser(file, loggedInUser());
+}
+
+function validCheckingRemark(value) {
+  return /[a-z0-9]{2,}/i.test(String(value || "").trim());
+}
+
+function workDoneByUser(file = {}, user = loggedInUser()) {
+  if (!file || !user) return false;
+  return sameStaffName(file.completedBy, user.name)
+    || exactStaffIdentity(file.completedById, user.id)
+    || exactStaffIdentity(file.completedByEmail, user.email)
+    || sameStaffName(file.workDoneBy, user.name)
+    || staffNameBelongsToUser(file.assignedStaff, user);
+}
+
+function canCheckFile(file = {}) {
+  if (!canManageChecking()) return false;
+  if (["Admin", "Manager"].includes(state.currentRole)) return true;
+  return !workDoneByUser(file);
+}
+
+function staffAttemptedCheckingChange(existingFile, formData) {
+  const hasCheckedBy = formData.has("checkedBy");
+  const hasCheckedDate = formData.has("checkedDate");
+  const hasCheckingRemarks = formData.has("checkingRemarks");
+  if (!existingFile) {
+    return Boolean(
+      String(formData.get("checkedBy") || "").trim() ||
+      normalizeImportDate(formData.get("checkedDate")) ||
+      String(formData.get("checkingRemarks") || "").trim()
+    );
+  }
+  const submittedCheckedBy = String(formData.get("checkedBy") || "").trim();
+  const submittedCheckedDate = normalizeImportDate(formData.get("checkedDate"));
+  const submittedCheckingRemarks = String(formData.get("checkingRemarks") || "").trim();
+  return Boolean(
+    (hasCheckedBy && submittedCheckedBy !== String(existingFile.checkedBy || "").trim()) ||
+    (hasCheckedDate && submittedCheckedDate !== normalizeImportDate(existingFile.checkedDate)) ||
+    (hasCheckingRemarks && submittedCheckingRemarks !== String(existingFile.checkingRemarks || "").trim())
+  );
+}
+
+function checkingDetailsChanged(before, after) {
+  return String(before?.checkedBy || "") !== String(after?.checkedBy || "")
+    || normalizeImportDate(before?.checkedDate) !== normalizeImportDate(after?.checkedDate)
+    || String(before?.checkingRemarks || "") !== String(after?.checkingRemarks || "");
+}
+
+function checkingStatusOf(file) {
+  if (file?.stages?.["Correction Required"]) return { label: "Returned for Correction", className: "overdue" };
+  if (!isCheckedCompleted(file)) return { label: "", className: "" };
+  if (String(file?.checkedBy || "").trim() && normalizeImportDate(file?.checkedDate)) return { label: "Checked", className: "filed" };
+  return { label: "Not Checked", className: "approval" };
+}
+
+function isCheckedCompleted(file) {
+  return Boolean(file?.filed || file?.stages?.Completed);
+}
+
+function stageIndex(file) {
+  let index = 0;
+  stages.forEach((stage, i) => {
+    if (file.stages?.[stage]) index = i;
+  });
+  return index;
+}
+
+function statusOf(file) {
+  if (file.stages?.["Correction Required"]) return { label: "Correction Required", className: "overdue" };
+  if (file.feeReceived) return { label: "Received", className: "filed" };
+  if (isCheckedCompleted(file)) return { label: "Completed", className: "filed" };
+  if (file.billed) return { label: "Billed", className: "billed" };
+  if (isOverdue(file)) return { label: "Overdue", className: "overdue" };
+  if (file.approved) return { label: "Approved", className: "filed" };
+  if (pendingApproval(file)) return { label: "Approval Pending", className: "approval" };
+  if (file.stages?.["Client Pending"]) return { label: "Client Pending", className: "approval" };
+  if (file.stages?.["On Hold"]) return { label: "On Hold", className: "pending" };
+  if (file.workDone) return { label: "Work Done", className: "report" };
+  if (file.stages?.WIP) return { label: "WIP", className: "progress" };
+  if (file.stages?.Allotted || hasAssignedStaffValue(file.assignedStaff)) return { label: "Allotted", className: "progress" };
+  return { label: "Received", className: "pending" };
+}
+
+function stats(files = visibleFiles()) {
+  return {
+    total: files.length,
+    pending: files.filter((f) => !isCheckedCompleted(f)).length,
+    notStarted: files.filter((f) => stageIndex(f) === 0).length,
+    workInProgress: files.filter((f) => f.stages?.WIP && !isCheckedCompleted(f)).length,
+    overdue: files.filter(isOverdue).length,
+    sharedNotApproved: files.filter(pendingApproval).length,
+    correctionRequired: files.filter((f) => f.stages?.["Correction Required"]).length,
+    reAllotted: files.filter((f) => f.reAssignedStaff && f.reAssignedStaff !== "Not Assigned").length,
+    reportsPrepared: files.filter((f) => f.reportPrepared).length,
+    completed: files.filter(isCheckedCompleted).length,
+    notChecked: files.filter(isNotCheckedFile).length,
+    billed: files.filter(isBilledFile).length,
+    unbilled: files.filter(isNonBilledFile).length,
+    feePending: files.filter(isFeePendingFile).length,
+  };
+}
+
+function staffStats(name) {
+  const selectedUser = findUserByStaffIdentity(name);
+  const files = visibleFiles().filter((f) => !name || fileBelongsToUser(f, selectedUser));
+  return {
+    total: files.length,
+    notStarted: files.filter((f) => stageIndex(f) === 0).length,
+    inProgress: files.filter((f) => stageIndex(f) > 0 && !f.filed).length,
+    pending: files.filter((f) => !f.filed).length,
+    completed: files.filter((f) => f.filed).length,
+    overdue: files.filter(isOverdue).length,
+    approvals: files.filter(pendingApproval).length,
+    billed: files.filter(isBilledFile).length,
+    unbilled: files.filter(isNonBilledFile).length,
+  };
+}
+
+function notifications() {
+  const files = visibleFiles();
+  const items = [];
+  const user = loggedInUser();
+  visibleFileNotifications(user).forEach((notice) => {
+    items.push({
+      id: `file-change-${notice.id}`,
+      type: notice.changeType || "File Update",
+      tone: notice.tone || "progress",
+      title: notice.fileName || "File Update",
+      text: `${notice.changeText || "File updated"} by ${notice.changedBy || "Team"} on ${fmt(notice.date)} ${notice.time || ""}`,
+    });
+  });
+  unreadChatMessages().forEach((message) => {
+    items.push({
+      id: `chat-${message.id}`,
+      type: message.targetType === "personal" ? "Personal Chat" : "Group Chat",
+      tone: "progress",
+      title: message.user || "Team Member",
+      text: message.text || (message.attachments?.length ? `Attachment shared: ${message.attachments[0].name}` : ""),
+      chatId: message.id,
+    });
+  });
+  files.forEach((file) => {
+    const days = daysUntil(file.dueDate);
+    if ((sameStaffName(file.assignedStaff, state.currentUser) || sameStaffName(file.assignedStaff, user?.name) || sameStaffName(file.assignedStaffEmail, user?.email) || sameStaffName(file.assignedStaffId, user?.id)) && file.assignedStaff !== "Not Assigned") {
+      items.push({ id: `${file.id}-assigned-${file.assignedStaff}`, type: "Assigned file", tone: "progress", title: file.name, text: `This file is assigned to you. Due date: ${fmt(file.dueDate)}.` });
+    }
+    if ((sameStaffName(file.reAssignedStaff, state.currentUser) || sameStaffName(file.reAssignedStaff, user?.name) || sameStaffName(file.reAssignedStaffEmail, user?.email) || sameStaffName(file.reAssignedStaffId, user?.id)) && file.reAssignedDate) {
+      items.push({ id: `${file.id}-reassigned-${file.reAssignedDate}`, type: "Re-assigned file", tone: "approval", title: file.name, text: `This file was re-assigned to you on ${fmt(file.reAssignedDate)}.` });
+    }
+    if (isOverdue(file)) items.push({ id: `${file.id}-overdue`, type: "Overdue", tone: "overdue", title: file.name, text: `${Math.abs(days)} day(s) overdue. Assigned to ${file.assignedStaff}.` });
+    else if (!file.filed && days <= 3) items.push({ id: `${file.id}-due`, type: "Nearing due", tone: "pending", title: file.name, text: `Due in ${days} day(s). Priority: ${file.priority}.` });
+    if (pendingApproval(file)) items.push({ id: `${file.id}-approval`, type: "Approval pending", tone: "approval", title: file.name, text: "Shared with client/partner but not approved yet." });
+    if (reportNotFiled(file)) items.push({ id: `${file.id}-workdone`, type: "Work done pending", tone: "report", title: file.name, text: "Work is done, completion is still pending." });
+    if (completedNotBilled(file)) items.push({ id: `${file.id}-billing`, type: "Billing pending", tone: "filed", title: file.name, text: "Filing completed, billing still pending." });
+  });
+  return items.filter((item) => !state.readNotifications.includes(item.id));
+}
+
+function visibleFileNotifications(user = loggedInUser()) {
+  if (!user) return [];
+  return (state.fileNotifications || [])
+    .filter((notice) =>
+      sameUserIdentity(user, notice.targetUserId, notice.targetUserEmail, notice.targetUserName) ||
+      sameStaffName(notice.targetUserName, state.currentUser)
+    )
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+function canSeeChatMessage(message, user = loggedInUser()) {
+  if (!message) return false;
+  if ((message.targetType || "group") === "personal") {
+    return sameUserIdentity(user, message.userId, message.userEmail, message.user)
+      || sameUserIdentity(user, message.targetUserId, message.targetUserEmail, message.targetUserName);
+  }
+  return true;
+}
+
+function visibleChatMessages() {
+  const user = loggedInUser();
+  return (state.chatMessages || []).filter((message) => canSeeChatMessage(message, user));
+}
+
+function isChatWithUser(message, otherUser, currentUser = loggedInUser()) {
+  if (!otherUser || (message.targetType || "group") !== "personal") return false;
+  const sentByCurrentToOther = sameUserIdentity(currentUser, message.userId, message.userEmail, message.user)
+    && sameUserIdentity(otherUser, message.targetUserId, message.targetUserEmail, message.targetUserName);
+  const sentByOtherToCurrent = sameUserIdentity(otherUser, message.userId, message.userEmail, message.user)
+    && sameUserIdentity(currentUser, message.targetUserId, message.targetUserEmail, message.targetUserName);
+  return sentByCurrentToOther || sentByOtherToCurrent;
+}
+
+function chatConversationMessages(targetType = "all", recipientId = "") {
+  const currentUser = loggedInUser();
+  if (targetType === "personal") {
+    const otherUser = state.users.find((user) => user.id === recipientId) || state.users.find((user) => user.id !== state.session?.userId);
+    return visibleChatMessages().filter((message) => isChatWithUser(message, otherUser, currentUser));
+  }
+  if (targetType === "all") return visibleChatMessages();
+  return visibleChatMessages().filter((message) => (message.targetType || "group") === "group");
+}
+
+function unreadChatMessages() {
+  const user = loggedInUser();
+  return visibleChatMessages().filter((message) =>
+    !chatSenderIsCurrentUser(message, user) &&
+    !isChatMessageRead(message, user)
+  );
+}
+
+function chatButtonLabel() {
+  const unread = unreadChatMessages().length;
+  return `Team Chat${unread ? ` ${unread}` : ""}`;
+}
+
+function repairCurrentSessionRole() {
+  const masterUser = staff.find((item) =>
+    normalizeEmail(item.email) === normalizeEmail(state.session?.userEmail) ||
+    sameStaffName(item.name, state.currentUser)
+  );
+  if (!masterUser) return;
+  state.currentUser = masterUser.name;
+  state.currentRole = masterUser.role;
+  const existing = state.users.find((user) => normalizeEmail(user.email) === normalizeEmail(masterUser.email) || sameStaffName(user.name, masterUser.name));
+  if (existing) {
+    existing.name = masterUser.name;
+    existing.role = masterUser.role;
+    existing.email = masterUser.email;
+  }
+}
+
+function mount() {
+  document.body.className = `theme-${state.theme}`;
+  if (!state.session?.loggedIn) {
+    renderLogin();
+    return;
+  }
+  repairCurrentSessionRole();
+  document.querySelector("#app").innerHTML = `
+    <div class="app-shell ${isSidebarCollapsed() ? "sidebar-collapsed" : ""}">
+      <aside class="sidebar ${isSidebarCollapsed() ? "collapsed" : ""}" id="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">${navIcon("briefcase")}</div>
+          <div class="brand-text-only">
+            <h1><span>CA</span> <em>File Tracker</em></h1>
+            <p class="brand-byline">Muhammad &amp; Associates</p>
+          </div>
+          <button class="sidebar-collapse-button" id="sidebarCollapseButton" type="button" title="Collapse navigation">${navIcon("chevron")}</button>
+        </div>
+        <nav class="nav" id="nav"></nav>
+        <div class="current-user-card">
+          <div class="profile-avatar">${escapeHtml(userInitials(state.currentUser))}</div>
+          <div class="profile-copy">
+            <span>Profile</span>
+            <strong>${escapeHtml(state.currentUser)}</strong>
+            <p class="small-muted">${escapeHtml(state.currentRole)}</p>
+          </div>
+          <button class="sidebar-logout-button" id="sidebarLogoutButton" type="button" title="Logout">${navIcon("logout")}</button>
+        </div>
+      </aside>
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <button class="icon-button mobile-menu" id="mobileMenu">Menu</button>
+            <button class="mini-button hidden" id="topBackButton">Back</button>
+            <h2 id="pageTitle">Dashboard</h2>
+            <p id="pageSubtitle"></p>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" id="chatButton">${chatButtonLabel()}</button>
+            <button class="icon-button" id="notifyButton">Notifications ${notifications().length}</button>
+            ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download Sample Excel</button><button class="top-action-button top-action-import" id="importFileButton">Import Excel Data</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
+            ${rolePerm().export && activePage === "files" && state.filters.listView === "active" ? `<button class="top-action-button top-action-export" id="topExportActiveFiles">Export Active Files</button>` : ""}
+            ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
+            <button class="top-action-button top-action-logout" id="logoutButton">Logout</button>
+          </div>
+        </header>
+        <section class="page" id="dashboard"></section>
+        <section class="page" id="files"></section>
+        <section class="page" id="staff"></section>
+        <section class="page" id="users"></section>
+        <section class="page" id="invites"></section>
+        <section class="page" id="visitors"></section>
+        <section class="page" id="dailyReport"></section>
+        <section class="page" id="expenses"></section>
+        <section class="page" id="reports"></section>
+        <section class="page" id="verification"></section>
+        <section class="page" id="backup"></section>
+      </main>
+    </div>
+    <div class="backdrop" id="backdrop"></div>
+    <aside class="drawer" id="fileDrawer"></aside>
+    <aside class="notification-panel" id="notificationPanel"></aside>
+    <aside class="notification-panel team-chat-panel" id="teamChatPanel"></aside>
+    <div class="toast" id="toast"></div>
+  `;
+  bindShell();
+  renderNav();
+  renderAll();
+}
+
+function renderLogin() {
+  document.querySelector("#app").innerHTML = `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="brand-mark">CF</div>
+        <h1>CA File Tracker</h1>
+        <p class="login-subtitle">Welcome back. Track files, billing and team updates in one place.</p>
+        <div class="field">
+          <label>User Name / Email</label>
+          <input id="loginEmail" type="text" value="casadique@gmail.com" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <div class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
+        </div>
+        <button class="primary-button" id="loginButton">Login</button>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+  `;
+  document.querySelector("#loginButton").onclick = handleLogin;
+  bindPasswordToggles();
+  document.querySelector("#loginPassword").onkeydown = (e) => {
+    if (e.key === "Enter") handleLogin();
+  };
+}
+
+async function handleLogin() {
+  const email = document.querySelector("#loginEmail").value.trim();
+  const password = document.querySelector("#loginPassword").value;
+  let user = null;
+  try {
+    const login = await apiJson("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    setApiToken(login.session?.access_token || "");
+    sessionStorage.setItem(API_MODE_KEY, "supabase");
+    const me = await apiJson("/api/auth/me");
+    user = {
+      id: me.profile?.id || me.user?.id,
+      email: me.profile?.email || me.user?.email,
+      name: me.profile?.name || me.user?.email,
+      role: me.profile?.role || "Staff",
+      authUserId: me.user?.id,
+      source: "supabase-auth",
+    };
+  } catch {
+    setApiToken("");
+    sessionStorage.removeItem(API_MODE_KEY);
+    user = authenticateUser(email, password);
+  }
+  if (!user) return toast("Invalid user name or password.");
+  const masterUser = staff.find((item) => normalizeEmail(item.email) === normalizeEmail(user.email));
+  if (masterUser) {
+    user.name = masterUser.name;
+    user.role = masterUser.role;
+  }
+  state.session = { loggedIn: true, userId: user.id, authUserId: user.authUserId || "", userEmail: user.email };
+  state.currentUser = user.name;
+  state.currentRole = user.role;
+  resetFilters();
+  activePage = "dashboard";
+  saveTabSession();
+  saveState({ skipMerge: true, skipRemote: true });
+  mount();
+  if (!(await loadStateFromApi())) autoRecoverAdminDataIfEmpty();
+}
+
+function bindShell() {
+  const addFileButton = document.querySelector("#addFileButton");
+  if (addFileButton) addFileButton.onclick = () => openFileDrawer();
+  const sampleImportButton = document.querySelector("#sampleImportButton");
+  if (sampleImportButton) sampleImportButton.onclick = downloadImportTemplate;
+  const importFileButton = document.querySelector("#importFileButton");
+  const importFileInput = document.querySelector("#importFileInput");
+  if (importFileButton && importFileInput) {
+    importFileButton.onclick = () => {
+      importFileInput.click();
+    };
+    importFileInput.onchange = handleImportFile;
+  }
+  const topExportActiveFiles = document.querySelector("#topExportActiveFiles");
+  if (topExportActiveFiles) topExportActiveFiles.onclick = () => exportActiveFilesExcel(filteredFiles());
+  const runLogout = () => {
+    state.session = { loggedIn: false };
+    setApiToken("");
+    sessionStorage.removeItem(API_MODE_KEY);
+    resetFilters();
+    activePage = "dashboard";
+    saveState();
+    saveTabSession();
+    mount();
+  };
+  document.querySelector("#logoutButton").onclick = runLogout;
+  const sidebarLogoutButton = document.querySelector("#sidebarLogoutButton");
+  if (sidebarLogoutButton) sidebarLogoutButton.onclick = runLogout;
+  const sidebarCollapseButton = document.querySelector("#sidebarCollapseButton");
+  if (sidebarCollapseButton) {
+    sidebarCollapseButton.onclick = () => {
+      localStorage.setItem(`${STORAGE_KEY}-sidebar-collapsed`, isSidebarCollapsed() ? "" : "Yes");
+      mount();
+    };
+  }
+  document.querySelector("#notifyButton").onclick = () => openNotifications();
+  document.querySelector("#chatButton").onclick = () => openTeamChat();
+  document.querySelector("#mobileMenu").onclick = () => {
+    document.querySelector("#sidebar").classList.add("open");
+    document.querySelector("#backdrop").classList.add("show");
+  };
+  document.querySelector("#backdrop").onclick = closeOverlays;
+  document.onkeydown = (event) => {
+    if (event.key === "Escape") closeOverlays();
+  };
+}
+
+function isSidebarCollapsed() {
+  return localStorage.getItem(`${STORAGE_KEY}-sidebar-collapsed`) === "Yes";
+}
+
+function userInitials(name) {
+  return String(name || "User").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "U";
+}
+
+function renderNav() {
+  const fileViews = {
+    "active-files": "active",
+    "completed-files": "completed",
+    "not-checked-files": "notChecked",
+    "non-billed-files": "nonBilled",
+    "billed-files": "billed",
+    "fee-pending": "feePending",
+  };
+  const counts = navBadgeCounts();
+  const groups = navGroupDefinitions()
+    .map((group) => ({ ...group, items: group.items.filter((item) => !item.adminOnly || state.currentRole === "Admin") }))
+    .filter((group) => group.items.length);
+  document.querySelector("#nav").innerHTML = groups.map((group) => {
+    const activeInGroup = group.items.some((item) => navItemActive(item.id, fileViews));
+    const collapsed = group.collapsible && navGroupCollapsed(group.key) && !activeInGroup;
+    return `
+      <div class="nav-group ${collapsed ? "collapsed" : ""}" data-nav-group="${group.key}">
+        <button class="nav-section-title" type="button" data-nav-group-toggle="${group.key}" ${group.collapsible ? "" : "disabled"}>
+          <span>${escapeHtml(group.label)}</span>
+          ${group.collapsible ? `<strong>${navIcon("chevron")}</strong>` : ""}
+        </button>
+        <div class="nav-group-items">
+          ${group.items.map((item) => navItemButton(item, fileViews, counts)).join("")}
+        </div>
+      </div>
+    `;
+  }).join("");
+  document.querySelectorAll("[data-nav-group-toggle]").forEach((btn) => {
+    btn.onclick = () => {
+      const key = btn.dataset.navGroupToggle;
+      localStorage.setItem(`${STORAGE_KEY}-nav-group-${key}`, navGroupCollapsed(key) ? "" : "collapsed");
+      renderNav();
+    };
+  });
+  document.querySelectorAll("#nav button[data-page]").forEach((btn) => {
+    btn.onclick = () => {
+      const page = btn.dataset.page;
+      if (fileViews[page]) {
+        activePage = "files";
+        resetFilters();
+        state.filters.listView = fileViews[page];
+        saveState();
+      } else if (page === "my-task") {
+        activePage = "files";
+        resetFilters();
+        state.filters.listView = "active";
+        saveState();
+      } else {
+        if (page === "files") {
+          resetFilters();
+          saveState();
+        }
+        activePage = page;
+        saveTabSession();
+      }
+      closeOverlays();
+      mount();
+    };
+  });
+}
+function renderAll() {
+  if (activePage === "invites") activePage = "users";
+  if (activePage === "users" && state.currentRole !== "Admin") activePage = "dashboard";
+  if (activePage === "backup" && !canUseBackupPage()) activePage = "dashboard";
+  if (activePage === "verification" && !canUseVerificationPage()) activePage = "dashboard";
+  if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
+  if (isStaffLogin() && !["dashboard", "files"].includes(activePage)) activePage = "dashboard";
+  if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "nonBilled", "billed", "feePending"].includes(state.filters.listView) && !state.filters.fromDashboard) {
+    state.filters.listView = "active";
+  }
+  saveTabSession();
+  renderNav();
+  document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
+  document.querySelector(`#${activePage}`).classList.add("active");
+  const titles = {
+    dashboard: ["Dashboard", ""],
+    files: ["File List", ""],
+    staff: ["Staff Performance", ""],
+    users: ["User Management", ""],
+    invites: ["Team Invitation", ""],
+    visitors: ["Visitors", "Visitor register and office meeting log"],
+    dailyReport: ["Daily Report", "Completed files and visitor summary by date"],
+    expenses: ["Expenses", "Cash expenses, collections and cash balance"],
+    reports: ["Reports & Export", ""],
+    verification: ["Verification", "Confirm staff allotments, status updates and login visibility"],
+    backup: ["Backup", "Download a full safety copy of tracker data"],
+  };
+  if (activePage === "files" && state.filters.listView === "active") titles.files[0] = "Active Files";
+  if (activePage === "files" && state.filters.listView === "completed") titles.files[0] = "Completed Files";
+  if (activePage === "files" && state.filters.listView === "notChecked") titles.files[0] = "Not Checked Files";
+  if (activePage === "files" && state.filters.listView === "nonBilled") titles.files[0] = "Non-Billed Files";
+  if (activePage === "files" && state.filters.listView === "billed") titles.files[0] = "Billed Files";
+  if (activePage === "files" && state.filters.listView === "feePending") titles.files[0] = "Fee Pending";
+  document.querySelector("#pageTitle").textContent = titles[activePage][0];
+  const subtitle = document.querySelector("#pageSubtitle");
+  subtitle.textContent = titles[activePage][1];
+  subtitle.classList.toggle("hidden", !titles[activePage][1]);
+  const topBackButton = document.querySelector("#topBackButton");
+  if (topBackButton) {
+    topBackButton.classList.toggle("hidden", !(activePage === "files" && state.filters.fromDashboard));
+    topBackButton.onclick = () => {
+      resetFilters();
+      saveState();
+      activePage = "dashboard";
+      renderAll();
+    };
+  }
+  renderActivePage();
+  enforceDateYearCap();
+}
+
+function renderActivePage() {
+  const renderers = {
+    dashboard: renderDashboard,
+    files: renderFilesPage,
+    staff: renderStaffPage,
+    users: renderUsersPage,
+    visitors: renderVisitorsPage,
+    dailyReport: renderDailyReportPage,
+    expenses: renderExpensesPage,
+    reports: renderReportsPage,
+    verification: renderVerificationPage,
+    backup: renderBackupPage,
+  };
+  (renderers[activePage] || renderDashboard)();
+}
+
+function enforceDateYearCap() {
+  document.querySelectorAll('input[type="date"]').forEach((input) => {
+    input.max = "9999-12-31";
+  });
+}
+
+function renderDashboard() {
+  const s = stats();
+  if (isStaffLogin()) {
+    const myFiles = staffOwnedFiles();
+    document.querySelector("#dashboard").innerHTML = `
+      <div class="grid metrics staff-dashboard-metrics">
+        ${metric("My Total Files", s.total, "Files Assigned to Me", "grad-blue", "all")}
+        ${metric("My Active Files", myFiles.filter((f) => !isCheckedCompleted(f)).length, "Current Work", "grad-blue", "active")}
+        ${metric("My Overdue Files", s.overdue, "Need Attention", "grad-red", "overdue")}
+        ${metric("My Approval Pending", s.sharedNotApproved, "Pending Approval", "grad-yellow", "approval")}
+        ${metric("My Correction Required", s.correctionRequired, "Needs Correction", "grad-yellow", "correction")}
+        ${metric("My Re Allotted Files", s.reAllotted, "Re-Allotted to Me", "grad-purple", "reallotted")}
+        ${metric("My Completed Files", s.completed, "Completed by Me", "grad-green", "completed")}
+        ${metric("My Not Checked Files", s.notChecked, "Awaiting Checking", "grad-yellow", "notChecked")}
+        ${metric("My Billed Files", s.billed, "Billed Files", "grad-darkgreen", "billed")}
+      </div>
+      <div class="dashboard-layout dashboard-single">
+        ${renderStaffDashboardPerformance(myFiles)}
+      </div>
+    `;
+    bindDashboardLinks();
+    bindFileActions();
+    bindStaffDashboardPerformance();
+    return;
+  }
+  const dataNotice = !s.total ? `
+    <div class="permission-note">
+      No file data is loaded in this browser. Use Admin login > User Management > Restore Backup, or Pull Data from Site if site sync was previously saved.
+    </div>
+  ` : "";
+  document.querySelector("#dashboard").innerHTML = `
+    ${dataNotice}
+    <div class="grid metrics dashboard-main-metrics">
+        ${metric("Total Files", s.total, "Click to View All Records", "grad-blue", "all")}
+        ${metric("Not Started", s.notStarted, "Click to View Not Started", "grad-slate", "notStarted")}
+        ${metric("Work in Progress", s.workInProgress, "Click to View Work in Progress", "grad-purple", "wip")}
+        ${metric("Completed", s.completed, "Click to View Completed Files", "grad-green", "completed")}
+        ${metric("Fee Pending", s.feePending, "Click to View Fee Pending", "grad-pink", "feePending")}
+        ${metric("Pending Files", s.pending, "Click to View Not Filed", "grad-red", "pending")}
+        ${metric("Overdue Files", s.overdue, "Click for Immediate Follow-Up", "grad-red", "overdue")}
+        ${metric("Approval Pending", s.sharedNotApproved, "Click for approval pending", "grad-yellow", "approval")}
+        ${metric("Correction Required", s.correctionRequired, "Click to View Correction Files", "grad-yellow", "correction")}
+        ${metric("Re Allotted Files", s.reAllotted, "Click to View Re-Allotted Files", "grad-purple", "reallotted")}
+        ${metric("Reports Prepared", s.reportsPrepared, "Click to View Reports Ready", "grad-purple", "report")}
+        ${metric("Not Checked Files", s.notChecked, "Awaiting Manager Check", "grad-yellow", "notChecked")}
+        ${metric("Billed Files", s.billed, "Click to View Billed Records", "grad-darkgreen", "billed")}
+        ${metric("Unbilled Files", s.unbilled, "Click for Billing Follow-Up", "grad-pink", "unbilled")}
+    </div>
+    <section class="panel dashboard-staff-summary-panel">
+      <button class="staff-summary-toggle" id="staffSummaryToggle" type="button">
+        <span>Staff-Wise File Summary</span>
+        <strong>${dashboardStaffSummaryRows().length} Staff</strong>
+      </button>
+      <div class="staff-summary-body ${state.filters.dashboardStaffSummaryOpen === "Yes" ? "" : "hidden"}" id="staffSummaryBody">
+        <div class="filters colourful-filters dashboard-staff-filters">
+          ${dashboardStaffFilter("dashboardStaffName", "Staff Name", ["", ...state.users.map((u) => u.name)])}
+          ${dashboardStaffInput("dashboardStaffFrom", "From Date", "date")}
+          ${dashboardStaffInput("dashboardStaffTo", "To Date", "date")}
+          ${dashboardStaffFilter("dashboardStaffStatus", "File Status", ["", "Pending", "Not Started", "Work in Progress", "On Hold", "Client Pending", "Completed", "Not Checked", "Billed", "Non-Billed", "Overdue"])}
+          ${dashboardStaffFilter("dashboardStaffService", "Service Type", ["", ...state.services])}
+        </div>
+        <div class="action-row dashboard-staff-actions">
+          <button class="secondary-button" id="clearDashboardStaffFilters">Clear Filters</button>
+          <button class="secondary-button" id="dashboardStaffExcel" ${rolePerm().export ? "" : "disabled"}>Export Excel</button>
+          <button class="secondary-button" id="dashboardStaffPdf" ${rolePerm().export ? "" : "disabled"}>Export PDF</button>
+        </div>
+        ${renderDashboardStaffSummaryTable(dashboardStaffSummaryRows())}
+      </div>
+    </section>
+  `;
+  bindDashboardLinks();
+  bindDashboardStaffSummary();
+}
+
+function renderStaffDashboardPerformance(files) {
+  const filtered = filterStaffPerformanceFiles(files);
+  const completed = filtered.filter(isCheckedCompleted).sort(sortStaffPerformanceFiles);
+  const workInProgress = filtered.filter((file) => !isCheckedCompleted(file) && stageIndex(file) > 0).sort(sortStaffPerformanceFiles);
+  const notStarted = filtered.filter((file) => !isCheckedCompleted(file) && stageIndex(file) === 0).sort(sortStaffPerformanceFiles);
+  return `
+    <section class="panel staff-performance-panel">
+      <div class="staff-performance-head">
+        <div>
+          <h3>My Performance</h3>
+          <p>${filtered.length} File(s) shown for the selected period</p>
+        </div>
+        <div class="staff-performance-total">${files.length} Total</div>
+      </div>
+      <div class="filters colourful-filters staff-performance-controls">
+        ${staffPerformanceDateInput("staffPerformanceFrom", "From Date")}
+        ${staffPerformanceDateInput("staffPerformanceTo", "To Date")}
+        <div class="field">
+          <label>Action</label>
+          <button class="secondary-button" id="staffPerformanceShow">Show</button>
+        </div>
+        <div class="field">
+          <label>Clear</label>
+          <button class="secondary-button" id="staffPerformanceClear">All Files</button>
+        </div>
+      </div>
+      ${renderStaffPerformanceSection("Completed Files", completed, "No completed files found.")}
+      ${renderStaffPerformanceSection("Work in Progress Files", workInProgress, "No work in progress files found.")}
+      ${renderStaffPerformanceSection("Not Started Files", notStarted, "No not started files found.")}
+    </section>
+  `;
+}
+
+function staffPerformanceDateInput(key, label) {
+  return `<div class="field"><label>${label}</label><input type="date" id="${key}" value="${escapeHtml(state.filters[key] || "")}"></div>`;
+}
+
+function filterStaffPerformanceFiles(files) {
+  const from = state.filters.staffPerformanceFrom || "";
+  const to = state.filters.staffPerformanceTo || "";
+  if (!from && !to) return [...files];
+  return files.filter((file) => {
+    const date = staffPerformanceDate(file);
+    if (!date) return false;
+    if (from && date < from) return false;
+    if (to && date > to) return false;
+    return true;
+  });
+}
+
+function navGroupDefinitions() {
+  if (isStaffLogin()) {
+    const notCheckedItem = canViewNotCheckedFiles() ? [navItem("not-checked-files", "pending", "Not Checked Files", "notChecked")] : [];
+    return [
+      { key: "main", label: "Main", collapsible: false, items: [
+        navItem("dashboard", "dashboard", "Dashboard"),
+        navItem("my-task", "task", "My Task", "myTask"),
+      ] },
+      { key: "files", label: "File Management", collapsible: true, items: [
+        navItem("active-files", "folder", "Active Files", "active"),
+        ...notCheckedItem,
+        navItem("completed-files", "check", "Completed Files", "completed"),
+      ] },
+      { key: "billing", label: "Billing Status", collapsible: true, items: [
+        navItem("billed-files", "invoice", "Billed Files", "billed"),
+        navItem("fee-pending", "rupee", "Fee Pending Files", "feePending"),
+        navItem("non-billed-files", "receipt", "Non Billed Files", "nonBilled"),
+      ] },
+    ];
+  }
+  return [
+    { key: "main", label: "Main", collapsible: false, items: [
+      navItem("dashboard", "dashboard", "Dashboard"),
+      navItem("files", "file", "File List"),
+    ] },
+    { key: "files", label: "File Management", collapsible: true, items: [
+      navItem("active-files", "folder", "Active Files", "active"),
+      navItem("not-checked-files", "pending", "Not Checked Files", "notChecked"),
+      navItem("completed-files", "check", "Completed Files", "completed"),
+    ] },
+    { key: "billing", label: "Billing Status", collapsible: true, items: [
+      navItem("non-billed-files", "receipt", "Non-Billed Files", "nonBilled"),
+      navItem("billed-files", "invoice", "Billed Files", "billed"),
+      navItem("fee-pending", "rupee", "Fee Pending", "feePending"),
+    ] },
+    { key: "reports", label: "Reports & Operations", collapsible: true, items: [
+      navItem("dailyReport", "report", "Daily Report M&A"),
+      navItem("visitors", "users", "Visitors"),
+      navItem("staff", "chart", "Staff Performance"),
+      navItem("reports", "database", "Reports & Export"),
+      ...(canUseVerificationPage() ? [navItem("verification", "check", "Verification")] : []),
+    ] },
+    { key: "admin", label: "Administration", collapsible: true, items: [
+      navItem("expenses", "expense", "Expenses"),
+      ...(canUseBackupPage() ? [navItem("backup", "backup", "Backup")] : []),
+      navItem("users", "lock", "User Management", "", true),
+    ] },
+  ];
+}
+
+function navItem(id, icon, label, countKey = "", adminOnly = false) {
+  return { id, icon, label, countKey, adminOnly };
+}
+
+function navItemButton(item, fileViews, counts) {
+  const active = navItemActive(item.id, fileViews);
+  const count = counts[item.countKey] || 0;
+  return `<button data-page="${item.id}" class="nav-item ${active ? "active" : ""}" title="${escapeHtml(item.label)}">
+    <span class="nav-icon">${navIcon(item.icon)}</span>
+    <span class="nav-label">${escapeHtml(item.label)}</span>
+    ${count ? `<span class="nav-badge nav-badge-${item.countKey}">${count}</span>` : ""}
+  </button>`;
+}
+
+function navItemActive(id, fileViews) {
+  const specialActive = fileViews[id] && activePage === "files" && state.filters.listView === fileViews[id];
+  const normalActive = activePage === id && !fileViews[id] && (id !== "files" || !state.filters.listView);
+  const myTaskActive = id === "my-task" && activePage === "files" && state.filters.listView === "active" && isStaffLogin();
+  return Boolean(normalActive || specialActive || myTaskActive);
+}
+
+function navBadgeCounts() {
+  const files = visibleFiles();
+  return {
+    myTask: files.filter((file) => !isCheckedCompleted(file)).length,
+    active: files.filter((file) => !isCheckedCompleted(file)).length,
+    notChecked: files.filter(isNotCheckedFile).length,
+    completed: files.filter(isCheckedCompleted).length,
+    nonBilled: files.filter(isNonBilledFile).length,
+    billed: files.filter(isBilledFile).length,
+    feePending: files.filter(isFeePendingFile).length,
+  };
+}
+
+function navGroupCollapsed(key) {
+  return localStorage.getItem(`${STORAGE_KEY}-nav-group-${key}`) === "collapsed";
+}
+
+function navIcon(name) {
+  const icons = {
+    dashboard: '<svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V4h-6v16ZM4 20h6v-5H4v5Z"/></svg>',
+    task: '<svg viewBox="0 0 24 24"><path d="M7 4h10l2 2v14H5V6l2-2Zm1 5h8V7H8v2Zm0 4h8v-2H8v2Zm0 4h5v-2H8v2Z"/></svg>',
+    file: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Zm7 1.8V8h3.2L13 4.8ZM8 12h8v-2H8v2Zm0 4h8v-2H8v2Z"/></svg>',
+    folder: '<svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v10.5A2.5 2.5 0 0 1 18.5 21h-13A2.5 2.5 0 0 1 3 18.5V6Zm2 4v8.5c0 .28.22.5.5.5h13a.5.5 0 0 0 .5-.5V10H5Z"/></svg>',
+    pending: '<svg viewBox="0 0 24 24"><path d="M12 2 2 20h20L12 2Zm1 14h-2v2h2v-2Zm0-7h-2v5h2V9Z"/></svg>',
+    check: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1.2 14.4-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4-7 7Z"/></svg>',
+    receipt: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2L6 21V3Zm3 5h6V6H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>',
+    invoice: '<svg viewBox="0 0 24 24"><path d="M5 3h14v18l-3-2-3 2-3-2-3 2-2-1.4V3Zm4 5h6V6H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>',
+    rupee: '<svg viewBox="0 0 24 24"><path d="M7 4h11v2h-4.2c.5.5.9 1.2 1 2H18v2h-3.3c-.4 2.3-2.3 3.8-5.1 4l5.5 6h-3L6.4 13.7V12h2.8c1.7 0 2.8-.7 3.2-2H7V8h5.2C11.8 6.8 10.7 6 9 6H7V4Z"/></svg>',
+    expense: '<svg viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm2 2v10h12V7H6Zm2 2h5v2H8V9Zm0 4h8v2H8v-2Zm8-4h1v2h-1V9Z"/></svg>',
+    report: '<svg viewBox="0 0 24 24"><path d="M5 3h14v18H5V3Zm3 14h8v-2H8v2Zm0-4h8v-2H8v2Zm0-4h5V7H8v2Z"/></svg>',
+    users: '<svg viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.7-6 3.8V20h12v-3.2C15 14.7 12.3 13 9 13Zm8.5-1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm.5 1.2c-.9 0-1.7.1-2.4.4 1.1.8 1.9 1.9 1.9 3.2V20H22v-3c0-2.1-1.8-3.8-4-3.8Z"/></svg>',
+    chart: '<svg viewBox="0 0 24 24"><path d="M4 19h16v2H4V3h2v16Zm4-2h3V9H8v8Zm5 0h3V5h-3v12Zm5 0h3v-6h-3v6Z"/></svg>',
+    database: '<svg viewBox="0 0 24 24"><path d="M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3Zm-8 5c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3V8Zm0 6c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3v-4Z"/></svg>',
+    backup: '<svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 1 7 7v1h2l-3 4-3-4h2v-1a5 5 0 0 0-8.9-3.1L6.7 5.5A7 7 0 0 1 12 3ZM6 13v1a5 5 0 0 0 8.9 3.1l1.4 1.4A7 7 0 0 1 5 14v-1H3l3-4 3 4H6Z"/></svg>',
+    lock: '<svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2h2v11H5V10h2Zm2 0h6V8a3 3 0 0 0-6 0v2Zm4 7.7V14h-2v3.7h2Z"/></svg>',
+    briefcase: '<svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h4v14H4V6h4l1-2Zm1.2 2h3.6l-.3-.6h-3l-.3.6ZM6 10v8h12v-8H6Z"/></svg>',
+    logout: '<svg viewBox="0 0 24 24"><path d="M5 3h8v2H7v14h6v2H5V3Zm11.6 5.4L20.2 12l-3.6 3.6-1.4-1.4 1.2-1.2H10v-2h6.4l-1.2-1.2 1.4-1.4Z"/></svg>',
+    chevron: '<svg viewBox="0 0 24 24"><path d="m8 9 4 4 4-4 1.4 1.4L12 15.8l-5.4-5.4L8 9Z"/></svg>',
+  };
+  return icons[name] || icons.file;
+}
+
+function staffPerformanceDate(file) {
+  return normalizeImportDate(
+    isCheckedCompleted(file)
+      ? workCompletedDate(file)
+      : (file.workAllotmentDate || file.fileReceivedDate || file.dueDate || file.lastUpdatedDate)
+  );
+}
+
+function sortStaffPerformanceFiles(a, b) {
+  return fileSerialSortValue(a) - fileSerialSortValue(b);
+}
+
+function renderStaffPerformanceSection(title, files, emptyText) {
+  return `
+    <div class="staff-performance-section">
+      <div class="staff-performance-section-title">
+        <h4>${title}</h4>
+        <span>${files.length}</span>
+      </div>
+      ${files.length ? renderStaffFileTable(files, "") : empty(emptyText)}
+    </div>
+  `;
+}
+
+function bindStaffDashboardPerformance() {
+  const fromInput = document.querySelector("#staffPerformanceFrom");
+  const toInput = document.querySelector("#staffPerformanceTo");
+  const apply = () => {
+    state.filters.staffPerformanceFrom = fromInput?.value || "";
+    state.filters.staffPerformanceTo = toInput?.value || "";
+    saveState();
+    renderDashboard();
+  };
+  const showButton = document.querySelector("#staffPerformanceShow");
+  if (showButton) showButton.onclick = apply;
+  [fromInput, toInput].forEach((input) => {
+    if (!input) return;
+    input.onkeydown = (event) => {
+      if (event.key === "Enter") apply();
+    };
+  });
+  const clearButton = document.querySelector("#staffPerformanceClear");
+  if (clearButton) {
+    clearButton.onclick = () => {
+      state.filters.staffPerformanceFrom = "";
+      state.filters.staffPerformanceTo = "";
+      saveState();
+      renderDashboard();
+    };
+  }
+}
+
+function metric(label, value, note, className, filterKey = "") {
+  return `<button class="metric-card ${className}" data-dashboard-filter="${filterKey}"><span>${label}</span><strong>${value}</strong><p>${note}</p></button>`;
+}
+
+function dashboardStatusCards() {
+  const files = visibleFiles();
+  const count = (predicate) => files.filter(predicate).length;
+  return [
+    { key: "all", label: "Total Files", count: files.length, icon: "TF", tone: "tone-blue" },
+    { key: "notStarted", label: "Not Started", count: count((f) => stageIndex(f) === 0), icon: "NS", tone: "tone-slate" },
+    { key: "wip", label: "Work in Progress", count: count((f) => f.stages?.WIP && !isCheckedCompleted(f)), icon: "WP", tone: "tone-blue" },
+    { key: "onHold", label: "On Hold", count: count((f) => f.stages?.["On Hold"]), icon: "OH", tone: "tone-amber" },
+    { key: "clientPending", label: "Client Pending", count: count((f) => f.stages?.["Client Pending"]), icon: "CP", tone: "tone-amber" },
+    { key: "awaitingApproval", label: "Awaiting Approval", count: count(pendingApproval), icon: "AA", tone: "tone-amber" },
+    { key: "completed", label: "Completed", count: count(isCheckedCompleted), icon: "CP", tone: "tone-green" },
+    { key: "notChecked", label: "Not Checked", count: count(isNotCheckedFile), icon: "NC", tone: "tone-amber" },
+    { key: "correction", label: "Correction Required", count: count((f) => f.stages?.["Correction Required"]), icon: "CR", tone: "tone-red" },
+    { key: "billed", label: "Billed", count: count(isBilledFile), icon: "BL", tone: "tone-cyan" },
+    { key: "unbilled", label: "Non-Billed", count: count(isNonBilledFile), icon: "NB", tone: "tone-pink" },
+    { key: "feePending", label: "Fee Pending", count: count(isFeePendingFile), icon: "FP", tone: "tone-red" },
+    { key: "overdue", label: "Overdue", count: count(isOverdue), icon: "OD", tone: "tone-red" },
+  ];
+}
+
+function dashboardStaffInput(id, label, type = "text") {
+  return `<div class="field"><label>${label}</label><input id="${id}" type="${type}" value="${escapeHtml(state.filters[id] || "")}"></div>`;
+}
+
+function dashboardStaffFilter(id, label, options) {
+  return `<div class="field"><label>${label}</label><select id="${id}">${options.map((item) => `<option value="${escapeHtml(item)}" ${state.filters[id] === item ? "selected" : ""}>${item || "All"}</option>`).join("")}</select></div>`;
+}
+
+function dashboardStaffSummaryRows() {
+  const selectedStaff = state.filters.dashboardStaffName || "";
+  const fromDate = state.filters.dashboardStaffFrom || "";
+  const toDate = state.filters.dashboardStaffTo || "";
+  const selectedStatus = state.filters.dashboardStaffStatus || "";
+  const selectedService = state.filters.dashboardStaffService || "";
+  return state.users
+    .filter((user) => !selectedStaff || user.name === selectedStaff)
+    .map((user) => {
+      const rows = visibleFiles().filter((file) => {
+        if (!fileBelongsToUser(file, user) && !sameStaffName(file.assignedStaff, user.name)) return false;
+        if (selectedService && file.serviceType !== selectedService) return false;
+        const fileDate = file.workAllotmentDate || file.fileReceivedDate || file.lastUpdatedDate || file.dueDate || "";
+        if (fromDate && fileDate < fromDate) return false;
+        if (toDate && fileDate > toDate) return false;
+        if (selectedStatus && !dashboardFileMatchesStatus(file, selectedStatus)) return false;
+        return true;
+      });
+      return {
+        "Staff Name": user.name,
+        "Total Assigned": rows.length,
+        Pending: rows.filter((f) => !isCheckedCompleted(f)).length,
+        "Not Started": rows.filter((f) => stageIndex(f) === 0).length,
+        WIP: rows.filter((f) => stageIndex(f) > 0 && !isCheckedCompleted(f)).length,
+        Completed: rows.filter(isCheckedCompleted).length,
+        Overdue: rows.filter(isOverdue).length,
+      };
+    })
+    .filter((row) => row["Total Assigned"] > 0 || selectedStaff);
+}
+
+function dashboardFileMatchesStatus(file, status) {
+  if (status === "Pending") return !isCheckedCompleted(file);
+  if (status === "Not Started") return stageIndex(file) === 0;
+  if (status === "Work in Progress") return stageIndex(file) > 0 && !isCheckedCompleted(file);
+  if (status === "On Hold") return Boolean(file.stages?.["On Hold"]);
+  if (status === "Client Pending") return Boolean(file.stages?.["Client Pending"]);
+  if (status === "Completed") return isCheckedCompleted(file);
+  if (status === "Not Checked") return isNotCheckedFile(file);
+  if (status === "Billed") return isBilledFile(file);
+  if (status === "Non-Billed") return isNonBilledFile(file);
+  if (status === "Overdue") return isOverdue(file);
+  return true;
+}
+
+function renderDashboardStaffSummaryTable(rows) {
+  if (!rows.length) return empty("No staff-wise records match these filters.");
+  const headers = Object.keys(rows[0]);
+  return `
+    <div class="table-wrap file-table-wrap dashboard-staff-table">
+      <table class="file-table file-table-compact">
+        <thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows.map((row) => `<tr>${headers.map((header) => {
+            if (header === "Staff Name") return `<td>${escapeHtml(row[header])}</td>`;
+            return `<td><button class="staff-summary-count ${dashboardStaffCountTone(header)}" data-summary-staff="${escapeHtml(row["Staff Name"])}" data-summary-kind="${dashboardStaffKind(header)}">${row[header]}</button></td>`;
+          }).join("")}</tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function dashboardStaffKind(header) {
+  return {
+    "Total Assigned": "all",
+    Pending: "pending",
+    "Not Started": "notStarted",
+    WIP: "wip",
+    Completed: "completed",
+    Overdue: "overdue",
+  }[header] || "all";
+}
+
+function dashboardStaffCountTone(header) {
+  return {
+    "Total Assigned": "tone-blue",
+    Pending: "tone-amber",
+    "Not Started": "tone-slate",
+    WIP: "tone-purple",
+    Completed: "tone-green",
+    Overdue: "tone-red",
+  }[header] || "tone-blue";
+}
+
+function bindDashboardStaffSummary() {
+  const toggle = document.querySelector("#staffSummaryToggle");
+  const body = document.querySelector("#staffSummaryBody");
+  if (toggle && body) toggle.onclick = () => {
+    body.classList.toggle("hidden");
+    state.filters.dashboardStaffSummaryOpen = body.classList.contains("hidden") ? "" : "Yes";
+    saveState();
+  };
+  ["dashboardStaffName", "dashboardStaffFrom", "dashboardStaffTo", "dashboardStaffStatus", "dashboardStaffService"].forEach((id) => {
+    const input = document.querySelector(`#${id}`);
+    if (!input) return;
+    input.onchange = () => {
+      state.filters[id] = input.value;
+      saveState();
+      renderDashboard();
+    };
+  });
+  const clear = document.querySelector("#clearDashboardStaffFilters");
+  if (clear) clear.onclick = () => {
+    ["dashboardStaffName", "dashboardStaffFrom", "dashboardStaffTo", "dashboardStaffStatus", "dashboardStaffService"].forEach((key) => (state.filters[key] = ""));
+    saveState();
+    renderDashboard();
+  };
+  const excel = document.querySelector("#dashboardStaffExcel");
+  if (excel) excel.onclick = () => exportExcel("staff-wise-file-summary", dashboardStaffSummaryRows());
+  const pdf = document.querySelector("#dashboardStaffPdf");
+  if (pdf) pdf.onclick = () => exportPdf("staff-wise-file-summary", dashboardStaffSummaryRows());
+  document.querySelectorAll("[data-summary-staff]").forEach((button) => {
+    button.onclick = () => openStaffSummaryFiles(button.dataset.summaryStaff, button.dataset.summaryKind);
+  });
+}
+
+function openStaffSummaryFiles(staffName, kind) {
+  resetFilters();
+  state.filters.staff = staffName;
+  if (kind === "pending") state.filters.dashboardKind = "pending";
+  if (kind === "notStarted") state.filters.workflow = "Received";
+  if (kind === "wip") state.filters.workflow = "WIP";
+  if (kind === "completed") state.filters.dashboardKind = "completed";
+  if (kind === "overdue") state.filters.overdue = "Yes";
+  state.filters.fromDashboard = "Yes";
+  saveState();
+  activePage = "files";
+  renderAll();
+}
+
+function bar(label, value, max, kind = "") {
+  const width = Math.round((value / max) * 100);
+  return `<button class="bar-row bar-link" data-staff-filter="${escapeHtml(label)}" data-staff-kind="${kind}"><span>${label}</span><div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div><strong>${value}</strong></button>`;
+}
+
+function bindDashboardLinks() {
+  document.querySelectorAll("[data-dashboard-filter]").forEach((card) => {
+    card.onclick = () => openFilesFromDashboard(card.dataset.dashboardFilter);
+  });
+  document.querySelectorAll("[data-staff-filter]").forEach((row) => {
+    row.onclick = () => {
+      resetFilters();
+      state.filters.staff = row.dataset.staffFilter;
+      if (row.dataset.staffKind === "pending") state.filters.dashboardKind = "pending";
+      if (row.dataset.staffKind === "completed") state.filters.dashboardKind = "completed";
+      if (row.dataset.staffKind === "not-started") state.filters.workflow = "Received";
+      state.filters.fromDashboard = "Yes";
+      saveState();
+      activePage = "files";
+      renderAll();
+    };
+  });
+}
+
+function openFilesFromDashboard(kind) {
+  if (isStaffLogin()) return openStaffFilesFromDashboard(kind);
+  resetFilters();
+  if (kind === "active") state.filters.listView = "active";
+  if (kind === "all") state.filters.listView = "";
+  if (kind === "notStarted") state.filters.workflow = "Received";
+  if (kind === "wip") state.filters.workflow = "WIP";
+  if (kind === "onHold") state.filters.workflow = "On Hold";
+  if (kind === "clientPending") state.filters.workflow = "Client Pending";
+  if (kind === "workDone") state.filters.workflow = "Work Done";
+  if (kind === "shared") state.filters.dashboardKind = "shared";
+  if (kind === "reportPrepared") state.filters.dashboardKind = "reportsPrepared";
+  if (kind === "awaitingApproval") state.filters.pendingApproval = "Yes";
+  if (kind === "approved") state.filters.workflow = "Approved";
+  if (kind === "filed") state.filters.status = "Completed";
+  if (kind === "feePending") state.filters.listView = "feePending";
+  if (kind === "pending") state.filters.dashboardKind = "pending";
+  if (kind === "overdue") state.filters.overdue = "Yes";
+  if (kind === "approval") state.filters.pendingApproval = "Yes";
+  if (kind === "correction") state.filters.dashboardKind = "correctionRequired";
+  if (kind === "reallotted") state.filters.dashboardKind = "reAllotted";
+  if (kind === "report") state.filters.dashboardKind = "reportsPrepared";
+  if (kind === "completed") state.filters.dashboardKind = "completed";
+  if (kind === "notChecked") state.filters.listView = "notChecked";
+  if (kind === "billed") state.filters.listView = "billed";
+  if (kind === "unbilled") state.filters.listView = "nonBilled";
+  state.filters.fromDashboard = "Yes";
+  saveState();
+  activePage = "files";
+  renderAll();
+}
+
+function resetFilters() {
+  Object.keys(state.filters).forEach((key) => (state.filters[key] = ""));
+}
+
+function renderFilesPage() {
+  if (isStaffLogin()) return renderStaffFilesPage();
+  const files = sortFilesForDisplay(filteredFiles());
+  document.querySelector("#files").innerHTML = `
+    <div class="panel">
+      <div class="filter-hero">
+        <div>
+          <h3>Search & Filter Files</h3>
+        </div>
+        <span id="fileCount">${files.length} File(s) Shown</span>
+      </div>
+      <div class="filters colourful-filters">
+        ${inputFilter("search", "Global Search", "Search name, PAN, staff, remarks")}
+        ${inputFilter("client", "Client Name", "Client")}
+        ${comboFilter("careOfFilter", "C/o", careOfDropdownOptions(), "Search or select C/o")}
+        ${selectFilter("service", "Service Type", ["", ...serviceDropdownOptions()])}
+        ${selectFilter("workflow", "Workflow", ["", ...stages])}
+        ${selectFilter("status", "Status", ["", "Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Approved", "Completed", "Billed", "Overdue"])}
+        ${selectFilter("staff", "Staff", ["", ...assignableStaffNames()])}
+        ${inputFilter("due", "Due Date", "", "date")}
+        ${selectFilter("receivedSort", "Sort by Received Date", ["Oldest First", "Newest First"])}
+        ${selectFilter("priority", "Priority", ["", "Low", "Medium", "High", "Urgent"])}
+        ${selectFilter("billing", "Billing", ["", "Billed", "Unbilled"])}
+        ${state.filters.listView === "completed" ? selectFilter("checkingStatus", "Checking Status", ["", "Not Checked", "Checked", "Returned for Correction"]) : ""}
+        ${inputFilter("pan", "PAN / Regn Number", "PAN or Regn")}
+        ${selectFilter("overdue", "Overdue Files", ["", "Yes"])}
+        ${selectFilter("pendingApproval", "Approval Pending", ["", "Yes"])}
+        ${isStaffLogin() ? inputFilter("fileFrom", "From", "", "date") : ""}
+        ${isStaffLogin() ? inputFilter("fileTo", "To", "", "date") : ""}
+      </div>
+      <div class="action-row" style="margin-bottom:14px">
+        <button class="secondary-button" id="clearFilters">Clear Filters</button>
+        ${isStaffLogin() ? `<button class="secondary-button" id="clearStaffDates">Clear Dates</button>` : ""}
+        ${rolePerm().export ? `<button class="secondary-button" id="exportFiltered">Export Filtered Excel</button>` : ""}
+      </div>
+      <div id="fileResults">${renderFileTable(files)}</div>
+    </div>
+  `;
+  bindFilters();
+  document.querySelector("#clearFilters").onclick = () => {
+    resetFilters();
+    saveState();
+    renderAll();
+  };
+  const clearStaffDates = document.querySelector("#clearStaffDates");
+  if (clearStaffDates) {
+    clearStaffDates.onclick = () => {
+      state.filters.fileFrom = "";
+      state.filters.fileTo = "";
+      saveState();
+      renderAll();
+    };
+  }
+  const exportFiltered = document.querySelector("#exportFiltered");
+  if (exportFiltered) exportFiltered.onclick = () => exportExcel("filtered-files", files);
+  bindFileActions();
+}
+
+function renderStaffFilesPage() {
+  const listView = state.filters.listView || "";
+  const files = staffPageFiles(listView);
+  const showDateFilter = ["completed", "notChecked"].includes(listView);
+  const showActiveStaffFilters = ["", "active"].includes(listView);
+  document.querySelector("#files").innerHTML = `
+    <div class="panel">
+      <div class="filter-hero">
+        <div>
+          <h3>${staffFilePageTitle(listView)}</h3>
+        </div>
+        <span id="fileCount">${files.length} File(s) Shown</span>
+      </div>
+      ${showDateFilter ? `
+        <div class="filters colourful-filters staff-date-filter">
+          ${inputFilter("fileFrom", "From Date", "", "date")}
+          ${inputFilter("fileTo", "To Date", "", "date")}
+          <div class="field">
+            <label>Action</label>
+            <button class="secondary-button" id="clearStaffDates">Clear Dates</button>
+          </div>
+        </div>
+      ` : ""}
+      ${showActiveStaffFilters ? `
+        <div class="filters colourful-filters staff-date-filter">
+          ${inputFilter("staffFileName", "File Name", "Search file name")}
+          ${inputFilter("staffCareOf", "C/o", "Search C/o")}
+          ${inputFilter("staffAllottedDate", "Allotted Date", "", "date")}
+          ${inputFilter("staffDueDate", "Due Date", "", "date")}
+          ${selectFilter("staffPriority", "Priority", ["", "Low", "Medium", "High", "Urgent"])}
+        </div>
+      ` : ""}
+      <div class="action-row" style="margin-bottom:14px">
+        ${showActiveStaffFilters ? `<button class="secondary-button" id="clearStaffActiveFilters">Clear Filters</button>` : ""}
+        <button class="secondary-button" id="staffExportExcel">Export to Excel</button>
+        <button class="secondary-button" id="staffExportPdf">Export to PDF</button>
+        <button class="secondary-button" id="staffPrintReport">Print</button>
+      </div>
+      <div id="fileResults">${listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView)}</div>
+    </div>
+  `;
+  if (showDateFilter) {
+    bindStaffDateFilters();
+    const clearStaffDates = document.querySelector("#clearStaffDates");
+    if (clearStaffDates) {
+      clearStaffDates.onclick = () => {
+        state.filters.fileFrom = "";
+        state.filters.fileTo = "";
+        saveState();
+        renderAll();
+      };
+    }
+  }
+  if (showActiveStaffFilters) bindStaffActiveFilters();
+  const clearStaffActiveFilters = document.querySelector("#clearStaffActiveFilters");
+  if (clearStaffActiveFilters) {
+    clearStaffActiveFilters.onclick = () => {
+      ["staffFileName", "staffCareOf", "staffAllottedDate", "staffDueDate", "staffPriority"].forEach((key) => (state.filters[key] = ""));
+      saveState();
+      renderStaffFilesPage();
+    };
+  }
+  document.querySelector("#staffExportExcel").onclick = () => exportStaffPageExcel(listView, files);
+  document.querySelector("#staffExportPdf").onclick = () => exportStaffPagePdf(listView, files);
+  document.querySelector("#staffPrintReport").onclick = () => printStaffPageReport(listView, files);
+  bindFileActions();
+}
+
+function staffFilePageTitle(listView) {
+  if (state.filters.overdue === "Yes") return "Overdue Files";
+  if (state.filters.pendingApproval === "Yes") return "Approval Pending Files";
+  if (state.filters.dashboardKind === "correctionRequired") return "Correction Required Files";
+  if (state.filters.dashboardKind === "reAllotted") return "Re-Allotted Files";
+  const titleMap = {
+    "": "File List",
+    active: "Active Files",
+    completed: "Completed Files",
+    notChecked: "Not Checked Files",
+    nonBilled: "Non-Billed Files",
+    billed: "Billed Files",
+    feePending: "Fee Pending Files",
+  };
+  return titleMap[listView] || "My Files";
+}
+
+function bindStaffDateFilters() {
+  document.querySelectorAll("[data-filter='fileFrom'], [data-filter='fileTo']").forEach((el) => {
+    el.oninput = (event) => {
+      state.filters[event.target.dataset.filter] = event.target.value;
+      saveViewState();
+      renderStaffFilesPage();
+    };
+    el.onchange = el.oninput;
+  });
+}
+
+function bindStaffActiveFilters() {
+  document.querySelectorAll("[data-filter='staffFileName'], [data-filter='staffCareOf'], [data-filter='staffAllottedDate'], [data-filter='staffDueDate'], [data-filter='staffPriority']").forEach((el) => {
+    el.oninput = (event) => {
+      state.filters[event.target.dataset.filter] = event.target.value;
+      saveViewState();
+      renderStaffFilesPage();
+    };
+    el.onchange = el.oninput;
+  });
+}
+
+function staffPageFiles(listView) {
+  if (listView === "notChecked" && !canViewNotCheckedFiles()) return [];
+  const ownFiles = listView === "notChecked" && canManageChecking() ? (state.files || []) : visibleFiles();
+  const rows = ownFiles.filter((file) => {
+    if (state.filters.overdue === "Yes" && !isOverdue(file)) return false;
+    if (state.filters.pendingApproval === "Yes" && !pendingApproval(file)) return false;
+    if (state.filters.workflow && !file.stages?.[state.filters.workflow]) return false;
+    if (state.filters.dashboardKind === "correctionRequired" && !file.stages?.["Correction Required"]) return false;
+    if (state.filters.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
+    if (listView === "active") return !isCheckedCompleted(file);
+    if (listView === "completed") {
+      if (!isCheckedCompleted(file)) return false;
+      const completedDate = workCompletedDate(file);
+      if (state.filters.fileFrom && completedDate < state.filters.fileFrom) return false;
+      if (state.filters.fileTo && completedDate > state.filters.fileTo) return false;
+      return true;
+    }
+    if (listView === "notChecked") {
+      if (!isNotCheckedFile(file)) return false;
+      const completedDate = workCompletedDate(file);
+      if (state.filters.fileFrom && completedDate < state.filters.fileFrom) return false;
+      if (state.filters.fileTo && completedDate > state.filters.fileTo) return false;
+      return true;
+    }
+    if (listView === "billed") return isBilledFile(file);
+    if (listView === "nonBilled") return isNonBilledFile(file);
+    if (listView === "feePending") return isFeePendingFile(file);
+    return true;
+  });
+  const filteredRows = ["", "active"].includes(listView) ? filterStaffActiveRows(rows) : rows;
+  if (listView === "active") return filteredRows.sort((a, b) => fileDateSortValue(a.workAllotmentDate || a.fileReceivedDate) - fileDateSortValue(b.workAllotmentDate || b.fileReceivedDate));
+  return filteredRows.sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
+}
+
+function filterStaffActiveRows(rows) {
+  const f = state.filters;
+  return rows.filter((file) => {
+    if (f.staffFileName && !String(file.name || "").toLowerCase().includes(f.staffFileName.toLowerCase())) return false;
+    if (f.staffCareOf && !String(file.careOf || "").toLowerCase().includes(f.staffCareOf.toLowerCase())) return false;
+    if (f.staffAllottedDate && normalizeImportDate(file.workAllotmentDate || file.fileReceivedDate) !== f.staffAllottedDate) return false;
+    if (f.staffDueDate && normalizeImportDate(file.dueDate) !== f.staffDueDate) return false;
+    if (f.staffPriority && file.priority !== f.staffPriority) return false;
+    return true;
+  });
+}
+
+function fileSerialSortValue(file) {
+  return Number(file.importSerialNumber || 0) || (Number(file.excelRowNumber || 0) > 1 ? Number(file.excelRowNumber) - 1 : Number.MAX_SAFE_INTEGER);
+}
+
+function fileDateSortValue(dateString) {
+  return Date.parse(normalizeImportDate(dateString) || "") || Number.MAX_SAFE_INTEGER;
+}
+
+function sortFilesForDisplay(files) {
+  if (["", "active"].includes(state.filters.listView || "") && ["Admin", "Manager"].includes(state.currentRole)) {
+    const direction = state.filters.receivedSort === "Newest First" ? -1 : 1;
+    return [...files].sort((a, b) => direction * (fileDateSortValue(a.fileReceivedDate) - fileDateSortValue(b.fileReceivedDate)));
+  }
+  return files;
+}
+
+function workCompletedDate(file) {
+  return file.completionDate || file.completedDate || file.lastUpdatedDate || file.workAllotmentDate || file.fileReceivedDate || "";
+}
+
+function staffReportRow(file, listView = "") {
+  const startedDate = file.workStartedDate || (file.stages?.WIP || file.stages?.["Work Done"] || file.stages?.Completed ? file.workAllotmentDate || file.fileReceivedDate : "");
+  if (listView === "active") {
+    return {
+      Client: file.name,
+      Service: file.serviceType,
+      "Received on": displayDate(file.fileReceivedDate),
+      "Work Allotted": displayDate(file.workAllotmentDate || file.fileReceivedDate),
+      "C/o": file.careOf || "Direct",
+      Priority: file.priority || "",
+      Status: statusOf(file).label,
+      "Checking Status": checkingStatusOf(file).label || "-",
+      "Due Date": displayDate(file.dueDate),
+    };
+  }
+  return {
+    Client: file.name,
+    Service: file.serviceType,
+    "C/o": file.careOf || "Direct",
+    "Received on": displayDate(file.fileReceivedDate),
+    "Work Allotted": displayDate(file.workAllotmentDate || file.fileReceivedDate),
+    "Work Started": displayDate(startedDate),
+    "Completed Date": displayDate(workCompletedDate(file)),
+    "Checking Status": checkingStatusOf(file).label || "-",
+  };
+}
+
+function renderStaffFileTable(files, listView = "") {
+  if (!files.length) return empty("No files found.");
+  const rows = files.map((file) => staffReportRow(file, listView));
+  const headers = Object.keys(rows[0] || {});
+  const showEditAction = ["active", "completed", "notChecked"].includes(listView);
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact">
+        <thead><tr><th>SN</th>${headers.map((h) => `<th>${h}</th>`).join("")}${showEditAction ? "<th>Actions</th>" : ""}</tr></thead>
+        <tbody>
+          ${files.map((file, index) => {
+            const row = staffReportRow(file, listView);
+            return `<tr>
+              <td>${fileSerialNumber(file, index)}</td>
+              ${headers.map((h) => h === "Checking Status" ? `<td>${renderCheckingStatusBadge(file)}</td>` : `<td>${escapeHtml(row[h] || "")}</td>`).join("")}
+              ${showEditAction ? `<td><div class="action-row"><button class="mini-button" data-edit="${file.id}">Edit</button></div></td>` : ""}
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderCheckingStatusBadge(file) {
+  const checking = checkingStatusOf(file);
+  if (!checking.label) return "-";
+  return `<span class="badge ${checking.className}">${checking.label}</span>`;
+}
+
+function inputFilter(key, label, placeholder, type = "text") {
+  return `<div class="field"><label>${label}</label><input type="${type}" data-filter="${key}" value="${state.filters[key]}" placeholder="${placeholder}"></div>`;
+}
+
+function comboFilter(key, label, options, placeholder = "") {
+  const listId = `${key}Options`;
+  return `
+    <div class="field">
+      <label>${label}</label>
+      <input data-filter="${key}" list="${listId}" value="${escapeHtml(state.filters[key] || "")}" placeholder="${escapeHtml(placeholder)}">
+      <datalist id="${listId}">
+        ${options.map((option) => `<option value="${escapeHtml(option)}"></option>`).join("")}
+      </datalist>
+    </div>`;
+}
+
+function selectFilter(key, label, options) {
+  return `<div class="field"><label>${label}</label><select data-filter="${key}">${options.map((o) => `<option value="${o}" ${state.filters[key] === o ? "selected" : ""}>${o || "All"}</option>`).join("")}</select></div>`;
+}
+
+function bindFilters() {
+  document.querySelectorAll("[data-filter]").forEach((el) => {
+    const update = (e) => {
+      state.filters[e.target.dataset.filter] = e.target.value;
+      saveViewState();
+      clearTimeout(filterTimer);
+      filterTimer = setTimeout(refreshFileResults, 120);
+    };
+    el.oninput = update;
+    el.onchange = update;
+  });
+}
+
+function refreshFileResults() {
+  const files = sortFilesForDisplay(filteredFiles());
+  const count = document.querySelector("#fileCount");
+  const results = document.querySelector("#fileResults");
+  if (count) count.textContent = `${files.length} File(s) Shown`;
+  if (results) {
+    results.innerHTML = renderFileTable(files);
+    bindFileActions();
+  }
+}
+
+async function exportActiveFilesExcel(files = filteredFiles()) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const rows = files.map(activeFileExportRow);
+  await downloadXlsxRows(`active-files-${todayDate()}`, rows);
+  toast("Active Files Excel downloaded");
+}
+
+async function exportStaffPageExcel(listView, files) {
+  const rows = files.map((file) => staffReportRow(file, listView));
+  if (!rows.length) return toast("No data to export.");
+  await downloadXlsxRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
+  toast("Excel file downloaded");
+}
+
+async function exportStaffPagePdf(listView, files) {
+  const rows = files.map((file) => staffReportRow(file, listView));
+  if (!rows.length) return toast("No data to export.");
+  await downloadPdfRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
+  toast("PDF file downloaded");
+}
+
+function printStaffPageReport(listView, files) {
+  const rows = files.map((file) => staffReportRow(file, listView));
+  if (!rows.length) return toast("No data to print.");
+  printReport(staffExportName(listView), rows, staffExportHeaderLines(listView));
+  toast("Print report opened");
+}
+
+function staffExportHeaderLines(listView) {
+  return [
+    "Muhammad & Associates,",
+    "Chartered Accountants,",
+    `Name: ${state.currentUser || loggedInUser()?.name || "Staff"},`,
+    staffExportTitle(listView),
+  ];
+}
+
+function staffExportTitle(listView) {
+  if (listView === "completed" && state.filters.fileFrom && state.filters.fileTo) {
+    return `Completed Files ${displayDate(state.filters.fileFrom)} to ${displayDate(state.filters.fileTo)}`;
+  }
+  const titles = {
+    "": "File List",
+    active: "Active Files",
+    completed: "Completed Files",
+    notChecked: "Not Checked Files",
+    billed: "Billed Files",
+    nonBilled: "Non-Billed Files",
+  };
+  return titles[listView] || "Staff Files";
+}
+
+function staffExportName(listView) {
+  if (listView === "completed" && state.filters.fileFrom && state.filters.fileTo) {
+    return `completed-files-${state.filters.fileFrom}-to-${state.filters.fileTo}`;
+  }
+  const names = {
+    "": "file-list",
+    active: "active-files",
+    completed: "completed-files",
+    notChecked: "not-checked-files",
+    billed: "billed-files",
+    nonBilled: "non-billable-files",
+  };
+  return names[listView] || "staff-files";
+}
+
+function activeFileExportRow(file) {
+  const status = statusOf(file);
+  return {
+    Client: file.name,
+    "PAN / Regn Number": file.pan || "",
+    Service: file.serviceType,
+    "Received on": displayDate(file.fileReceivedDate),
+    "Work Allotted": displayDate(file.workAllotmentDate || file.fileReceivedDate),
+    "C/o": file.careOf || "Direct",
+    FY: file.fy || "NA",
+    Priority: file.priority || "",
+    "Final Status": status.label,
+    "Assigned Staff": file.assignedStaff || "Not Assigned",
+    Due: displayDate(file.dueDate),
+    "Last Updated Date": displayDate(file.lastUpdatedDate),
+  };
+}
+
+function renderFileTable(files) {
+  if (!files.length) return empty("No files match these filters.");
+  if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
+  const compactClass = " file-table-compact";
+  const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
+  const dateColumnLabel = isCompletedView ? "DOC" : "Due";
+  const assignedColumnLabel = isCompletedView ? "Assigned to" : "Assigned Staff";
+  const finalInfoColumnLabel = isCompletedView ? "C/o" : "Priority";
+  const managerCheckingColumns = canManageChecking() && isCompletedView;
+  const headerRow = isCompletedView
+    ? `<th>SN</th><th>Client</th><th>Service</th><th>C/o</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>${finalInfoColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
+    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table${compactClass}">
+        <thead><tr>
+          ${headerRow}
+        </tr></thead>
+        <tbody>
+          ${files.map((file, index) => {
+            const status = statusOf(file);
+            const checking = isCompletedView ? checkingStatusOf(file) : { label: "", className: "" };
+            const dateValue = isCompletedView ? workCompletedDate(file) : file.dueDate;
+            const completedCells = `
+              <td>${fileSerialNumber(file, index)}</td>
+              <td><span class="client-name">${file.name}</span><span class="subtext">${file.pan}</span></td>
+              <td>${file.serviceType}</td>
+              <td>${escapeHtml(file.careOf || "Direct")}</td>
+              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}</td>
+              <td class="completed-staff-cell">${file.assignedStaff}</td>
+              <td class="completed-doc-cell">${fmt(dateValue)}</td>
+              <td class="completed-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
+              ${managerCheckingColumns ? `<td>${renderCheckingStatusBadge(file)}</td><td>${escapeHtml(file.checkedBy || "-")}</td><td>${file.checkedDate ? fmt(file.checkedDate) : "-"}</td>` : ""}
+              <td><div class="action-row">${fileRowActions(file)}</div></td>`;
+            const activeCells = `
+              <td>${fileSerialNumber(file, index)}</td>
+              <td><span class="client-name">${file.name}</span><span class="subtext">${file.pan}</span></td>
+              <td>${file.serviceType}</td>
+              <td>${fmt(file.fileReceivedDate)}</td>
+              <td>${fmt(file.workAllotmentDate || file.fileReceivedDate)}</td>
+              <td>${escapeHtml(file.careOf || "Direct")}</td>
+              <td><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${file.priority || "Medium"}</span></td>
+              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}</td>
+              <td>${file.assignedStaff}</td>
+              <td class="${isOverdue(file) ? "due-date-cell overdue-due-date" : "due-date-cell"}">${fmt(dateValue)}</td>
+              <td><div class="action-row">${fileRowActions(file)}</div></td>`;
+            return `<tr class="file-row file-row-${status.className}">${isCompletedView ? completedCells : activeCells}</tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderNotCheckedFileTable(files) {
+  const rows = [...files].sort((a, b) => (Date.parse(workCompletedDate(b)) || 0) - (Date.parse(workCompletedDate(a)) || 0));
+  const managerCheckingColumns = canManageChecking();
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact">
+        <thead><tr>
+          <th>SN</th><th>Name</th><th>Type of Service</th><th>File Inward Date</th><th>Work Completion Date</th><th>Done By</th><th>Checking Status</th>${managerCheckingColumns ? "<th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((file, index) => {
+            const checking = checkingStatusOf(file);
+            return `<tr class="file-row file-row-${checking.className || "approval"}">
+              <td>${index + 1}</td>
+              <td><span class="client-name">${escapeHtml(file.name)}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
+              <td>${escapeHtml(file.serviceType || "")}</td>
+              <td>${fmt(file.fileReceivedDate)}</td>
+              <td>${fmt(workCompletedDate(file))}</td>
+              <td>${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}</td>
+              <td><span class="badge ${checking.className || "approval"}">${checking.label}</span></td>
+              ${managerCheckingColumns ? `<td>${escapeHtml(file.checkedBy || "-")}</td><td>${file.checkedDate ? fmt(file.checkedDate) : "-"}</td>` : ""}
+              <td><div class="action-row">${notCheckedFileActions(file)}</div></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function fileSerialNumber(file, fallbackIndex = 0) {
+  return fallbackIndex + 1;
+}
+
+function fileRowActions(file) {
+  const actions = [`<button class="mini-button" data-edit="${file.id}">Edit</button>`];
+  const canManageBilling = rolePerm().assign;
+  if (canManageBilling && state.filters.listView === "completed" && isCheckedCompleted(file) && !isNonBilledFile(file)) {
+    actions.push(`<button class="mini-button ${file.billingType === "Non-Billable" ? "success" : ""}" data-non-billable="${file.id}">Non-Billable</button>`);
+    if (!file.billed) actions.push(`<button class="mini-button success" data-mark-billed="${file.id}">Billed</button>`);
+  }
+  if (canManageBilling && state.filters.listView === "nonBilled" && isNonBilledFile(file)) {
+    if (file.billingType === "Non-Billable") {
+      actions.push(`<button class="mini-button success" data-billable="${file.id}">Mark Billable</button>`);
+    } else {
+      actions.push(`<button class="mini-button success" data-mark-billed="${file.id}">Billed</button>`);
+    }
+  }
+  if (canManageBilling && state.filters.listView === "billed" && isBilledFile(file)) {
+    actions.push(`<button class="mini-button" data-fee-non-billable="${file.id}">Non-Billable</button>`);
+    if (file.billed && !file.feeReceived) actions.push(`<button class="mini-button success" data-mark-received="${file.id}">Mark Received</button>`);
+  }
+  if (canManageBilling && state.filters.listView === "billed" && file.billed && file.feeReceived) {
+    actions.push(`<button class="mini-button" data-mark-not-received="${file.id}">Not Received</button>`);
+  }
+  if (canManageBilling && state.filters.listView === "feePending" && isFeePendingFile(file)) {
+    actions.push(`<button class="mini-button" data-fee-non-billable="${file.id}">Non-Billable</button>`);
+    actions.push(`<button class="mini-button success" data-mark-received="${file.id}">Mark Received</button>`);
+  }
+  if (file.feeReceived && state.filters.listView === "billed") {
+    actions.push(`<span class="badge filed">Received</span>`);
+  }
+  if (rolePerm().delete) actions.push(`<button class="mini-button danger" data-delete="${file.id}">Delete</button>`);
+  return actions.join("");
+}
+
+function notCheckedFileActions(file) {
+  const actions = [`<button class="mini-button" data-edit="${file.id}">${canManageChecking() ? "View" : "Edit"}</button>`];
+  if (canManageChecking()) {
+    if (canCheckFile(file)) {
+      actions.push(`<button class="mini-button success" data-check-file="${file.id}">Check File</button>`);
+    } else {
+      actions.push(`<span class="subtext own-check-blocked">You cannot check a file completed by yourself. This file must be checked by another authorised user.</span>`);
+    }
+    actions.push(`<button class="mini-button danger" data-return-correction="${file.id}">Return for Correction</button>`);
+  }
+  return actions.join("");
+}
+
+function bindFileActions() {
+  document.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => openFileDrawer(btn.dataset.edit)));
+  document.querySelectorAll("[data-check-file]").forEach((btn) => {
+    btn.onclick = () => checkCompletedFile(btn.dataset.checkFile);
+  });
+  document.querySelectorAll("[data-return-correction]").forEach((btn) => {
+    btn.onclick = () => returnFileForCorrection(btn.dataset.returnCorrection);
+  });
+  document.querySelectorAll("[data-billable]").forEach((btn) => {
+    btn.onclick = () => updateFileBilling(btn.dataset.billable, { billingType: "Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as billable", "billed");
+  });
+  document.querySelectorAll("[data-non-billable]").forEach((btn) => {
+    btn.onclick = () => updateFileBilling(btn.dataset.nonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as non-billable");
+  });
+  document.querySelectorAll("[data-fee-non-billable]").forEach((btn) => {
+    btn.onclick = () => updateFileBilling(btn.dataset.feeNonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as non-billable", "nonBilled");
+  });
+  document.querySelectorAll("[data-mark-billed]").forEach((btn) => {
+    btn.onclick = () => {
+      const file = state.files.find((item) => item.id === btn.dataset.markBilled);
+      updateFileBilling(btn.dataset.markBilled, { billingType: "Billable", billed: true, billedDate: normalizeImportDate(workCompletedDate(file)) || todayDate(), feeReceived: false, feeReceivedDate: "" }, "File moved to Fee Pending", "feePending");
+    };
+  });
+  document.querySelectorAll("[data-mark-received]").forEach((btn) => {
+    btn.onclick = () => updateFileBilling(btn.dataset.markReceived, { feeReceived: true, feeReceivedDate: todayDate() }, "Fee marked as received");
+  });
+  document.querySelectorAll("[data-mark-not-received]").forEach((btn) => {
+    btn.onclick = () => updateFileBilling(btn.dataset.markNotReceived, { feeReceived: false, feeReceivedDate: "" }, "Fee marked as not received", "feePending");
+  });
+  document.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.onclick = () => {
+      const file = state.files.find((f) => f.id === btn.dataset.delete);
+      if (!rolePerm().delete) return toast("This role cannot delete records.");
+      if (!file) return toast("File record not found.");
+      if (confirm(`Delete file record for ${file.name}? This cannot be undone.`)) {
+        state.deletedFileIds = [...new Set([...(state.deletedFileIds || []), file.id])];
+        state.files = state.files.filter((f) => f.id !== file.id);
+        saveState({ skipMerge: true });
+        toast("File record deleted permanently");
+        renderAll();
+      }
+    };
+  });
+}
+
+function checkCompletedFile(fileId) {
+  if (!canManageChecking()) return toast("Only authorised checkers can check completed files.");
+  const index = state.files.findIndex((file) => file.id === fileId);
+  if (index < 0) return toast("File record not found.");
+  const file = { ...state.files[index] };
+  if (!isNotCheckedFile(file)) return toast("This file is not pending checking.");
+  if (!canCheckFile(file)) {
+    addAuditLog("Attempt made to check own work", {
+      fileId,
+      fileName: file.name,
+      attemptedBy: state.currentUser,
+      workDoneBy: file.completedBy || file.assignedStaff || "",
+    });
+    saveState();
+    return toast("You cannot check a file completed by yourself. This file must be checked by another authorised user.");
+  }
+  const checkedBy = state.currentUser || loggedInUser()?.name || "";
+  const checkedDate = canEditCheckedDate()
+    ? normalizeImportDate(prompt("Date of Checking (dd-mm-yyyy)", displayDate(todayDate())) || todayDate())
+    : todayDate();
+  if (!checkedDate) return toast("Date of Checking is required.");
+  const completionDate = normalizeImportDate(workCompletedDate(file));
+  if (completionDate && checkedDate < completionDate) return toast("Date of Checking cannot be earlier than Work Completion Date.");
+  const checkingRemarks = prompt("Checking Remarks", file.checkingRemarks || "")?.trim() || "";
+  if (!validCheckingRemark(checkingRemarks)) return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
+  const updated = {
+    ...file,
+    checkedBy,
+    checkedDate,
+    checkingRemarks,
+    lastUpdatedDate: todayDate(),
+    updatedAt: Date.now(),
+  };
+  state.files[index] = updated;
+  queueFileChangeNotification(updated, `File checked by ${checkedBy} on ${fmt(checkedDate)}`, "File Checked");
+  addAuditLog("File marked Checked", {
+    fileId,
+    fileName: file.name,
+    previousCheckingStatus: checkingStatusOf(file).label,
+    newCheckingStatus: "Checked",
+    checkedBy,
+    checkedDate,
+    checkingRemarks,
+  });
+  saveState();
+  toast("File marked as checked");
+  renderAll();
+}
+
+function openStaffFilesFromDashboard(kind) {
+  resetFilters();
+  if (kind === "active") state.filters.listView = "active";
+  if (kind === "all") state.filters.listView = "";
+  if (kind === "completed") state.filters.listView = "completed";
+  if (kind === "notChecked") state.filters.listView = "notChecked";
+  if (kind === "billed") state.filters.listView = "billed";
+  if (kind === "unbilled") state.filters.listView = "nonBilled";
+  if (kind === "onHold") state.filters.workflow = "On Hold";
+  if (kind === "clientPending") state.filters.workflow = "Client Pending";
+  if (kind === "overdue") state.filters.overdue = "Yes";
+  if (kind === "approval") state.filters.pendingApproval = "Yes";
+  if (kind === "correction") state.filters.dashboardKind = "correctionRequired";
+  if (kind === "reallotted") state.filters.dashboardKind = "reAllotted";
+  state.filters.fromDashboard = "Yes";
+  saveState();
+  activePage = "files";
+  renderAll();
+}
+
+function returnFileForCorrection(fileId) {
+  if (!canManageChecking()) return toast("Only authorised checkers can return files for correction.");
+  const index = state.files.findIndex((file) => file.id === fileId);
+  if (index < 0) return toast("File record not found.");
+  const file = { ...state.files[index] };
+  if (!isCheckedCompleted(file)) return toast("Only completed files can be returned for correction.");
+  const correctionRemarks = prompt("Correction remarks")?.trim();
+  if (!correctionRemarks) return toast("Correction remarks are required.");
+  const returnedDate = todayDate();
+  const stagesObj = { ...normalizeStages(file), ...(file.stages || {}) };
+  stagesObj["Correction Required"] = true;
+  stagesObj.Completed = false;
+  stagesObj.Billed = Boolean(file.billed);
+  const updated = {
+    ...file,
+    stages: stagesObj,
+    filed: false,
+    checkedBy: "",
+    checkedDate: "",
+    checkingRemarks: "",
+    correctionRemarks,
+    returnedBy: state.currentUser || "",
+    returnedDate,
+    lastUpdatedDate: returnedDate,
+    updatedAt: Date.now(),
+  };
+  state.files[index] = updated;
+  queueFileChangeNotification(updated, `Returned for correction: ${correctionRemarks}`, "Returned for Correction");
+  addAuditLog("File returned for correction", {
+    fileId,
+    fileName: file.name,
+    previousStatus: statusOf(file).label,
+    newStatus: "Correction Required",
+    correctionRemarks,
+    returnedBy: updated.returnedBy,
+    returnedDate,
+  });
+  saveState();
+  toast("File returned for correction");
+  renderAll();
+}
+
+function updateFileBilling(fileId, updates, message, nextListView = "") {
+  if (!rolePerm().assign) return toast("This role cannot update billing.");
+  const index = state.files.findIndex((file) => file.id === fileId);
+  if (index < 0) return toast("File record not found.");
+  const file = { ...state.files[index] };
+  const stagesObj = { ...normalizeStages(file), ...(file.stages || {}) };
+  if (Object.prototype.hasOwnProperty.call(updates, "billed")) stagesObj.Billed = Boolean(updates.billed);
+  const updated = {
+    ...file,
+    ...updates,
+    stages: stagesObj,
+    lastUpdatedDate: todayDate(),
+    updatedAt: Date.now(),
+  };
+  state.files[index] = updated;
+  queueFileChangeNotification(updated, billingChangeText(file, updated), updates.billed ? "Billed" : updates.feeReceived ? "Fee Received" : "Billing Update");
+  saveState();
+  if (nextListView) state.filters.listView = nextListView;
+  toast(message);
+  renderAll();
+}
+
+function billingChangeText(before, after) {
+  if (before.billingType !== after.billingType) return `Billing type changed to ${after.billingType || "Not Set"}`;
+  if (!before.billed && after.billed) return "File marked as Billed";
+  if ((before.billedDate || "") !== (after.billedDate || "")) return `Billed date changed to ${fmt(after.billedDate) || "blank"}`;
+  if (!before.feeReceived && after.feeReceived) return "Fee marked as Received";
+  return "Billing details updated";
+}
+
+function queueFileChangeNotification(file, changeText, changeType = "File Update") {
+  if (!["Admin", "Manager"].includes(state.currentRole)) return;
+  const targetUser = findUserByStaffIdentity(file.assignedStaff)
+    || findUserByStaffIdentity(file.assignedStaffEmail)
+    || findUserByStaffIdentity(file.assignedStaffId);
+  if (!targetUser || targetUser.name === "Not Assigned") return;
+  const now = new Date();
+  state.fileNotifications = [
+    ...(state.fileNotifications || []),
+    {
+      id: crypto.randomUUID(),
+      fileId: file.id,
+      fileName: file.name,
+      changeType,
+      changeText,
+      changedBy: state.currentUser,
+      changedByRole: state.currentRole,
+      targetUserId: targetUser.id || file.assignedStaffId || "",
+      targetUserEmail: targetUser.email || file.assignedStaffEmail || "",
+      targetUserName: targetUser.name || file.assignedStaff || "",
+      date: todayDate(),
+      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      createdAt: now.getTime(),
+      tone: changeType === "File Allotted" ? "approval" : "progress",
+    },
+  ].slice(-500);
+}
+
+function queueCheckingRequiredNotifications(file) {
+  const now = new Date();
+  const existingKey = `${file.id}|awaiting-check|${file.completionDate || ""}`;
+  const existing = new Set((state.fileNotifications || []).map((notice) => notice.dedupeKey).filter(Boolean));
+  if (existing.has(existingKey)) return;
+  const recipients = (state.users || []).filter((user) => ["Admin", "Manager"].includes(user.role));
+  const notices = recipients.map((user) => ({
+    id: crypto.randomUUID(),
+    dedupeKey: existingKey,
+    fileId: file.id,
+    fileName: file.name,
+    changeType: "Awaiting Checking",
+    changeText: `${file.serviceType} completed by ${file.assignedStaff || "Staff"} on ${fmt(file.completionDate)}`,
+    changedBy: state.currentUser,
+    changedByRole: state.currentRole,
+    targetUserId: user.id || "",
+    targetUserEmail: user.email || "",
+    targetUserName: user.name || "",
+    date: todayDate(),
+    time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+    createdAt: now.getTime(),
+    tone: "approval",
+  }));
+  state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-500);
+}
+
+function describeFileChanges(before, after) {
+  if (!before) return hasAssignedStaffValue(after.assignedStaff) ? "New file allotted" : "New file created";
+  const changes = [];
+  if (!sameStaffName(before.assignedStaff, after.assignedStaff)) changes.push(`Assigned staff changed from ${before.assignedStaff || "Not Assigned"} to ${after.assignedStaff || "Not Assigned"}`);
+  if (before.serviceType !== after.serviceType) changes.push(`Service changed to ${after.serviceType}`);
+  if (before.dueDate !== after.dueDate) changes.push(`Due date changed to ${fmt(after.dueDate)}`);
+  if (before.priority !== after.priority) changes.push(`Priority changed to ${after.priority}`);
+  if (statusOf(before).label !== statusOf(after).label) changes.push(`Status changed to ${statusOf(after).label}`);
+  if (before.checkedBy !== after.checkedBy || before.checkedDate !== after.checkedDate) changes.push("Checking details updated");
+  if (before.remarks !== after.remarks) changes.push("Remarks updated");
+  return changes.join("; ");
+}
+
+function fileChangeType(before, after) {
+  if (!before && hasAssignedStaffValue(after.assignedStaff)) return "File Allotted";
+  if (before && !sameStaffName(before.assignedStaff, after.assignedStaff)) return "File Re-Allotted";
+  return "File Update";
+}
+
+function pipeline(file) {
+  const idx = stageIndex(file);
+  return `<div class="pipeline" title="${stages[idx]}">${stages.map((_, i) => `<span class="pipe-step ${i <= idx ? "done" : ""}"></span>`).join("")}</div><span class="subtext">${stages[idx]}</span>`;
+}
+
+function dueText(file) {
+  if (file.filed) return "Completed";
+  if (!file.dueDate) return "";
+  const days = daysUntil(file.dueDate);
+  if (!Number.isFinite(days)) return "";
+  if (days < 0) return `${Math.abs(days)} day(s) overdue`;
+  if (days === 0) return "Due today";
+  return `${days} day(s) left`;
+}
+
+function fmt(dateString) {
+  return displayDate(dateString);
+}
+
+function openFileDrawer(id) {
+  editingId = id || null;
+  const file = id ? structuredClone(state.files.find((f) => f.id === id)) : blankFile();
+  if (id ? !canEditFileRecord(file) : !canCreateFile()) return toast("You do not have permission to edit this file.");
+  const canAssignThisFile = canAssignFile(id ? file : null);
+  const drawer = document.querySelector("#fileDrawer");
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <div><h3>${id ? "Edit File Record" : "Add New File"}</h3><p class="small-muted">Last updated changes automatically on save.</p></div>
+      <button class="icon-button" id="closeDrawer">X</button>
+    </div>
+    <form id="fileForm" class="drawer-body">
+      <div class="two-col">
+        ${formField("name", "Name", file.name)}
+        ${formField("pan", "PAN / Regn Number", file.pan)}
+        ${serviceField(file.serviceType)}
+        ${careOfField(file.careOf || "Direct")}
+        ${fyField(file.fy || "NA")}
+        ${selectField("mode", "Mode", modes, file.mode || "Whatsapp")}
+        ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
+        ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile)}
+        ${formField("workAllotmentDate", "Work Allotment Date", file.workAllotmentDate || "", "date", false)}
+        ${formField("dueDate", "Due Date", file.dueDate, "date")}
+        ${selectField("priority", "Priority", ["Low", "Medium", "High", "Urgent"], file.priority)}
+        ${staffAssignField("reAssignedStaff", "Re Assigned", file.reAssignedStaff || "", !canAssignThisFile, true)}
+        ${formField("reAssignedDate", "Re Assigned Date", file.reAssignedDate || "", "date", false)}
+      </div>
+      <div class="field">
+        <label>Status / Workflow</label>
+        <div class="checkbox-grid">
+          ${visibleWorkflowStages(file).map((stage) => `<label class="check-pill"><input type="checkbox" name="stage" value="${stage}" ${file.stages?.[stage] ? "checked" : ""} ${canEditStage(stage, file) ? "" : "disabled"}> ${stage}</label>`).join("")}
+        </div>
+      </div>
+      <div class="two-col">
+        ${formField("completionDate", "Completed Date", file.completionDate || "", "date", false)}
+      </div>
+      <div class="two-col">
+        ${canManageChecking() ? (canEditCheckedDate() ? staffAssignField("checkedBy", "Checked By", file.checkedBy || "", false, true, false) : checkingDetailField("Checked By", file.checkedBy || state.currentUser || "-")) : checkingDetailField("Checking Status", checkingStatusOf(file).label || "-")}
+        ${canManageChecking() ? (canEditCheckedDate() ? formField("checkedDate", "Checked Date", file.checkedDate || "", "date", false) : checkingDetailField("Checked Date", file.checkedDate ? displayDate(file.checkedDate) : "-")) : checkingDetailField("Checked Date", file.checkedDate ? displayDate(file.checkedDate) : "-")}
+      </div>
+      ${canManageChecking() ? `
+        <div class="field">
+          <label>Checking Remarks</label>
+          <textarea name="checkingRemarks">${escapeHtml(file.checkingRemarks || "")}</textarea>
+        </div>
+      ` : `
+        <div class="two-col">
+          ${checkingDetailField("Checked By", file.checkedBy || "-")}
+          ${checkingDetailField("Checking Remarks", file.checkingRemarks || "-")}
+        </div>
+      `}
+      <div class="field">
+        <label>Remarks</label>
+        <textarea name="remarks">${escapeHtml(file.remarks || "")}</textarea>
+      </div>
+      <div class="field">
+        <label>Attachments</label>
+        <input type="file" id="attachmentsInput" multiple />
+        <div class="card-list" id="attachmentPreview">
+          ${(file.attachments || []).map((a) => `<div class="attachment-card"><strong>${a.name}</strong><p>Uploaded ${fmt(a.uploadDate)} by ${a.uploadedBy}</p></div>`).join("") || empty("No attachments added.")}
+        </div>
+      </div>
+      <input type="hidden" name="id" value="${file.id}">
+    </form>
+    <div class="drawer-actions">
+      <button class="secondary-button" id="cancelFile">Cancel</button>
+      <button class="primary-button" id="saveFile">Save Record</button>
+    </div>
+  `;
+  drawer.dataset.attachments = JSON.stringify(file.attachments || []);
+  drawer.classList.add("open");
+  document.querySelector("#backdrop").classList.add("show");
+  document.querySelector("#closeDrawer").onclick = closeOverlays;
+  document.querySelector("#cancelFile").onclick = closeOverlays;
+  document.querySelector("#saveFile").onclick = saveFileFromDrawer;
+  document.querySelector("#serviceSelect").onchange = (e) => {
+    const input = document.querySelector("#newServiceInput");
+    input.classList.toggle("hidden", e.target.value !== "__new");
+    if (e.target.value === "__new") input.focus();
+  };
+  document.querySelector("#careOfSelect").onchange = (e) => {
+    const input = document.querySelector("#newCareOfInput");
+    input.classList.toggle("hidden", e.target.value !== "__new_care_of");
+    if (e.target.value === "__new_care_of") input.focus();
+  };
+  document.querySelector("#fySelect").onchange = (e) => {
+    const input = document.querySelector("#newFyInput");
+    input.classList.toggle("hidden", e.target.value !== "__new_fy");
+    if (e.target.value === "__new_fy") input.focus();
+  };
+  bindStaffPicker("assignedStaff");
+  bindStaffPicker("reAssignedStaff");
+  bindStaffPicker("checkedBy");
+  const checkedDateInput = document.querySelector("[name='checkedDate']");
+  if (checkedDateInput && !canEditCheckedDate()) checkedDateInput.disabled = true;
+  bindAllotmentDateDefaults();
+  document.querySelector("#attachmentsInput").onchange = (e) => {
+    const existing = JSON.parse(drawer.dataset.attachments || "[]");
+    const added = [...e.target.files].map((uploaded) => ({
+      id: crypto.randomUUID(),
+      name: uploaded.name,
+      uploadDate: todayDate(),
+      uploadedBy: state.currentUser,
+    }));
+    drawer.dataset.attachments = JSON.stringify([...existing, ...added]);
+    document.querySelector("#attachmentPreview").innerHTML = [...existing, ...added].map((a) => `<div class="attachment-card"><strong>${a.name}</strong><p>Uploaded ${fmt(a.uploadDate)} by ${a.uploadedBy}</p></div>`).join("");
+  };
+  document.querySelectorAll("input[name='stage']").forEach((box) => {
+    box.onchange = (e) => cascadeStages(e.target.value, e.target.checked);
+  });
+  bindCompletionDateDefault();
+}
+
+function bindAllotmentDateDefaults() {
+  const receivedInput = document.querySelector("[name='fileReceivedDate']");
+  const allotmentInput = document.querySelector("[name='workAllotmentDate']");
+  if (!receivedInput || !allotmentInput) return;
+  let allotmentManuallyChanged = false;
+  allotmentInput.oninput = () => {
+    allotmentManuallyChanged = true;
+  };
+  receivedInput.onchange = () => {
+    if (!allotmentManuallyChanged || !allotmentInput.value) {
+      allotmentInput.value = receivedInput.value || todayDate();
+    }
+  };
+}
+
+function bindCompletionDateDefault() {
+  const completedBox = [...document.querySelectorAll("input[name='stage']")].find((box) => box.value === "Completed");
+  const completedDateInput = document.querySelector("[name='completionDate']");
+  if (!completedBox || !completedDateInput) return;
+  const syncCompletedDate = () => {
+    if (completedBox.checked && !completedDateInput.value) completedDateInput.value = todayDate();
+  };
+  completedBox.addEventListener("change", syncCompletedDate);
+  syncCompletedDate();
+}
+
+function blankFile() {
+  const stageObj = Object.fromEntries(stages.map((stage, i) => [stage, i === 0]));
+  return {
+    id: crypto.randomUUID(),
+    name: "",
+    pan: "",
+    serviceType: serviceDropdownOptions()[0] || "Other Services",
+    careOf: "Direct",
+    fy: "NA",
+    mode: "Whatsapp",
+    fileReceivedDate: todayDate(),
+    assignedStaff: "Not Assigned",
+    workAllotmentDate: todayDate(),
+    workStartedDate: "",
+    reAssignedStaff: "",
+    reAssignedDate: "",
+    dueDate: todayDate(),
+    priority: "Medium",
+    remarks: "",
+    attachments: [],
+    billingType: "",
+    billedDate: "",
+    feeReceived: false,
+    feeReceivedDate: "",
+    completionDate: "",
+    checkedBy: "",
+    checkedDate: "",
+    checkingRemarks: "",
+    correctionRemarks: "",
+    returnedBy: "",
+    returnedDate: "",
+    updatedAt: Date.now(),
+    stages: stageObj,
+  };
+}
+
+function formField(name, label, value, type = "text", required = true) {
+  if (type === "password") {
+    return `<div class="field"><label>${label}</label><div class="password-wrap"><input name="${name}" id="${name}" type="password" value="${escapeHtml(value || "")}" ${required ? "required" : ""}><button type="button" data-toggle-password="${name}">View</button></div></div>`;
+  }
+  return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${escapeHtml(value || "")}" ${required ? "required" : ""}></div>`;
+}
+
+function checkingDetailField(label, value) {
+  return `<div class="field readonly-field"><label>${label}</label><div class="readonly-value">${escapeHtml(value || "-")}</div></div>`;
+}
+
+function selectField(name, label, options, value, disabled = false) {
+  return `<div class="field"><label>${label}</label><select name="${name}" ${disabled ? "disabled" : ""}>${options.map((o) => `<option ${o === value ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
+}
+
+function serviceDropdownOptions() {
+  return dedupeByNormalizedText(state.services || []);
+}
+
+function careOfDropdownOptions(currentValue = "") {
+  return dedupeByNormalizedText([currentValue, ...(state.careOfList || [])].filter(Boolean));
+}
+
+function assignableStaffNames(currentValue = "") {
+  const names = (state.users || [])
+    .filter((user) => !isRevokedAccess(user))
+    .filter((user) => !isRemovedStaff(user.name))
+    .map((user) => user.name);
+  return dedupeByNormalizedText([currentValue, ...names].filter((name) => name && String(name).trim().toLowerCase() !== "not assigned"));
+}
+
+function serviceField(value) {
+  const options = sortList([value, ...serviceDropdownOptions()].filter(Boolean));
+  return `
+    <div class="field service-editor">
+      <label>Service Type</label>
+      <select id="serviceSelect" name="serviceType">
+        ${options.map((s) => `<option value="${escapeHtml(s)}" ${s === value ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+        <option value="__new">+ Add New Service</option>
+      </select>
+      <input id="newServiceInput" class="hidden" placeholder="Enter new service type">
+    </div>`;
+}
+
+function careOfField(value) {
+  const options = sortList([value, ...careOfDropdownOptions()].filter(Boolean));
+  return `
+    <div class="field">
+      <label>C/o</label>
+      <select id="careOfSelect" name="careOf">
+        ${options.map((name) => `<option value="${escapeHtml(name)}" ${name === value ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        <option value="__new_care_of">+ Add New C/o</option>
+      </select>
+      <input id="newCareOfInput" class="hidden" placeholder="Enter new C/o name">
+    </div>`;
+}
+
+function fyField(value) {
+  const options = sortList([value, ...defaultFyList].filter(Boolean));
+  return `
+    <div class="field">
+      <label>FY</label>
+      <select id="fySelect" name="fy">
+        ${options.map((fy) => `<option value="${escapeHtml(fy)}" ${fy === value ? "selected" : ""}>${escapeHtml(fy)}</option>`).join("")}
+        <option value="__new_fy">+ Add New</option>
+      </select>
+      <input id="newFyInput" class="hidden" placeholder="Enter FY">
+    </div>`;
+}
+
+function staffAssignField(name, label, value, disabled = false, allowBlank = false, includeNotAssigned = true) {
+  const options = [
+    ...(allowBlank ? [""] : []),
+    ...(includeNotAssigned ? ["Not Assigned"] : []),
+    ...assignableStaffNames(value),
+  ];
+  const selectId = `${name}Select`;
+  const inputId = `${name}NewInput`;
+  return `
+    <div class="field">
+      <label>${label}</label>
+      <select id="${selectId}" name="${name}" ${disabled ? "disabled" : ""}>
+        ${options.map((staffName) => `<option value="${escapeHtml(staffName)}" ${staffName === value ? "selected" : ""}>${escapeHtml(staffName || "Select Staff")}</option>`).join("")}
+        <option value="__new_staff">+ Add New Staff</option>
+      </select>
+      <input id="${inputId}" class="hidden" placeholder="Enter new staff name">
+    </div>`;
+}
+
+function bindStaffPicker(name) {
+  const select = document.querySelector(`#${name}Select`);
+  if (!select) return;
+  select.onchange = (e) => {
+    const input = document.querySelector(`#${name}NewInput`);
+    input.classList.toggle("hidden", e.target.value !== "__new_staff");
+    if (e.target.value === "__new_staff") input.focus();
+  };
+}
+
+function resolveAssignedStaff(selectedValue, inputId = "assignedStaffNewInput", fallback = "Not Assigned") {
+  if (selectedValue !== "__new_staff") return selectedValue;
+  const input = document.querySelector(`#${inputId}`);
+  const name = input?.value.trim();
+  if (!name) return fallback;
+  const existing = state.users.find((user) => user.name.toLowerCase() === name.toLowerCase());
+  if (existing) return existing.name;
+  state.users.push({
+    id: crypto.randomUUID(),
+    name,
+    email: `${name.toLowerCase().replaceAll(" ", ".")}@mandaca.in`,
+    role: "Staff",
+    password: "Password@123",
+  });
+  state.users = sortByName(state.users);
+  return name;
+}
+
+function visibleWorkflowStages(file) {
+  return stages.filter((stage) => {
+    if (stage === "Billed") return false;
+    if (isStaffLogin() && !isSpecialFileCreator() && ["Received", "Allotted", "Billed"].includes(stage)) return false;
+    return true;
+  }).sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
+}
+
+function canEditStage(stage, file = {}) {
+  if (stage === "Billed") return false;
+  if (!isStaffLogin()) return true;
+  if (isAuthorisedCheckingStaff() && !fileCreatedByCurrentUser(file) && !fileBelongsToUser(file, loggedInUser())) return false;
+  if (isSpecialFileCreator()) return ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required"].includes(stage);
+  return ["WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required"].includes(stage);
+}
+
+function cascadeStages(stage, checked) {
+  const index = stages.indexOf(stage);
+  document.querySelectorAll("input[name='stage']").forEach((box) => {
+    const boxIndex = stages.indexOf(box.value);
+    if (checked && boxIndex <= index) box.checked = true;
+    if (!checked && boxIndex >= index) box.checked = false;
+  });
+  if (checked && stage === "Approval Pending") {
+    ["Approved", "Completed", "Billed"].forEach((later) => {
+      const box = [...document.querySelectorAll("input[name='stage']")].find((input) => input.value === later);
+      if (box) box.checked = false;
+    });
+  }
+  if (checked && stage === "Correction Required") {
+    const billedBox = [...document.querySelectorAll("input[name='stage']")].find((input) => input.value === "Billed");
+    if (billedBox) billedBox.checked = false;
+  }
+}
+
+function saveFileFromDrawer() {
+  const form = document.querySelector("#fileForm");
+  if (!form.reportValidity()) return;
+  syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+  const existingFile = editingId ? state.files.find((file) => file.id === editingId) : null;
+  const data = new FormData(form);
+  const visibleStageInputs = [...document.querySelectorAll("input[name='stage']")];
+  const visibleStageNames = new Set(visibleStageInputs.map((box) => box.value));
+  const checked = new Set(visibleStageInputs.filter((box) => box.checked).map((box) => box.value));
+  const existingStages = normalizeStages(existingFile || {});
+  const stagesObj = Object.fromEntries(stages.map((stage) => [
+    stage,
+    visibleStageNames.has(stage) ? checked.has(stage) : Boolean(existingStages[stage]),
+  ]));
+  if (stagesObj["Approval Pending"] && !stagesObj.Approved) {
+    stagesObj.Completed = false;
+    stagesObj.Billed = false;
+  }
+  if (!stagesObj.Completed && !existingFile?.billed) stagesObj.Billed = false;
+  if (isStaffLogin() && !canManageChecking() && staffAttemptedCheckingChange(existingFile, data)) {
+    addAuditLog("Unauthorized checking edit attempt", {
+      fileId: existingFile?.id || data.get("id") || "",
+      fileName: existingFile?.name || data.get("name") || "",
+      attemptedBy: state.currentUser,
+      role: state.currentRole,
+    });
+    saveState();
+    return toast("Staff cannot update Checked By, Checked Date or Checking Remarks.");
+  }
+  if (isStaffLogin() && !canManageChecking() && isCheckedFile(existingFile) && !stagesObj.Completed) {
+    addAuditLog("Unauthorized checking removal attempt", {
+      fileId: existingFile?.id || data.get("id") || "",
+      fileName: existingFile?.name || data.get("name") || "",
+      attemptedBy: state.currentUser,
+      role: state.currentRole,
+    });
+    saveState();
+    return toast("Staff cannot remove existing checking details.");
+  }
+  const selectedService = data.get("serviceType");
+  const serviceType = selectedService === "__new" ? document.querySelector("#newServiceInput").value.trim() : selectedService.trim();
+  if (!serviceType) return toast("Please enter service type.");
+  if (!state.services.includes(serviceType)) state.services.push(serviceType);
+  state.services = sortList(state.services);
+  const selectedCareOf = data.get("careOf");
+  const careOf = selectedCareOf === "__new_care_of" ? document.querySelector("#newCareOfInput").value.trim() : selectedCareOf.trim();
+  if (!careOf) return toast("Please enter C/o.");
+  if (!state.careOfList.includes(careOf)) state.careOfList.push(careOf);
+  state.careOfList = sortList(state.careOfList);
+  const selectedFy = data.get("fy");
+  const fy = selectedFy === "__new_fy" ? document.querySelector("#newFyInput").value.trim() : String(selectedFy || "").trim();
+  if (!fy) return toast("Please enter FY.");
+  const canAssignThisFile = canAssignFile(existingFile || {});
+  const reAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("reAssignedStaff"), "reAssignedStaffNewInput", "") : (existingFile?.reAssignedStaff || ""), "");
+  let reAssignedDate = canAssignThisFile ? data.get("reAssignedDate") : (existingFile?.reAssignedDate || "");
+  if (reAssignedStaff && reAssignedStaff !== "Not Assigned" && !reAssignedDate) reAssignedDate = todayDate();
+  const selectedAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("assignedStaff"), "assignedStaffNewInput", "Not Assigned") : (existingFile?.assignedStaff || state.currentUser), "Not Assigned");
+  const assigned = canAssignThisFile
+    ? (reAssignedStaff && reAssignedStaff !== "Not Assigned" ? reAssignedStaff : selectedAssignedStaff)
+    : (existingFile?.assignedStaff || state.currentUser);
+  if (hasAssignedStaffValue(assigned)) stagesObj.Allotted = true;
+  else stagesObj.Allotted = false;
+  let workAllotmentDate = canAssignThisFile ? data.get("workAllotmentDate") : (existingFile?.workAllotmentDate || "");
+  if (!workAllotmentDate) workAllotmentDate = data.get("fileReceivedDate") || todayDate();
+  const assignedChanged = existingFile ? !sameStaffName(existingFile.assignedStaff, assigned) : hasAssignedStaffValue(assigned);
+  const receivedMarked = stagesObj.Received && (!existingFile?.stages?.Received || !existingFile?.receivedBy);
+  let workStartedDate = existingFile?.workStartedDate || "";
+  if (stagesObj.WIP && !workStartedDate) workStartedDate = todayDate();
+  if (!workStartedDate && (stagesObj["Work Done"] || stagesObj["Approval Pending"] || stagesObj.Approved || stagesObj.Completed)) {
+    workStartedDate = todayDate();
+  }
+  const assignedUser = findUserByStaffIdentity(assigned) || {};
+  const reAssignedUser = findUserByStaffIdentity(reAssignedStaff) || {};
+  const wasCompleted = isCheckedCompleted(existingFile);
+  const wasReturned = Boolean(existingFile?.stages?.["Correction Required"]);
+  const justCompleted = stagesObj.Completed && (!wasCompleted || wasReturned);
+  let completionDate = normalizeImportDate(data.get("completionDate")) || existingFile?.completionDate || "";
+  if (stagesObj.Completed && !completionDate) completionDate = todayDate();
+  if (justCompleted && !normalizeImportDate(data.get("completionDate"))) completionDate = todayDate();
+  let checkedBy = canManageChecking() ? (canEditCheckedDate() ? resolveAssignedStaff(data.get("checkedBy"), "checkedByNewInput", "") : (existingFile?.checkedBy || state.currentUser || "")) : (existingFile?.checkedBy || "");
+  let checkedDate = canManageChecking() ? (canEditCheckedDate() ? normalizeImportDate(data.get("checkedDate")) : (existingFile?.checkedDate || todayDate())) : (existingFile?.checkedDate || "");
+  let checkingRemarks = canManageChecking() ? (data.get("checkingRemarks") || "").trim() : (existingFile?.checkingRemarks || "");
+  if (justCompleted) {
+    checkedBy = "";
+    checkedDate = "";
+    checkingRemarks = "";
+    stagesObj["Correction Required"] = false;
+  }
+  if (!stagesObj.Completed) {
+    checkedBy = "";
+    checkedDate = "";
+    checkingRemarks = "";
+  }
+  if (canManageChecking() && stagesObj.Completed && validCheckingRemark(checkingRemarks)) {
+    if (!checkedBy) checkedBy = state.currentUser || loggedInUser()?.name || "";
+    if (!checkedDate) checkedDate = todayDate();
+  }
+  if (canManageChecking() && stagesObj.Completed && (checkedBy || checkedDate || checkingRemarks) && !canCheckFile(existingFile || { stages: stagesObj, assignedStaff: assigned })) {
+    addAuditLog("Attempt made to check own work", {
+      fileId: existingFile?.id || data.get("id") || "",
+      fileName: existingFile?.name || data.get("name") || "",
+      attemptedBy: state.currentUser,
+      workDoneBy: existingFile?.completedBy || existingFile?.assignedStaff || assigned || "",
+    });
+    saveState();
+    return toast("You cannot check a file completed by yourself. This file must be checked by another authorised user.");
+  }
+  if (canManageChecking() && stagesObj.Completed && (checkedBy || checkedDate || checkingRemarks) && !validCheckingRemark(checkingRemarks)) {
+    return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
+  }
+  if (checkedDate && completionDate && checkedDate < completionDate) {
+    return toast("Checked Date cannot be earlier than Work Completion Date.");
+  }
+  const record = {
+    id: data.get("id"),
+    name: data.get("name").trim(),
+    pan: data.get("pan").trim(),
+    serviceType,
+    careOf,
+    fy,
+    mode: data.get("mode"),
+    fileReceivedDate: data.get("fileReceivedDate"),
+    workDone: stagesObj["Work Done"],
+    shared: stagesObj["Approval Pending"],
+    reportPrepared: stagesObj["Work Done"],
+    approved: stagesObj.Approved,
+    filed: stagesObj.Completed,
+    billed: Boolean(existingFile?.billed || stagesObj.Billed),
+    billedDate: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.billedDate || "") : "",
+    billingType: existingFile?.billingType || "",
+    feeReceived: (existingFile?.billed || stagesObj.Billed) ? Boolean(existingFile?.feeReceived) : false,
+    feeReceivedDate: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.feeReceivedDate || "") : "",
+    stages: stagesObj,
+    assignedStaff: assigned,
+    assignedStaffId: assignedUser.id || "",
+    assignedStaffEmail: assignedUser.email || "",
+    workAllotmentDate,
+    receivedBy: receivedMarked ? (state.currentUser || "") : (existingFile?.receivedBy || ""),
+    receivedById: receivedMarked ? (state.session?.userId || "") : (existingFile?.receivedById || ""),
+    receivedByEmail: receivedMarked ? (state.session?.userEmail || "") : (existingFile?.receivedByEmail || ""),
+    allottedBy: (assignedChanged || (!existingFile && hasAssignedStaffValue(assigned))) ? (state.currentUser || "") : (existingFile?.allottedBy || ""),
+    allottedById: (assignedChanged || (!existingFile && hasAssignedStaffValue(assigned))) ? (state.session?.userId || "") : (existingFile?.allottedById || ""),
+    allottedByEmail: (assignedChanged || (!existingFile && hasAssignedStaffValue(assigned))) ? (state.session?.userEmail || "") : (existingFile?.allottedByEmail || ""),
+    previousAllottedTo: assignedChanged ? (existingFile?.assignedStaff || "") : (existingFile?.previousAllottedTo || ""),
+    workStartedDate,
+    reAssignedStaff,
+    reAssignedStaffId: reAssignedUser.id || "",
+    reAssignedStaffEmail: reAssignedUser.email || "",
+    reAssignedDate,
+    dueDate: data.get("dueDate"),
+    priority: data.get("priority"),
+    completionDate,
+    workDoneBy: stagesObj["Work Done"] ? (existingFile?.workDoneBy || state.currentUser || "") : (existingFile?.workDoneBy || ""),
+    workDoneById: stagesObj["Work Done"] ? (existingFile?.workDoneById || state.session?.userId || "") : (existingFile?.workDoneById || ""),
+    workDoneByEmail: stagesObj["Work Done"] ? (existingFile?.workDoneByEmail || state.session?.userEmail || "") : (existingFile?.workDoneByEmail || ""),
+    completedBy: stagesObj.Completed ? (justCompleted ? (state.currentUser || "") : (existingFile?.completedBy || state.currentUser || "")) : (existingFile?.completedBy || ""),
+    completedById: stagesObj.Completed ? (justCompleted ? (state.session?.userId || "") : (existingFile?.completedById || state.session?.userId || "")) : (existingFile?.completedById || ""),
+    completedByEmail: stagesObj.Completed ? (justCompleted ? (state.session?.userEmail || "") : (existingFile?.completedByEmail || state.session?.userEmail || "")) : (existingFile?.completedByEmail || ""),
+    checkedBy,
+    checkedDate,
+    checkingRemarks,
+    createdBy: existingFile?.createdBy || state.currentUser || "",
+    createdById: existingFile?.createdById || state.session?.userId || "",
+    createdByEmail: existingFile?.createdByEmail || state.session?.userEmail || "",
+    createdAt: existingFile?.createdAt || new Date().toISOString(),
+    editedBy: state.currentUser || "",
+    editedAt: new Date().toISOString(),
+    correctionRemarks: justCompleted ? "" : (existingFile?.correctionRemarks || ""),
+    returnedBy: justCompleted ? "" : (existingFile?.returnedBy || ""),
+    returnedDate: justCompleted ? "" : (existingFile?.returnedDate || ""),
+    remarks: data.get("remarks").trim(),
+    attachments: JSON.parse(document.querySelector("#fileDrawer").dataset.attachments || "[]"),
+    lastUpdatedDate: todayDate(),
+    updatedAt: Date.now(),
+  };
+  const reviewOnlyChecker = isAuthorisedCheckingStaff()
+    && existingFile
+    && !fileCreatedByCurrentUser(existingFile)
+    && !fileBelongsToUser(existingFile, loggedInUser());
+  if (reviewOnlyChecker) {
+    Object.assign(record, {
+      name: existingFile.name,
+      pan: existingFile.pan,
+      serviceType: existingFile.serviceType,
+      careOf: existingFile.careOf,
+      fy: existingFile.fy || "NA",
+      mode: existingFile.mode,
+      fileReceivedDate: existingFile.fileReceivedDate,
+      workDone: existingFile.workDone,
+      shared: existingFile.shared,
+      reportPrepared: existingFile.reportPrepared,
+      approved: existingFile.approved,
+      filed: existingFile.filed,
+      billed: existingFile.billed,
+      billedDate: existingFile.billedDate,
+      billingType: existingFile.billingType,
+      feeReceived: existingFile.feeReceived,
+      feeReceivedDate: existingFile.feeReceivedDate,
+      stages: existingFile.stages,
+      assignedStaff: existingFile.assignedStaff,
+      assignedStaffId: existingFile.assignedStaffId,
+      assignedStaffEmail: existingFile.assignedStaffEmail,
+      workAllotmentDate: existingFile.workAllotmentDate,
+      workStartedDate: existingFile.workStartedDate,
+      reAssignedStaff: existingFile.reAssignedStaff,
+      reAssignedStaffId: existingFile.reAssignedStaffId,
+      reAssignedStaffEmail: existingFile.reAssignedStaffEmail,
+      reAssignedDate: existingFile.reAssignedDate,
+      dueDate: existingFile.dueDate,
+      priority: existingFile.priority,
+      completionDate: existingFile.completionDate,
+      workDoneBy: existingFile.workDoneBy,
+      workDoneById: existingFile.workDoneById,
+      workDoneByEmail: existingFile.workDoneByEmail,
+      completedBy: existingFile.completedBy,
+      completedById: existingFile.completedById,
+      completedByEmail: existingFile.completedByEmail,
+      correctionRemarks: existingFile.correctionRemarks,
+      returnedBy: existingFile.returnedBy,
+      returnedDate: existingFile.returnedDate,
+      remarks: existingFile.remarks,
+      attachments: existingFile.attachments || [],
+    });
+  }
+  if (editingId) {
+    state.files = state.files.map((file) => (file.id === editingId ? record : file));
+  } else {
+    state.files.unshift(record);
+    addAuditLog("File created", {
+      fileId: record.id,
+      fileName: record.name,
+      createdBy: record.createdBy,
+      assignedStaff: record.assignedStaff,
+      serviceType: record.serviceType,
+    });
+  }
+  const changeText = describeFileChanges(existingFile, record);
+  if (changeText) queueFileChangeNotification(record, changeText, fileChangeType(existingFile, record));
+  if (existingFile && changeText) {
+    addAuditLog("File edited", {
+      fileId: record.id,
+      fileName: record.name,
+      previousStatus: statusOf(existingFile).label,
+      newStatus: statusOf(record).label,
+      changeText,
+    });
+  }
+  if (existingFile && statusOf(existingFile).label !== statusOf(record).label) {
+    addAuditLog("Status changed", {
+      fileId: record.id,
+      fileName: record.name,
+      previousValue: statusOf(existingFile).label,
+      newValue: statusOf(record).label,
+    });
+  }
+  if (record.receivedBy && (!existingFile || !existingFile.receivedBy || !existingFile.stages?.Received)) {
+    addAuditLog("File marked as Received", {
+      fileId: record.id,
+      fileName: record.name,
+      receivedBy: record.receivedBy,
+      fileReceivedDate: record.fileReceivedDate,
+    });
+  }
+  if (justCompleted) {
+    queueCheckingRequiredNotifications(record);
+    addAuditLog(existingFile?.stages?.["Correction Required"] ? "File resubmitted after correction" : "File marked Completed", {
+      fileId: record.id,
+      fileName: record.name,
+      workCompletionDate: record.completionDate,
+      doneBy: record.assignedStaff,
+      checkingStatus: "Not Checked",
+    });
+  }
+  if (existingFile && existingFile.completionDate !== record.completionDate) {
+    addAuditLog("Completed Date changed", {
+      fileId: record.id,
+      fileName: record.name,
+      previousValue: existingFile.completionDate || "",
+      newValue: record.completionDate || "",
+    });
+  }
+  if (existingFile && !sameStaffName(existingFile.assignedStaff, record.assignedStaff)) {
+    addAuditLog("File allotted or reassigned", {
+      fileId: record.id,
+      fileName: record.name,
+      previousValue: existingFile.assignedStaff || "Not Assigned",
+      newValue: record.assignedStaff || "Not Assigned",
+      allottedBy: record.allottedBy || "",
+      allotmentDate: record.workAllotmentDate || "",
+    });
+  }
+  if (canManageChecking() && existingFile && checkingDetailsChanged(existingFile, record)) {
+    addAuditLog("Checking details updated", {
+      fileId: record.id,
+      fileName: record.name,
+      previousCheckingStatus: checkingStatusOf(existingFile).label,
+      newCheckingStatus: checkingStatusOf(record).label,
+      previousCheckedBy: existingFile.checkedBy || "",
+      newCheckedBy: record.checkedBy || "",
+      previousCheckedDate: existingFile.checkedDate || "",
+      newCheckedDate: record.checkedDate || "",
+      previousCheckingRemarks: existingFile.checkingRemarks || "",
+      newCheckingRemarks: record.checkingRemarks || "",
+    });
+  }
+  saveState();
+  closeOverlays();
+  toast("File record saved");
+  renderAll();
+}
+
+function renderStaffPage() {
+  const allowed = state.currentRole === "Admin" || state.currentRole === "Manager";
+  const selected = document.querySelector("#staffSelect")?.value || "";
+  const s = staffStats(selected);
+  document.querySelector("#staff").innerHTML = `
+    ${allowed ? "" : `<div class="permission-note">Staff performance is mainly intended for Admin and Manager roles. This preview still shows your accessible records.</div>`}
+    <div class="panel">
+      <div class="field staff-selector">
+        <label>Select Staff Member</label>
+        <select id="staffSelect"><option value="">All Staff</option>${state.users.map((u) => `<option ${selected === u.name ? "selected" : ""}>${u.name}</option>`).join("")}</select>
+      </div>
+      <div class="action-row" style="margin-bottom:14px">
+        <button class="secondary-button" id="staffExcel" ${rolePerm().export ? "" : "disabled"}>Export Staff Excel</button>
+        <button class="secondary-button" id="staffPdf" ${rolePerm().export ? "" : "disabled"}>Export Staff Pdf</button>
+      </div>
+      <div class="grid metrics staff-performance-metrics">
+        ${staffMetric("Total Assigned", s.total, "Files Assigned", "grad-blue", "total")}
+        ${staffMetric("Not Started", s.notStarted, "Receipt Only", "grad-slate", "notStarted")}
+        ${staffMetric("In Progress", s.inProgress, "Work Underway", "grad-blue", "inProgress")}
+        ${staffMetric("Pending With Staff", s.pending, "Not Filed", "grad-red", "pending")}
+        ${staffMetric("Completed", s.completed, "Filed records", "grad-green", "completed")}
+        ${staffMetric("Overdue", s.overdue, "Past due date", "grad-red", "overdue")}
+        ${staffMetric("Approval Pending", s.approvals, "Shared Not Approved", "grad-yellow", "approval")}
+        ${staffMetric("Billed / Unbilled", `${s.billed}/${s.unbilled}`, "Billing status", "grad-darkgreen", "billing")}
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>Selected Staff Workload</h3>
+      ${renderFileTable(visibleFiles().filter((f) => !selected || fileBelongsToUser(f, findUserByStaffIdentity(selected))))}
+    </div>
+  `;
+  document.querySelector("#staffSelect").onchange = renderStaffPage;
+  document.querySelector("#staffExcel").onclick = () => exportExcel("staff-performance", staffPerformanceRows(selected));
+  document.querySelector("#staffPdf").onclick = () => exportPdf("staff-performance", staffPerformanceRows(selected));
+  document.querySelectorAll("[data-staff-metric]").forEach((card) => {
+    card.onclick = () => renderStaffFileReport(selected, card.dataset.staffMetric);
+  });
+  bindFileActions();
+}
+
+function staffMetric(label, value, note, className, kind) {
+  return `<button class="metric-card ${className}" data-staff-metric="${kind}"><span>${label}</span><strong>${value}</strong><p>${note}</p></button>`;
+}
+
+function staffPerformanceRows(selected) {
+  if (selected) return visibleFiles().filter((f) => fileBelongsToUser(f, findUserByStaffIdentity(selected))).map(flattenFile);
+  return state.users.map((user) => ({ Staff: user.name, Role: user.role, ...staffStats(user.name) }));
+}
+
+function renderStaffFileReport(selected, kind) {
+  let rows = visibleFiles().filter((f) => !selected || fileBelongsToUser(f, findUserByStaffIdentity(selected)));
+  if (kind === "notStarted") rows = rows.filter((f) => stageIndex(f) === 0);
+  if (kind === "inProgress") rows = rows.filter((f) => stageIndex(f) > 0 && !f.filed);
+  if (kind === "pending") rows = rows.filter((f) => !f.filed);
+  if (kind === "completed") rows = rows.filter((f) => f.filed);
+  if (kind === "overdue") rows = rows.filter(isOverdue);
+  if (kind === "approval") rows = rows.filter(pendingApproval);
+  if (kind === "billing") rows = rows.filter(isNonBilledFile);
+  exportExcel(`staff-${kind}-report`, rows);
+}
+
+function renderStaffManagerPermissionSummary() {
+  const rows = [
+    ["Nisha", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "No", "No"],
+    ["Rizwana", "As configured", "As configured", "As configured", "As configured", "Yes", "Yes", "No", "No"],
+    ["Althaf", "As configured", "As configured", "As configured", "As configured", "Yes", "Yes", "No", "No"],
+    ["Anusree", "Yes", "Yes", "Yes", "Yes", "No", "No", "No", "No"],
+  ];
+  const headers = ["Staff Manager", "Add File", "Edit Own File", "Mark Received", "Allot File", "View Not Checked", "Mark Eligible Checked", "Check Own Work", "Full Admin"];
+  return `
+    <div class="panel" style="margin-top:16px">
+      <h3>Staff Manager Permissions</h3>
+      <div class="table-wrap">
+        <table class="file-table file-table-compact">
+          <thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </div>
+      <p class="small-muted">Staff Managers do not receive Admin-only access, user deletion, backup/restore, or full system settings permissions.</p>
+    </div>
+  `;
+}
+
+function renderUsersPage() {
+  const canManage = rolePerm().users;
+  const roles = [
+    ["Admin", "Full access to files, users, invitations, reports and exports.", "Can add, edit, delete, assign, export and manage roles."],
+    ["Manager", "Full access to files, users, reports and exports.", "Can add, edit, delete, assign, export etc."],
+    ["Staff Manager", "Enhanced staff access based on configured rights.", "Can add/edit own files where authorised, view/check eligible Not Checked Files, and view checking details. No Admin-only controls."],
+    ["Staff", "Work update access for assigned files.", "Can update status, remarks and attachments. Cannot delete or manage roles."],
+  ];
+  document.querySelector("#users").innerHTML = `
+    ${canManage ? "" : `<div class="permission-note">Your current role can view users only. Admin/Manager can update access types.</div>`}
+    <div class="panel">
+      <h3>Company Details</h3>
+      <div class="filters">
+        <div class="field">
+          <label>Company Name</label>
+          <input id="companyName" placeholder="Enter company name" value="${escapeHtml(state.company?.name || "")}" ${canManage ? "" : "disabled"}>
+        </div>
+        <div class="field wide-field">
+          <label>Address</label>
+          <textarea id="companyAddress" placeholder="Enter office address" ${canManage ? "" : "disabled"}>${escapeHtml(state.company?.address || "")}</textarea>
+        </div>
+        <div class="field">
+          <label>Action</label>
+          <button class="primary-button" id="saveCompanyDetails" ${canManage ? "" : "disabled"}>Save Details</button>
+        </div>
+      </div>
+      <p class="small-muted">Company name and address will appear below CA File Tracker in the left panel.</p>
+    </div>
+    <div class="grid report-grid">
+      ${roles.map(([role, access, restriction]) => `
+        <div class="user-card">
+          <strong>${role}</strong>
+          <p>${access}</p>
+          <p>${restriction}</p>
+        </div>
+      `).join("")}
+    </div>
+    ${renderStaffManagerPermissionSummary()}
+    <div class="panel" style="margin-top:16px">
+      <h3>Create User Login</h3>
+      <div class="filters">
+        <div class="field">
+          <label>Name</label>
+          <input id="newUserName" placeholder="Team member name" ${canManage ? "" : "disabled"}>
+        </div>
+        <div class="field">
+          <label>Email ID / User Name</label>
+          <input id="newUserEmail" type="email" placeholder="name@example.com" ${canManage ? "" : "disabled"}>
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <div class="password-wrap"><input id="newUserPassword" type="password" placeholder="Set password" ${canManage ? "" : "disabled"}><button type="button" data-toggle-password="newUserPassword">View</button></div>
+        </div>
+        <div class="field">
+          <label>Access Type</label>
+          <select id="newUserRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
+        </div>
+        <div class="field">
+          <label>Action</label>
+          <button class="primary-button" id="createUser" ${canManage && rolePerm().roles ? "" : "disabled"}>Create User</button>
+        </div>
+      </div>
+      <p class="small-muted">Use these credentials on the login screen. This local version does not send email.</p>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>Update Existing User</h3>
+      <div class="filters">
+        <div class="field">
+          <label>User</label>
+          <select id="accessUser">${state.users.map((user) => `<option value="${user.id}">${user.name} - ${user.email}</option>`).join("")}</select>
+        </div>
+        <div class="field">
+          <label>Email ID</label>
+          <input id="accessEmail" type="email" ${canManage ? "" : "disabled"}>
+        </div>
+        <div class="field">
+          <label>New Password</label>
+          <div class="password-wrap"><input id="accessPassword" type="password" placeholder="Leave blank to keep old password" ${canManage ? "" : "disabled"}><button type="button" data-toggle-password="accessPassword">View</button></div>
+        </div>
+        <div class="field">
+          <label>Access Type</label>
+          <select id="accessRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
+        </div>
+        <div class="field">
+          <label>Action</label>
+          <button class="primary-button" id="updateAccess" ${canManage && rolePerm().roles ? "" : "disabled"}>Update User</button>
+        </div>
+      </div>
+    </div>
+    ${renderUserManagementInviteSection()}
+  `;
+  const accessUser = document.querySelector("#accessUser");
+  const accessRole = document.querySelector("#accessRole");
+  const accessEmail = document.querySelector("#accessEmail");
+  bindPasswordToggles();
+  document.querySelector("#saveCompanyDetails").onclick = () => {
+    state.company = {
+      name: document.querySelector("#companyName").value.trim(),
+      address: document.querySelector("#companyAddress").value.trim(),
+    };
+    saveState();
+    toast("Company details saved");
+    mount();
+    activePage = "users";
+    showPage("users");
+  };
+  const setAccessForm = () => {
+    const selected = state.users.find((u) => u.id === accessUser.value);
+    accessRole.value = selected?.role || "Staff";
+    accessEmail.value = selected?.email || "";
+    document.querySelector("#accessPassword").value = "";
+  };
+  setAccessForm();
+  accessUser.onchange = setAccessForm;
+  document.querySelector("#createUser").onclick = async () => {
+    const name = document.querySelector("#newUserName").value.trim();
+    const email = document.querySelector("#newUserEmail").value.trim().toLowerCase();
+    const password = document.querySelector("#newUserPassword").value;
+    const role = document.querySelector("#newUserRole").value;
+    if (!name || !email || !password) return toast("Please enter name, email and password.");
+    if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
+      try {
+        await apiJson("/api/users", {
+          method: "POST",
+          body: JSON.stringify({ name, email, password, role }),
+        });
+        await loadStateFromApi();
+        toast("Supabase user login created");
+        renderUsersPage();
+        return;
+      } catch (error) {
+        return toast(error.message || "Unable to create Supabase user.");
+      }
+    }
+    const result = createOrUpdateTeamLogin({ name, email, role, password });
+    if (result.error) return toast(result.error);
+    saveAccessState();
+    const canLogin = authenticateUser(email, password);
+    toast(canLogin ? "User login created" : "User saved, but login check failed. Please update the password once.");
+    renderUsersPage();
+  };
+  document.querySelector("#updateAccess").onclick = async () => {
+    const user = state.users.find((u) => u.id === accessUser.value);
+    const oldEmail = user.email;
+    const oldRole = user.role;
+    const email = normalizeEmail(accessEmail.value);
+    const password = document.querySelector("#accessPassword").value;
+    if (!email) return toast("Please enter email ID.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Please enter a valid email ID.");
+    if (state.users.some((u) => u.id !== user.id && normalizeEmail(u.email) === email)) return toast("Email already exists.");
+    if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
+      const authUserId = user.authUserId || user.auth_user_id || "";
+      if (!authUserId) return toast("This user is not linked to Supabase Auth. Recreate the login first.");
+      try {
+        await apiJson(`/api/users/${encodeURIComponent(authUserId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: user.name,
+            email,
+            role: normalizeRole(accessRole.value),
+            ...(password ? { password } : {}),
+          }),
+        });
+        await loadStateFromApi();
+        toast(password ? "Supabase password updated" : "Supabase user updated");
+        renderUsersPage();
+        return;
+      } catch (error) {
+        return toast(error.message || "Unable to update Supabase user.");
+      }
+    }
+    accessRestoreEmails.add(email);
+    user.email = email;
+    user.role = normalizeRole(accessRole.value);
+    if (password) user.password = password;
+    state.revokedAccess = (state.revokedAccess || []).filter((item) => normalizeEmail(item.email || item || "") !== email);
+    state.invites = state.invites.filter((invite) => normalizeEmail(invite.email) !== normalizeEmail(oldEmail) || normalizeEmail(oldEmail) === email);
+    upsertInviteForUser(user, user.password);
+    if (oldRole !== user.role) {
+      addAuditLog("User role changed", {
+        userId: user.id,
+        userName: user.name,
+        previousValue: oldRole,
+        newValue: user.role,
+      });
+    }
+    saveAccessState();
+    toast("User login updated");
+    renderUsersPage();
+  };
+  bindUserManagementInviteSection();
+}
+
+function renderUserManagementInviteSection() {
+  const canInvite = rolePerm().invite;
+  const invitedUsers = activeUserList();
+  return `
+    ${canInvite ? "" : `<div class="permission-note">Only Admin and Manager can create team login access.</div>`}
+    <div class="panel" style="margin-top:16px">
+      <h3>Create Team Login / Invitation</h3>
+      <p class="small-muted">This local version does not send email. Create a username and password here for your team member.</p>
+      <div class="three-col">
+        ${teamMemberPickerField()}
+        ${formField("inviteName", "Name", "")}
+        ${formField("inviteEmail", "Email Address", "", "email")}
+        ${selectField("inviteRole", "Role Selection", ["Admin", "Manager", "Staff", "Guest"], "Staff")}
+        ${formField("invitePassword", "Login Password", "", "password")}
+      </div>
+      <div class="action-row" style="margin-top:14px">
+        <button class="primary-button" id="sendInvite" ${canInvite ? "" : "disabled"}>Create Login</button>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>User Access Status</h3>
+      <div class="user-access-grid">
+        ${invitedUsers.map((user) => `
+          <div class="user-access-card">
+            <div class="user-access-row"><span>Name</span><strong>${escapeHtml(user.name)}</strong></div>
+            <div class="user-access-row"><span>Email</span><strong>${escapeHtml(user.email)}</strong></div>
+            <div class="user-access-row"><span>Role</span><strong>${escapeHtml(user.role)}</strong></div>
+            <div class="user-access-row"><span>Password</span><strong>Managed by Supabase Auth</strong></div>
+            <div class="user-access-actions">
+              <span class="badge filed">Active</span>
+              <button class="mini-button danger" data-kick-user="${user.id}" ${state.currentRole === "Admin" && user.id !== state.session.userId ? "" : "disabled"}>Kick Out</button>
+            </div>
+          </div>
+        `).join("") || empty("No invited users yet.")}
+      </div>
+    </div>
+  `;
+}
+
+function bindUserManagementInviteSection() {
+  const sendInvite = document.querySelector("#sendInvite");
+  if (sendInvite) {
+    sendInvite.onclick = () => {
+      const name = document.querySelector("[name='inviteName']").value.trim();
+      const email = document.querySelector("[name='inviteEmail']").value.trim().toLowerCase();
+      const role = document.querySelector("[name='inviteRole']").value;
+      const password = document.querySelector("[name='invitePassword']").value;
+      if (!name || !email || !password) return toast("Please enter name, email and password.");
+      const result = createOrUpdateTeamLogin({ name, email, role, password });
+      if (result.error) return toast(result.error);
+      saveAccessState();
+      const canLogin = authenticateUser(email, password);
+      toast(canLogin ? (result.updated ? "Team login updated and linked to staff list" : "Local login created") : "Login saved, but please re-enter the password once.");
+      renderUsersPage();
+    };
+  }
+  document.querySelectorAll("[data-kick-user]").forEach((btn) => {
+    btn.onclick = () => {
+      if (state.currentRole !== "Admin") return toast("Only Admin can remove access.");
+      const user = state.users.find((u) => u.id === btn.dataset.kickUser);
+      if (!user) return;
+      if (!confirm(`Kick out access for ${user.name}?`)) return;
+      state.revokedAccess = [...(state.revokedAccess || []), { id: user.id, email: user.email, name: user.name, revokedAt: Date.now() }];
+      state.users = state.users.filter((u) => u.id !== user.id);
+      state.files = state.files.map((file) => {
+        const removeAssigned = sameStaffName(file.assignedStaff, user.name) || sameStaffName(file.assignedStaffEmail, user.email) || sameStaffName(file.assignedStaffId, user.id);
+        const removeReAssigned = sameStaffName(file.reAssignedStaff, user.name) || sameStaffName(file.reAssignedStaffEmail, user.email) || sameStaffName(file.reAssignedStaffId, user.id);
+        return {
+          ...file,
+          assignedStaff: removeAssigned ? "Not Assigned" : file.assignedStaff,
+          assignedStaffId: removeAssigned ? "" : file.assignedStaffId,
+          assignedStaffEmail: removeAssigned ? "" : file.assignedStaffEmail,
+          reAssignedStaff: removeReAssigned ? "" : file.reAssignedStaff,
+          reAssignedStaffId: removeReAssigned ? "" : file.reAssignedStaffId,
+          reAssignedStaffEmail: removeReAssigned ? "" : file.reAssignedStaffEmail,
+          updatedAt: Date.now(),
+        };
+      });
+      state.invites = state.invites.filter((invite) => invite.email.toLowerCase() !== user.email.toLowerCase());
+      saveState();
+      toast("User access removed");
+      renderUsersPage();
+    };
+  });
+  bindTeamMemberPicker();
+  bindPasswordToggles();
+}
+
+function renderVerificationPage() {
+  const target = document.querySelector("#verification");
+  if (!target) return;
+  if (!canUseVerificationPage()) {
+    target.innerHTML = `<div class="permission-note">Only Admin and Manager can view verification.</div>`;
+    return;
+  }
+
+  const team = verificationTeamRows();
+  const unmatched = verificationUnmatchedAssignments();
+  const totalAssigned = team.reduce((sum, row) => sum + row.assigned, 0);
+  const activeAssigned = team.reduce((sum, row) => sum + row.active, 0);
+  const staleCount = team.reduce((sum, row) => sum + row.stale, 0);
+  const notReady = team.filter((row) => row.loginStatus !== "Ready").length;
+
+  target.innerHTML = `
+    <div class="grid metrics">
+      ${metric("Team Members", team.length, "Managers and staff in verification", "grad-blue")}
+      ${metric("Visible Login Files", totalAssigned, "Files matched to user logins", "grad-green")}
+      ${metric("Active Assigned", activeAssigned, "Open files in staff logins", "grad-yellow")}
+      ${metric("Attention Items", staleCount + unmatched.length + notReady, "Stale, unmatched or login issues", "grad-red")}
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>Login & Allotment Verification</h3>
+      <p class="small-muted">Counts use the same staff matching rules as the login pages. If a staff row shows assigned files here, those files should appear in that staff login.</p>
+      <div class="table-wrap">
+        <table class="file-table file-table-compact">
+          <thead>
+            <tr>
+              <th>Staff</th>
+              <th>Role</th>
+              <th>Email</th>
+              <th>Login</th>
+              <th>Visible Files</th>
+              <th>Active</th>
+              <th>Completed</th>
+              <th>Not Checked</th>
+              <th>Overdue</th>
+              <th>Stale</th>
+              <th>Last Update</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${team.map((row) => `
+              <tr>
+                <td><strong>${escapeHtml(row.name)}</strong></td>
+                <td>${escapeHtml(row.role)}</td>
+                <td>${escapeHtml(row.email)}</td>
+                <td><span class="badge ${row.loginStatus === "Ready" ? "filed" : "overdue"}">${escapeHtml(row.loginStatus)}</span></td>
+                <td>${row.assigned}</td>
+                <td>${row.active}</td>
+                <td>${row.completed}</td>
+                <td>${row.notChecked}</td>
+                <td>${row.overdue}</td>
+                <td>${row.stale}</td>
+                <td>${escapeHtml(row.lastUpdate)}</td>
+                <td><button class="mini-button" data-verify-staff="${escapeHtml(row.id)}">View Files</button></td>
+              </tr>
+            `).join("") || `<tr><td colspan="12">${empty("No users found for verification.")}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>Assignment Warnings</h3>
+      ${unmatched.length ? `
+        <div class="table-wrap">
+          <table class="file-table file-table-compact">
+            <thead><tr><th>File</th><th>PAN</th><th>Service</th><th>Assigned To</th><th>Last Update</th><th>Action</th></tr></thead>
+            <tbody>
+              ${unmatched.slice(0, 100).map((file) => `
+                <tr>
+                  <td>${escapeHtml(file.name)}</td>
+                  <td>${escapeHtml(file.pan)}</td>
+                  <td>${escapeHtml(file.serviceType)}</td>
+                  <td>${escapeHtml(file.assignedStaff || file.assignedStaffEmail || file.assignedStaffId || "Not Assigned")}</td>
+                  <td>${escapeHtml(verificationFileDate(file))}</td>
+                  <td><button class="mini-button" data-edit="${escapeHtml(file.id)}">Open</button></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : empty("No unmatched assigned staff found.")}
+      ${unmatched.length > 100 ? `<p class="small-muted">Showing first 100 unmatched records.</p>` : ""}
+    </div>
+  `;
+
+  document.querySelectorAll("[data-verify-staff]").forEach((btn) => {
+    btn.onclick = () => {
+      const row = team.find((item) => item.id === btn.dataset.verifyStaff);
+      if (!row) return;
+      resetFilters();
+      state.filters.staff = row.name;
+      activePage = "files";
+      saveState();
+      mount();
+    };
+  });
+  document.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => openFileDrawer(btn.dataset.edit)));
+}
+
+function verificationTeamRows() {
+  return sortByName((state.users || [])
+    .filter((user) => ["Manager", "Staff Manager", "Staff"].includes(user.role))
+    .map((user) => {
+      const files = (state.files || []).filter((file) => fileBelongsToUser(file, user));
+      const active = files.filter((file) => !isCheckedCompleted(file));
+      const lastUpdatedAt = Math.max(0, ...files.map(verificationFileTimestamp));
+      const stale = active.filter((file) => verificationFileAgeDays(file) > 7).length;
+      return {
+        id: user.id || user.authUserId || user.email || user.name,
+        name: user.name || user.email || "Unknown",
+        role: user.role || "Staff",
+        email: user.email || "",
+        loginStatus: user.isActive === false ? "Inactive" : (user.authUserId || user.auth_user_id ? "Ready" : "No Auth ID"),
+        assigned: files.length,
+        active: active.length,
+        completed: files.filter(isCheckedCompleted).length,
+        notChecked: files.filter(isNotCheckedFile).length,
+        overdue: files.filter(isOverdue).length,
+        stale,
+        lastUpdate: lastUpdatedAt ? verificationDateTime(lastUpdatedAt) : "-",
+      };
+    }));
+}
+
+function verificationUnmatchedAssignments() {
+  return (state.files || []).filter((file) => {
+    if (!hasAssignedStaffValue(file.assignedStaff) && !hasAssignedStaffValue(file.assignedStaffEmail) && !hasAssignedStaffValue(file.assignedStaffId)) return false;
+    return !findUserByStaffIdentity(file.assignedStaff)
+      && !findUserByStaffIdentity(file.assignedStaffEmail)
+      && !findUserByStaffIdentity(file.assignedStaffId);
+  });
+}
+
+function verificationFileTimestamp(file) {
+  return Number(file.updatedAt || 0)
+    || Date.parse(file.lastUpdatedDate || "")
+    || Date.parse(file.lastUpdated || "")
+    || Date.parse(file.workStartedDate || "")
+    || Date.parse(file.workAllotmentDate || "")
+    || Date.parse(file.fileReceivedDate || "")
+    || 0;
+}
+
+function verificationFileAgeDays(file) {
+  const timestamp = verificationFileTimestamp(file);
+  if (!timestamp) return 0;
+  return Math.floor((Date.now() - timestamp) / MS_DAY);
+}
+
+function verificationFileDate(file) {
+  const timestamp = verificationFileTimestamp(file);
+  return timestamp ? verificationDateTime(timestamp) : "-";
+}
+
+function verificationDateTime(timestamp) {
+  return new Date(timestamp).toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderBackupPage() {
+  const container = document.querySelector("#backup");
+  if (!container) return;
+  const canBackup = canUseBackupPage();
+  const adminOnly = state.currentRole === "Admin";
+  container.innerHTML = `
+    ${canBackup ? "" : `<div class="permission-note">Only Admin and Manager can create backups.</div>`}
+    <div class="panel">
+      <h3>Backup</h3>
+      <div class="admin-data-actions">
+        <button class="secondary-button" id="downloadBackup" ${canBackup ? "" : "disabled"}>Download Backup</button>
+        <button class="secondary-button" id="restoreBackup" ${adminOnly ? "" : "disabled"}>Restore Backup</button>
+        <input class="hidden" type="file" id="restoreBackupInput" accept=".json,application/json">
+        <button class="primary-button" id="syncSiteData" ${adminOnly ? "" : "disabled"}>Sync Data to Site</button>
+        <button class="secondary-button" id="pullSiteData" ${adminOnly ? "" : "disabled"}>Pull Data from Site</button>
+      </div>
+      <p class="small-muted">Backup saves all files, users, statuses, visitors, expenses, collections, chats, audit log and settings. Managers can download backups. Restore and site sync remain Admin-only.</p>
+    </div>
+    <div class="grid metrics dashboard-main-metrics" style="margin-top:16px">
+      ${metric("Current Files", (state.files || []).length, "Included in backup", "grad-blue")}
+      ${metric("Users", (state.users || []).length, "Team logins included", "grad-purple")}
+      ${metric("Visitors", (state.visitors || []).length, "Visitor records included", "grad-green")}
+      ${metric("Expenses", (state.expenses || []).length, "Expense records included", "grad-yellow")}
+    </div>
+  `;
+  document.querySelector("#downloadBackup").onclick = downloadFullBackup;
+  document.querySelector("#restoreBackup").onclick = () => {
+    if (!adminOnly) return toast("Only Admin can restore backups.");
+    document.querySelector("#restoreBackupInput").click();
+  };
+  document.querySelector("#restoreBackupInput").onchange = handleBackupRestore;
+  document.querySelector("#syncSiteData").onclick = syncDataToSite;
+  document.querySelector("#pullSiteData").onclick = pullDataFromSite;
+}
+
+function renderInvitesPage() {
+  const canInvite = rolePerm().invite;
+  const visibleInvites = (state.invites || []).filter((invite) => !isRevokedAccess(invite));
+  document.querySelector("#invites").innerHTML = `
+    ${canInvite ? "" : `<div class="permission-note">Only Admin and Manager can send team invitations.</div>`}
+    <div class="panel">
+      <h3>Invite / Create Team Login</h3>
+      <p class="small-muted">This local version cannot send real email. Use this page to record an invitation and create a login password for the team member.</p>
+      <div class="three-col">
+        ${teamMemberPickerField()}
+        ${formField("inviteName", "Name", "")}
+        ${formField("inviteEmail", "Email Address", "", "email")}
+        ${selectField("inviteRole", "Role Selection", ["Admin", "Manager", "Staff", "Guest"], "Staff")}
+        ${formField("invitePassword", "Login Password", "", "password")}
+      </div>
+      <div class="action-row" style="margin-top:14px">
+        <button class="primary-button" id="sendInvite" ${canInvite ? "" : "disabled"}>Create Login</button>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>Invitation status</h3>
+      <div class="card-list">
+        ${visibleInvites.map((invite) => `<div class="invite-card"><strong>${invite.name}</strong><p>${invite.email} | ${invite.role} | Sent ${fmt(invite.sentAt)}</p><span class="badge ${invite.status === "Accepted" ? "filed" : "approval"}">${invite.status}</span></div>`).join("") || empty("No invitations sent yet.")}
+      </div>
+    </div>
+  `;
+  document.querySelector("#sendInvite").onclick = () => {
+    const name = document.querySelector("[name='inviteName']").value.trim();
+    const email = document.querySelector("[name='inviteEmail']").value.trim().toLowerCase();
+    const role = document.querySelector("[name='inviteRole']").value;
+    const password = document.querySelector("[name='invitePassword']").value;
+    if (!name || !email || !password) return toast("Please enter name, email and password.");
+    const result = createOrUpdateTeamLogin({ name, email, role, password });
+    if (result.error) return toast(result.error);
+    saveAccessState();
+    const canLogin = authenticateUser(email, password);
+    toast(canLogin ? "Local login created" : "Login saved, but please re-enter the password once.");
+    renderInvitesPage();
+  };
+  bindTeamMemberPicker();
+  bindPasswordToggles();
+}
+
+function renderInvitesAccessPage() {
+  const canInvite = rolePerm().invite;
+  const invitedUsers = activeUserList();
+  document.querySelector("#invites").innerHTML = `
+    ${canInvite ? "" : `<div class="permission-note">Only Admin and Manager can create team login access.</div>`}
+    <div class="panel">
+      <h3>Create Team Login</h3>
+      <p class="small-muted">This local version does not send email. Create a username and password here for your team member.</p>
+      <div class="three-col">
+        ${teamMemberPickerField()}
+        ${formField("inviteName", "Name", "")}
+        ${formField("inviteEmail", "Email Address", "", "email")}
+        ${selectField("inviteRole", "Role Selection", ["Admin", "Manager", "Staff", "Guest"], "Staff")}
+        ${formField("invitePassword", "Login Password", "", "password")}
+      </div>
+      <div class="action-row" style="margin-top:14px">
+        <button class="primary-button" id="sendInvite" ${canInvite ? "" : "disabled"}>Create Login</button>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>User Access Status</h3>
+      <div class="card-list">
+        ${invitedUsers.map((user) => `
+          <div class="invite-card">
+            <strong>${escapeHtml(user.name)}</strong>
+            <p>${escapeHtml(user.email)} - ${escapeHtml(user.role)} access</p>
+            <p>Password: <strong>Managed by Supabase Auth</strong></p>
+            <div class="action-row" style="margin-top:10px">
+              <span class="badge filed">Active</span>
+              <button class="mini-button danger" data-kick-user="${user.id}" ${state.currentRole === "Admin" && user.id !== state.session.userId ? "" : "disabled"}>Kick Out Access</button>
+            </div>
+          </div>
+        `).join("") || empty("No invited users yet.")}
+      </div>
+    </div>
+  `;
+  document.querySelector("#sendInvite").onclick = () => {
+    const name = document.querySelector("[name='inviteName']").value.trim();
+    const email = document.querySelector("[name='inviteEmail']").value.trim().toLowerCase();
+    const role = document.querySelector("[name='inviteRole']").value;
+    const password = document.querySelector("[name='invitePassword']").value;
+    if (!name || !email || !password) return toast("Please enter name, email and password.");
+    const result = createOrUpdateTeamLogin({ name, email, role, password });
+    if (result.error) return toast(result.error);
+    saveAccessState();
+    const canLogin = authenticateUser(email, password);
+    toast(canLogin ? (result.updated ? "Team login updated and linked to staff list" : "Local login created") : "Login saved, but please re-enter the password once.");
+    renderInvitesAccessPage();
+  };
+  document.querySelectorAll("[data-kick-user]").forEach((btn) => {
+    btn.onclick = () => {
+      if (state.currentRole !== "Admin") return toast("Only Admin can remove access.");
+      const user = state.users.find((u) => u.id === btn.dataset.kickUser);
+      if (!user) return;
+      if (!confirm(`Kick out access for ${user.name}?`)) return;
+      state.revokedAccess = [...(state.revokedAccess || []), { id: user.id, email: user.email, name: user.name, revokedAt: Date.now() }];
+      state.users = state.users.filter((u) => u.id !== user.id);
+      state.files = state.files.map((file) => {
+        const removeAssigned = sameStaffName(file.assignedStaff, user.name) || sameStaffName(file.assignedStaffEmail, user.email) || sameStaffName(file.assignedStaffId, user.id);
+        const removeReAssigned = sameStaffName(file.reAssignedStaff, user.name) || sameStaffName(file.reAssignedStaffEmail, user.email) || sameStaffName(file.reAssignedStaffId, user.id);
+        return {
+          ...file,
+          assignedStaff: removeAssigned ? "Not Assigned" : file.assignedStaff,
+          assignedStaffId: removeAssigned ? "" : file.assignedStaffId,
+          assignedStaffEmail: removeAssigned ? "" : file.assignedStaffEmail,
+          reAssignedStaff: removeReAssigned ? "" : file.reAssignedStaff,
+          reAssignedStaffId: removeReAssigned ? "" : file.reAssignedStaffId,
+          reAssignedStaffEmail: removeReAssigned ? "" : file.reAssignedStaffEmail,
+          updatedAt: Date.now(),
+        };
+      });
+      state.invites = state.invites.filter((invite) => invite.email.toLowerCase() !== user.email.toLowerCase());
+      saveState();
+      toast("User access removed");
+      renderInvitesAccessPage();
+    };
+  });
+  bindTeamMemberPicker();
+  bindPasswordToggles();
+}
+
+function bindPasswordToggles() {
+  document.querySelectorAll("[data-toggle-password]").forEach((btn) => {
+    btn.onclick = () => {
+      const input = document.getElementById(btn.dataset.togglePassword);
+      if (!input) return;
+      input.type = input.type === "password" ? "text" : "password";
+      btn.textContent = input.type === "password" ? "View" : "Hide";
+    };
+  });
+}
+
+function downloadImportTemplate() {
+  const rows = [
+    {
+      Name: "ABC Traders",
+      "PAN / Regn Number": "ABCDE1234F",
+      "Service Type": "GST Return",
+      "C/o": "Direct",
+      Mode: "Whatsapp",
+      "File Received Date": todayDate(),
+      "Assigned Staff": "Not Assigned",
+      "Work Allotment Date": "",
+      "Re Assigned": "",
+      "Re Assigned Date": "",
+      "Due Date": todayDate(),
+      Priority: "Medium",
+      Status: "Received",
+      "Completed Date": "",
+      "Checked By": "",
+      "Checked Date": "",
+      Billed: "",
+      "Fee Received": "",
+      Remarks: "Paste your existing file details here",
+    },
+    {
+      Name: "XYZ Pvt Ltd",
+      "PAN / Regn Number": "U12345KL2024PTC000001",
+      "Service Type": "Statutory Audit",
+      "C/o": "Taxmate",
+      Mode: "Email",
+      "File Received Date": todayDate(),
+      "Assigned Staff": "Nisha",
+      "Work Allotment Date": todayDate(),
+      "Re Assigned": "",
+      "Re Assigned Date": "",
+      "Due Date": todayDate(),
+      Priority: "High",
+      Status: "WIP",
+      "Completed Date": "",
+      "Checked By": "",
+      "Checked Date": "",
+      Billed: "",
+      "Fee Received": "",
+      Remarks: "",
+    },
+  ];
+  downloadExcelTable("ca-file-tracker-import-template", rows);
+  toast("Sample Excel template downloaded");
+}
+
+function downloadExcelTable(name, rows) {
+  const blockedExportHeaders = new Set(["id", "name", "pan", "serviceType", "careOf", "mode", "fileReceivedDate", "workDone", "shared", "reportPrepared", "approved", "filed", "billed", "stages", "assignedStaff", "workAllotmentDate", "workStartedDate", "dueDate", "priority", "lastUpdatedDate", "updatedAt", "assignedStaffId", "assignedStaffEmail", "reAssignedStaff", "reAssignedStaffId", "reAssignedStaffEmail"]);
+  rows = rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => !blockedExportHeaders.has(String(key).trim()))));
+  const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  const wideColumns = ["Name", "PAN / Regn Number", "Service Type", "Remarks", "Attachments"];
+  const dateColumns = ["File Received Date", "Work Allotment Date", "Re Assigned Date", "Due Date", "Last Updated Date"];
+  const narrowColumns = ["C/o", "Mode", "Priority", "Status"];
+  const columnWidth = (header) => {
+    if (wideColumns.includes(header)) return 180;
+    if (dateColumns.includes(header)) return 115;
+    if (narrowColumns.includes(header)) return 95;
+    return 140;
+  };
+  const table = `
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        body {
+          font-family: Calibri, Arial, sans-serif;
+          color: #111827;
+        }
+        table {
+          border-collapse: collapse;
+          table-layout: fixed;
+          width: 100%;
+        }
+        th {
+          background: #1f4e78;
+          color: #ffffff;
+          font-weight: 700;
+          text-align: center;
+          vertical-align: middle;
+          border: 1px solid #163a5c;
+          padding: 8px 10px;
+          mso-style-parent: style0;
+        }
+        td {
+          border: 1px solid #9ca3af;
+          padding: 7px 9px;
+          vertical-align: top;
+          text-align: left;
+          mso-number-format: "\\@";
+        }
+        tr:nth-child(even) td {
+          background: #f8fafc;
+        }
+        .center {
+          text-align: center;
+          vertical-align: middle;
+        }
+        .wrap {
+          white-space: normal;
+          mso-data-placement: same-cell;
+        }
+      </style>
+    </head>
+    <body>
+    <table>
+      <colgroup>${headers.map((h) => `<col style="width:${columnWidth(h)}px">`).join("")}</colgroup>
+      <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((row) => `<tr>${headers.map((h) => {
+        const value = escapeHtml(row[h] ?? "");
+        const className = narrowColumns.includes(h) || dateColumns.includes(h) ? "center" : "wrap";
+        return `<td class="${className}">${value}</td>`;
+      }).join("")}</tr>`).join("")}</tbody>
+    </table>
+    </body></html>`;
+  const blob = new Blob([table], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${name}.xls`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+async function downloadXlsxRows(name, rows, title = "") {
+  await loadSheetJs();
+  const headers = Object.keys(rows[0] || {});
+  const headingLines = reportHeadingLines(title);
+  const worksheet = headingLines.length
+    ? XLSX.utils.aoa_to_sheet([...headingLines.map((line) => [line]), [], headers, ...rows.map((row) => headers.map((header) => row[header] ?? ""))])
+    : XLSX.utils.json_to_sheet(rows);
+  worksheet["!cols"] = headers.map((header) => ({ wch: Math.max(14, Math.min(34, header.length + 8)) }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
+  XLSX.writeFile(workbook, `${name}.xlsx`);
+}
+
+async function downloadXlsxSheets(name, sheets) {
+  await loadSheetJs();
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach((sheet) => {
+    const rows = sheet.rows?.length ? sheet.rows : [{}];
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const headers = Object.keys(rows[0] || {});
+    worksheet["!cols"] = headers.map((header) => ({ wch: Math.max(6, Math.min(36, header.length + 8)) }));
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
+  });
+  XLSX.writeFile(workbook, `${name}.xlsx`);
+}
+
+async function downloadPdfRows(name, rows, title = "") {
+  await downloadPdfSections(name, [{ title: "", rows }], title);
+}
+
+async function downloadPdfSections(name, sections, title = "") {
+  await loadPdfTools();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const headingLines = reportHeadingLines(title);
+  let y = 36;
+  if (headingLines.length) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text(headingLines[0], 40, y);
+    y += 18;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    headingLines.slice(1, -1).forEach((line) => {
+      doc.text(line, 40, y);
+      y += 14;
+    });
+    if (headingLines.length > 1) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text(headingLines[headingLines.length - 1], 40, y + 4);
+      y += 22;
+    }
+  } else {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text(titleCaseReportName(name), 40, y);
+    y += 24;
+  }
+  sections.forEach((section, sectionIndex) => {
+    if (sectionIndex > 0 && y > 470) {
+      doc.addPage();
+      y = 36;
+    }
+    if (section.title) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(section.title, 40, y);
+      y += 10;
+    }
+    const rows = section.rows || [];
+    const headers = Object.keys(rows[0] || {});
+    doc.autoTable({
+      startY: y + 6,
+      head: headers.length ? [headers] : [["No Records"]],
+      body: rows.length ? rows.map((row) => headers.map((header) => String(row[header] ?? ""))) : [["No records found."]],
+      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: [30, 58, 138], textColor: 255 },
+      margin: { left: 40, right: 40 },
+    });
+    y = doc.lastAutoTable.finalY + 18;
+    if (section.total) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(section.total, 40, y);
+      y += 16;
+    }
+  });
+  doc.save(`${name}.pdf`);
+}
+
+function openHtmlReportTab(html, name = "report") {
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const opened = window.open(url, "_blank");
+  if (!opened) {
+    URL.revokeObjectURL(url);
+    toast("Please allow popups to open the report in a new tab.");
+    return false;
+  }
+  try {
+    opened.opener = null;
+  } catch {
+    // Some browsers block access to opener; the report tab still opened correctly.
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return true;
+}
+
+function downloadPdfReport(name, rows, title = "") {
+  openHtmlReportTab(reportTableHtml(name, rows, title), name);
+}
+
+function printReport(name, rows, title = "") {
+  const html = reportTableHtml(name, rows, title);
+  printHtmlReport(html, name);
+}
+
+function printHtmlReport(html, name = "report") {
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) return toast("Please allow popups to print the report.");
+  const doc = printWindow.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+  setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+  }, 300);
+}
+
+function reportTableHtml(name, rows, title = "") {
+  const headers = Object.keys(rows[0] || {});
+  const headingLines = reportHeadingLines(title);
+  const reportTitle = headingLines[headingLines.length - 1] || titleCaseReportName(name);
+  return `
+    <html>
+      <head>
+        <title>${escapeHtml(reportTitle)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
+          .report-heading { margin: 0 0 16px; }
+          .report-heading h1 { margin: 0; color: #0f172a; font-size: 22px; }
+          .report-heading p { margin: 3px 0; color: #334155; font-size: 13px; }
+          .report-heading h2 { margin: 10px 0 0; color: #1e3a8a; font-size: 18px; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th { background: #1e3a8a; color: #fff; padding: 8px; border: 1px solid #1e3a8a; text-align: left; }
+          td { padding: 7px; border: 1px solid #d1d5db; }
+          tr:nth-child(even) td { background: #f8fafc; }
+      @page { size: A4 landscape; margin: 10mm; }
+      @media print { body { padding: 12px; } button { display: none; } }
+        </style>
+      </head>
+      <body>
+        ${renderReportHeadingHtml(headingLines.length ? headingLines : [reportTitle])}
+        <table>
+          <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${headers.map((h) => `<td>${escapeHtml(row[h] || "")}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </body>
+    </html>
+  `;
+}
+
+function reportHeadingLines(title) {
+  if (Array.isArray(title)) return title.filter((line) => String(line || "").trim());
+  return String(title || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function renderReportHeadingHtml(lines) {
+  if (lines.length >= 4) {
+    return `
+      <div class="report-heading">
+        <h1>${escapeHtml(lines[0])}</h1>
+        <p>${escapeHtml(lines[1])}</p>
+        <p>${escapeHtml(lines[2])}</p>
+        <h2>${escapeHtml(lines[3])}</h2>
+      </div>
+    `;
+  }
+  return `<div class="report-heading"><h2>${escapeHtml(lines[0] || "Report")}</h2></div>`;
+}
+
+function titleCaseReportName(name) {
+  return String(name || "Report")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function handleImportFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  const lowerName = file.name.toLowerCase();
+  if ((lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) && window.PREPARED_IMPORT_CSV && isPreparedTrackerWorkbookName(lowerName)) {
+    importPreparedCsvFile();
+    return;
+  }
+  if (lowerName.endsWith(".xls") || lowerName.endsWith(".html") || lowerName.endsWith(".htm")) {
+    readMaybeHtmlImportFile(file);
+    return;
+  }
+  if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
+    importWorkbookFile(file);
+    return;
+  }
+  readImportTextFile(file);
+}
+
+function isPreparedTrackerWorkbookName(lowerName) {
+  const clean = String(lowerName || "").replace(/[^a-z0-9]+/g, " ");
+  return clean.includes("ca file tracker") && clean.includes("15 07 2026");
+}
+
+function readImportTextFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const rows = parseImportRows(String(reader.result || ""));
+      finishImport(rows);
+    } catch (error) {
+      toast("Import failed. Please check the Excel/CSV column format.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function readMaybeHtmlImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = String(reader.result || "");
+    if (isExcelHtmlFramesetWithoutSheetRows(text)) {
+      toast("This Excel web file only points to another sheet. Please upload ca-file-tracker-import-template (8)_files/sheet001.htm instead.");
+      return;
+    }
+    if (/<table[\s>]/i.test(text) || /\.html?$/i.test(file.name)) {
+      try {
+        finishImport(parseImportRows(text));
+      } catch {
+        toast("Import failed. Please check the Excel/HTML table format.");
+      }
+      return;
+    }
+    importWorkbookFile(file);
+  };
+  reader.onerror = () => toast("Import failed. Please try selecting the file again.");
+  reader.readAsText(file);
+}
+
+function isExcelHtmlFramesetWithoutSheetRows(text) {
+  const hasFrameset = /<frameset\b/i.test(text) || /name=["']frSheet["']/i.test(text);
+  if (!hasFrameset) return false;
+  const rows = parseImportRows(text);
+  return !isTrackerFileImportRows(rows);
+}
+
+async function importPreparedCsvFile() {
+  try {
+    if (window.PREPARED_IMPORT_CSV) {
+      finishImport(parseImportRows(window.PREPARED_IMPORT_CSV), { forceFreshImport: true });
+      return;
+    }
+    const response = await fetch("CA%20File%20tracker%2015.07.2026%20import.csv", { cache: "no-store" });
+    if (!response.ok) throw new Error("Prepared CSV file not found.");
+    const text = await response.text();
+    const rows = parseImportRows(text);
+    finishImport(rows, { forceFreshImport: true });
+  } catch (error) {
+    toast("Prepared CSV could not load. Please open the app through the local server, then try again.");
+  }
+}
+
+function importWorkbookFile(file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const arrayBuffer = reader.result;
+      let rows = [];
+      try {
+        await loadSheetJs();
+        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellDates: true });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        trimWorksheetToUsedImportRange(firstSheet);
+        rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false, defval: "", dateNF: "yyyy-mm-dd" });
+      } catch {
+        try {
+          rows = await readWorkbookRowsFromServer(arrayBuffer);
+        } catch {
+          rows = await readWorkbookRowsOffline(arrayBuffer);
+        }
+      }
+      finishImport(rows);
+    } catch (error) {
+      toast("Excel upload failed. Please check that the file is a valid .xlsx workbook.");
+    }
+  };
+  reader.onerror = () => toast("Excel upload failed. Please try selecting the file again.");
+  reader.readAsArrayBuffer(file);
+}
+
+async function readWorkbookRowsFromServer(arrayBuffer) {
+  if (location.protocol === "file:") throw new Error("Local server is not available");
+  const response = await fetch("/api/import-xlsx", {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    body: arrayBuffer,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(payload.rows)) throw new Error(payload.error || "Server Excel import failed");
+  return payload.rows;
+}
+
+async function readWorkbookRowsOffline(arrayBuffer) {
+  const entries = await unzipWorkbookEntries(arrayBuffer);
+  const strings = parseSharedStrings(entries.get("xl/sharedStrings.xml") || "");
+  const styles = parseWorkbookStyles(entries.get("xl/styles.xml") || "");
+  const sheetPath = firstWorksheetPath(entries);
+  const sheetXml = entries.get(sheetPath);
+  if (!sheetXml) throw new Error("Worksheet not found");
+  return parseWorksheetRows(sheetXml, strings, styles);
+}
+
+function firstWorksheetPath(entries) {
+  if (entries.has("xl/worksheets/sheet1.xml")) return "xl/worksheets/sheet1.xml";
+  return [...entries.keys()].find((name) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(name)) || "";
+}
+
+async function unzipWorkbookEntries(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const view = new DataView(arrayBuffer);
+  let eocd = -1;
+  for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 70000); offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("Workbook zip footer not found");
+  const entryCount = view.getUint16(eocd + 10, true);
+  let centralOffset = view.getUint32(eocd + 16, true);
+  const entries = new Map();
+  for (let i = 0; i < entryCount; i += 1) {
+    if (view.getUint32(centralOffset, true) !== 0x02014b50) break;
+    const method = view.getUint16(centralOffset + 10, true);
+    const compressedSize = view.getUint32(centralOffset + 20, true);
+    const fileNameLength = view.getUint16(centralOffset + 28, true);
+    const extraLength = view.getUint16(centralOffset + 30, true);
+    const commentLength = view.getUint16(centralOffset + 32, true);
+    const localOffset = view.getUint32(centralOffset + 42, true);
+    const name = new TextDecoder().decode(bytes.slice(centralOffset + 46, centralOffset + 46 + fileNameLength));
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+    if (name.endsWith(".xml") || name.endsWith(".rels")) {
+      const content = method === 0 ? compressed : await inflateDeflateRaw(compressed);
+      entries.set(name, new TextDecoder().decode(content));
+    }
+    centralOffset += 46 + fileNameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function inflateDeflateRaw(bytes) {
+  if (!("DecompressionStream" in window)) throw new Error("Offline Excel decompression is not supported in this browser");
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function parseXml(xml) {
+  return new DOMParser().parseFromString(xml, "application/xml");
+}
+
+function parseSharedStrings(xml) {
+  if (!xml) return [];
+  const doc = parseXml(xml);
+  return [...doc.querySelectorAll("si")].map((item) => [...item.querySelectorAll("t")].map((node) => node.textContent || "").join(""));
+}
+
+function parseWorkbookStyles(xml) {
+  if (!xml) return new Set();
+  const doc = parseXml(xml);
+  const customFormats = {};
+  doc.querySelectorAll("numFmts numFmt").forEach((fmt) => {
+    customFormats[fmt.getAttribute("numFmtId")] = fmt.getAttribute("formatCode") || "";
+  });
+  const dateNumFmtIds = new Set(["14", "15", "16", "17", "22", "27", "30", "36", "50", "57"]);
+  const dateStyles = new Set();
+  doc.querySelectorAll("cellXfs xf").forEach((xf, index) => {
+    const id = xf.getAttribute("numFmtId") || "";
+    const code = String(customFormats[id] || "").toLowerCase();
+    if (dateNumFmtIds.has(id) || /[ymdhs]/.test(code)) dateStyles.add(String(index));
+  });
+  return dateStyles;
+}
+
+function parseWorksheetRows(xml, sharedStrings, dateStyles) {
+  const doc = parseXml(xml);
+  const rows = [];
+  doc.querySelectorAll("sheetData row").forEach((rowNode) => {
+    const values = [];
+    rowNode.querySelectorAll("c").forEach((cell) => {
+      const ref = cell.getAttribute("r") || "";
+      const colIndex = excelColumnIndex(ref.replace(/\d+/g, ""));
+      values[colIndex] = worksheetCellValue(cell, sharedStrings, dateStyles);
+    });
+    if (values.some((value) => String(value ?? "").trim())) rows.push(values.map((value) => value ?? ""));
+  });
+  return rows;
+}
+
+function worksheetCellValue(cell, sharedStrings, dateStyles) {
+  const type = cell.getAttribute("t") || "";
+  const style = cell.getAttribute("s") || "";
+  if (type === "s") return sharedStrings[Number(cell.querySelector("v")?.textContent || 0)] || "";
+  if (type === "inlineStr") return [...cell.querySelectorAll("is t")].map((node) => node.textContent || "").join("");
+  const raw = cell.querySelector("v")?.textContent || "";
+  if (dateStyles.has(style) && raw && !Number.isNaN(Number(raw))) return excelSerialDate(Number(raw));
+  return raw;
+}
+
+function excelColumnIndex(letters) {
+  return String(letters || "A").split("").reduce((total, letter) => total * 26 + letter.toUpperCase().charCodeAt(0) - 64, 0) - 1;
+}
+
+function excelSerialDate(serial) {
+  const date = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(serial)) * MS_DAY);
+  return dateInput(date);
+}
+
+function trimWorksheetToUsedImportRange(sheet) {
+  if (!sheet || !sheet["!ref"] || !window.XLSX) return;
+  const range = XLSX.utils.decode_range(sheet["!ref"]);
+  let lastHeaderCol = -1;
+  for (let col = range.s.c; col <= range.e.c; col += 1) {
+    const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: col })];
+    if (cell && String(cell.v ?? "").trim()) lastHeaderCol = col;
+  }
+  if (lastHeaderCol < range.s.c) return;
+  let lastRow = range.s.r;
+  for (let row = range.s.r; row <= range.e.r; row += 1) {
+    let hasValue = false;
+    for (let col = range.s.c; col <= lastHeaderCol; col += 1) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
+      if (cell && String(cell.v ?? "").trim()) {
+        hasValue = true;
+        break;
+      }
+    }
+    if (hasValue) lastRow = row;
+  }
+  sheet["!ref"] = XLSX.utils.encode_range({
+    s: { r: range.s.r, c: range.s.c },
+    e: { r: lastRow, c: lastHeaderCol },
+  });
+}
+
+function loadSheetJs() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Excel reader load timed out")), 4000);
+    const existing = document.querySelector("script[data-xlsx-loader]");
+    if (existing) {
+      existing.addEventListener("load", () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+      existing.addEventListener("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.dataset.xlsxLoader = "true";
+    script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    script.onload = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    script.onerror = (error) => {
+      clearTimeout(timer);
+      reject(error);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+function loadPdfTools() {
+  if (window.jspdf?.jsPDF && window.jspdf.jsPDF.API.autoTable) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const loadScript = (src, marker) => new Promise((scriptResolve, scriptReject) => {
+      const existing = document.querySelector(`script[data-loader="${marker}"]`);
+      if (existing) {
+        existing.addEventListener("load", scriptResolve, { once: true });
+        existing.addEventListener("error", scriptReject, { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.dataset.loader = marker;
+      script.src = src;
+      script.onload = scriptResolve;
+      script.onerror = scriptReject;
+      document.head.appendChild(script);
+    });
+    loadScript("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js", "jspdfLoader")
+      .then(() => loadScript("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js", "autotableLoader"))
+      .then(resolve)
+      .catch(reject);
+  });
+}
+
+function finishImport(rows, options = {}) {
+  const compactRows = compactImportRows(rows);
+  const cleanedRows = compactRows
+    .map((row) => row.map((cell) => String(cell ?? "").trim()))
+    .filter((row) => row.some(Boolean));
+  if (options.forceFreshImport) {
+    const imported = importRows(cleanedRows, { replace: true, assignSerials: true });
+    if (!imported.total) return toast("No valid file records found. Please keep the Name column in the first row.");
+    saveState({ skipMerge: true });
+    toast(`${imported.total} file record(s) freshly imported`);
+    activePage = "files";
+    resetFilters();
+    renderAll();
+    return;
+  }
+  if (isTrackerFileImportRows(cleanedRows)) {
+    const imported = importRows(cleanedRows);
+    if (!imported.total && !imported.skipped) return toast("No valid file records found. Please keep the Name column in the first row.");
+    saveState({ skipMerge: true });
+    toast(`${imported.added} new file(s) imported${imported.skipped ? `, ${imported.skipped} duplicate(s) skipped` : ""}`);
+    activePage = "files";
+    resetFilters();
+    renderAll();
+    return;
+  }
+  if (isBulkFeeReceivedUpdateRows(cleanedRows)) {
+    try {
+      const result = processBulkFeeReceivedUpdateRows(cleanedRows);
+      saveState({ skipMerge: true });
+      toast(`Fee received update complete: ${result.summary.received} marked received, ${result.summary.unmatched} unmatched, ${result.summary.ambiguous} ambiguous`);
+      state.filters.listView = "feePending";
+      activePage = "files";
+      renderAll();
+    } catch (error) {
+      saveState({ skipMerge: true });
+      toast(`Fee received update failed and was rolled back: ${error.message || "Please check the Excel file."}`);
+    }
+    return;
+  }
+  if (isBulkBillingUpdateRows(cleanedRows)) {
+    try {
+      const result = processBulkBillingUpdateRows(cleanedRows);
+      saveState({ skipMerge: true });
+      toast(`Billing update complete: ${result.summary.nonBilled} non-billed, ${result.summary.billed} billed, ${result.summary.unmatched} unmatched, ${result.summary.ambiguous} ambiguous`);
+      activePage = "dashboard";
+      renderAll();
+    } catch (error) {
+      saveState({ skipMerge: true });
+      toast(`Billing update failed and was rolled back: ${error.message || "Please check the Excel file."}`);
+    }
+    return;
+  }
+  const imported = importRows(cleanedRows);
+  if (!imported.total) return toast("No valid file records found. Please keep the Name column in the first row.");
+  saveState({ skipMerge: true });
+  toast(`${imported.added} new file(s) imported${imported.skipped ? `, ${imported.skipped} duplicate(s) skipped` : ""}`);
+  activePage = "files";
+  resetFilters();
+  renderAll();
+}
+
+function isTrackerFileImportRows(rows) {
+  if (!rows.length) return false;
+  const headers = rows[0].map(normalizeImportHeader);
+  const has = (...keys) => keys.some((key) => headers.includes(normalizeImportHeader(key)));
+  return has("Name", "Client", "Client Name")
+    && has("PAN / Regn Number", "PAN", "Regn Number", "Registration Number")
+    && has("Service Type", "Service")
+    && (
+      has("Due Date", "Due") ||
+      has("Work Allotment Date", "Allotment Date", "Allotted Date") ||
+      has("C/o", "Care Of", "CO", "C O") ||
+      has("Priority")
+    );
+}
+
+function compactImportRows(rows) {
+  if (!rows?.length) return [];
+  const header = rows[0] || [];
+  let lastHeaderIndex = -1;
+  header.forEach((cell, index) => {
+    if (String(cell ?? "").trim()) lastHeaderIndex = index;
+  });
+  if (lastHeaderIndex < 0) return rows;
+  const width = lastHeaderIndex + 1;
+  return rows.map((row) => row.slice(0, width));
+}
+
+function processAssignedStaffUpdateRows(rows) {
+  const summary = { matched: 0, unmatched: 0, ambiguous: 0, skipped: 0 };
+  if (!state.files?.length || !rows.length) return { summary };
+  const headers = rows[0].map(normalizeImportHeader);
+  const has = (...keys) => keys.some((key) => headers.includes(normalizeImportHeader(key)));
+  if (!has("Assigned Staff", "Staff") || !has("Name", "Client", "Client Name")) return { summary };
+  const entries = rows.slice(1)
+    .map((row, index) => assignedStaffUpdateEntryFromRow(headers, row, index + 2))
+    .filter((entry) => entry.name || entry.serialNumber);
+  if (!entries.length) return { summary };
+  const auditRows = [];
+  entries.forEach((entry) => {
+    if (!hasAssignedStaffValue(entry.assignedStaff)) {
+      summary.skipped += 1;
+      return;
+    }
+    const candidates = assignedStaffUpdateCandidates(entry);
+    if (!candidates.length) {
+      summary.unmatched += 1;
+      return;
+    }
+    if (candidates.length > 1) {
+      summary.ambiguous += 1;
+      return;
+    }
+    const { file, index } = candidates[0];
+    const previousStaff = file.assignedStaff || "Not Assigned";
+    const assignedStaff = canonicalStaffName(entry.assignedStaff, entry.assignedStaff);
+    const assignedUser = findUserByStaffIdentity(assignedStaff) || {};
+    state.files[index] = {
+      ...file,
+      assignedStaff,
+      assignedStaffId: assignedUser.id || "",
+      assignedStaffEmail: assignedUser.email || "",
+      stages: {
+        ...(file.stages || {}),
+        Received: true,
+        Allotted: hasAssignedStaffValue(assignedStaff),
+      },
+      lastUpdatedDate: todayDate(),
+      updatedAt: Date.now(),
+    };
+    summary.matched += 1;
+    auditRows.push({
+      action: "Assigned Staff updated from Excel",
+      fileId: file.id,
+      fileName: file.name,
+      pan: file.pan,
+      serviceType: file.serviceType,
+      excelRow: entry.sourceRow,
+      previousAssignedStaff: previousStaff,
+      newAssignedStaff: assignedStaff,
+      updatedBy: state.currentUser || "CA Sadique",
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  if (auditRows.length) state.auditLog = [...(state.auditLog || []), ...auditRows].slice(-1000);
+  return { summary };
+}
+
+function assignedStaffUpdateEntryFromRow(headers, row, sourceRow) {
+  const get = (...keys) => {
+    for (const key of keys) {
+      const index = headers.indexOf(normalizeImportHeader(key));
+      if (index >= 0 && row[index] !== undefined && String(row[index]).trim()) return String(row[index]).trim();
+    }
+    return "";
+  };
+  return {
+    sourceRow,
+    serialNumber: normalizeImportSerial(get("SN", "S.N", "S No", "S.No", "Sl No", "Sl.No", "Serial No", "Serial Number", "No")),
+    name: get("Name", "Client", "Client Name"),
+    pan: get("PAN / Regn Number", "PAN", "Regn Number", "Registration Number"),
+    serviceType: get("Service Type", "Service"),
+    assignedStaff: canonicalStaffName(get("Assigned Staff", "Staff"), get("Assigned Staff", "Staff")),
+  };
+}
+
+function assignedStaffUpdateCandidates(entry) {
+  if (entry.serialNumber) {
+    const serialMatches = state.files
+      .map((file, index) => ({ file, index }))
+      .filter(({ file }) => Number(file.importSerialNumber || 0) === Number(entry.serialNumber));
+    if (serialMatches.length) return serialMatches;
+    const orderedFiles = [...state.files].sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
+    const bySnOrder = orderedFiles[Number(entry.serialNumber) - 1];
+    if (bySnOrder) {
+      const index = state.files.findIndex((file) => file.id === bySnOrder.id);
+      if (index >= 0 && assignedStaffEntryMatchesFile(entry, bySnOrder)) return [{ file: bySnOrder, index }];
+    }
+  }
+  return state.files
+    .map((file, index) => ({ file, index }))
+    .filter(({ file }) => assignedStaffEntryMatchesFile(entry, file));
+}
+
+function assignedStaffEntryMatchesFile(entry, file) {
+  const entryName = normalizeImportMatchText(entry.name);
+  const fileName = normalizeImportMatchText(file.name);
+  if (!entryName || entryName !== fileName) return false;
+  const entryPan = normalizeImportMatchText(entry.pan);
+  const filePan = normalizeImportMatchText(file.pan);
+  if (entryPan && entryPan !== "na" && filePan && filePan !== "na" && entryPan !== filePan) return false;
+  const entryService = normalizeImportMatchText(entry.serviceType);
+  const fileService = normalizeImportMatchText(file.serviceType);
+  if (entryService && fileService && entryService !== fileService) return false;
+  return true;
+}
+
+function isBulkFeeReceivedUpdateRows(rows) {
+  if (!rows.length) return false;
+  const headers = rows[0].map(normalizeImportHeader);
+  const has = (...keys) => keys.some((key) => headers.includes(normalizeImportHeader(key)));
+  const receivedIndex = headers.indexOf(normalizeImportHeader("Received"));
+  return receivedIndex >= 0
+    && has("Name", "Client", "Client Name")
+    && has("PAN / Regn Number", "PAN", "Regn Number", "Registration Number")
+    && has("Service Type", "Service")
+    && rows.slice(1).some((row) => receivedAmountValue(row[receivedIndex]));
+}
+
+function processBulkFeeReceivedUpdateRows(rows) {
+  const backup = structuredClone(state.files || []);
+  const generatedAt = new Date().toISOString();
+  const source = "NAJMA test 14.078.xlsx";
+  try {
+    const headers = rows[0].map(normalizeImportHeader);
+    const entries = rows.slice(1)
+      .map((row, index) => feeReceivedEntryFromRow(headers, row, index + 2))
+      .filter((entry) => entry.name && entry.receivedAmount);
+    const groups = groupBy(entries, (entry) => entry.matchKey);
+    const candidateFiles = (state.files || [])
+      .map((file, index) => ({ file, index }))
+      .filter(({ file }) => isBilledFile(file));
+    const matchedIndices = new Set();
+    const receivedRows = [];
+    const unmatchedRows = [];
+    const ambiguousRows = [];
+    const auditRows = [];
+    groups.forEach((group) => {
+      const scoredCandidates = candidateFiles
+        .filter(({ index }) => !matchedIndices.has(index))
+        .map((candidate) => ({ ...candidate, score: feeReceivedEntryMatchScore(group[0], candidate.file) }))
+        .filter((candidate) => candidate.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const highestScore = scoredCandidates[0]?.score || 0;
+      const candidates = scoredCandidates.filter((candidate) => candidate.score === highestScore);
+      if (!candidates.length) {
+        group.forEach((entry) => unmatchedRows.push(feeReceivedIssueRow(entry, "No matching fee pending file found")));
+        return;
+      }
+      if (candidates.length !== group.length) {
+        const reason = candidates.length > group.length
+          ? `Ambiguous match: ${candidates.length} fee pending files found for ${group.length} Excel row(s)`
+          : `Incomplete match: ${group.length} Excel row(s), ${candidates.length} fee pending file(s) found`;
+        group.forEach((entry) => ambiguousRows.push(feeReceivedIssueRow(entry, reason)));
+        return;
+      }
+      candidates.forEach(({ file, index }, candidateIndex) => {
+        const entry = group[candidateIndex];
+        const before = {
+          feeReceived: Boolean(file.feeReceived),
+          feeReceivedDate: file.feeReceivedDate || "",
+          feeReceivedAmount: file.feeReceivedAmount || "",
+        };
+        file.feeReceived = true;
+        file.feeReceivedDate = normalizeImportDate(entry.lastUpdatedDate) || todayDate();
+        file.feeReceivedAmount = entry.receivedAmount;
+        file.updatedAt = Date.now();
+        matchedIndices.add(index);
+        receivedRows.push(feeReceivedReportRow(file, before, entry));
+        auditRows.push({
+          id: crypto.randomUUID(),
+          action: "Fee marked received from Excel",
+          details: {
+            source,
+            excelRow: entry.sourceRow,
+            fileId: file.id,
+            fileName: file.name,
+            pan: file.pan,
+            serviceType: file.serviceType,
+            previousFeeReceived: before.feeReceived,
+            newFeeReceived: true,
+            previousFeeReceivedDate: before.feeReceivedDate,
+            newFeeReceivedDate: file.feeReceivedDate,
+            previousFeeReceivedAmount: before.feeReceivedAmount,
+            newFeeReceivedAmount: entry.receivedAmount,
+          },
+          user: state.currentUser || "CA Sadique",
+          role: state.currentRole || "",
+          at: generatedAt,
+        });
+      });
+    });
+    const summary = {
+      totalExcelRows: entries.length,
+      received: receivedRows.length,
+      unmatched: unmatchedRows.length,
+      ambiguous: ambiguousRows.length,
+      errors: 0,
+    };
+    state.auditLog = [...(state.auditLog || []), ...auditRows].slice(-1000);
+    state.bulkFeeReceivedReports = {
+      source,
+      generatedAt,
+      summary,
+      received: receivedRows,
+      unmatchedOrAmbiguous: [...unmatchedRows, ...ambiguousRows],
+    };
+    return { summary };
+  } catch (error) {
+    state.files = backup;
+    state.bulkFeeReceivedReports = {
+      source,
+      generatedAt,
+      summary: {
+        totalExcelRows: Math.max(rows.length - 1, 0),
+        received: 0,
+        unmatched: 0,
+        ambiguous: 0,
+        errors: 1,
+      },
+      received: [],
+      unmatchedOrAmbiguous: [{ Reason: error.message || "Fee received update failed and was rolled back." }],
+    };
+    throw error;
+  }
+}
+
+function feeReceivedEntryFromRow(headers, row, sourceRow) {
+  const get = (...keys) => {
+    for (const key of keys) {
+      const index = headers.indexOf(normalizeImportHeader(key));
+      if (index >= 0 && row[index] !== undefined && String(row[index]).trim()) return String(row[index]).trim();
+    }
+    return "";
+  };
+  const entry = {
+    sourceRow,
+    serialNumber: get("SN", "S.N", "Serial Number"),
+    name: get("Name", "Client", "Client Name"),
+    pan: get("PAN / Regn Number", "PAN", "Regn Number", "Registration Number"),
+    serviceType: get("Service Type", "Service"),
+    careOf: get("C/o", "Care Of", "CO", "C O"),
+    mode: get("Mode"),
+    fileReceivedDate: get("File Received Date", "Received Date", "Date Received"),
+    assignedStaff: get("Assigned Staff", "Staff"),
+    workAllotmentDate: get("Work Allotment Date", "Allotment Date", "Allotted Date"),
+    reAssignedStaff: get("Re Assigned", "Reassigned", "Re Assigned Staff"),
+    reAssignedDate: get("Re Assigned Date", "Reassigned Date"),
+    dueDate: get("Due Date", "Due"),
+    completedDate: get("Completed on", "Completed On", "Completed Date", "Date Completed"),
+    lastUpdatedDate: get("Last Updated Date", "Updated Date"),
+    receivedAmount: receivedAmountValue(get("Received", "Fee Received", "Amount Received")),
+  };
+  entry.matchKey = [
+    normalizeImportMatchText(entry.name),
+    normalizeImportMatchText(entry.pan) || "na",
+    normalizeImportMatchText(entry.serviceType),
+    normalizeImportMatchText(entry.reAssignedStaff || entry.assignedStaff),
+    [...bulkBillingDateVariants(entry.fileReceivedDate)].sort().join("/"),
+    [...bulkBillingDateVariants(entry.workAllotmentDate)].sort().join("/"),
+    [...bulkBillingDateVariants(entry.reAssignedDate)].sort().join("/"),
+    [...bulkBillingDateVariants(entry.dueDate)].sort().join("/"),
+    [...bulkBillingDateVariants(entry.completedDate)].sort().join("/"),
+  ].join("|");
+  return entry;
+}
+
+function feeReceivedEntryMatchesIdentity(entry, file) {
+  return feeReceivedEntryMatchScore(entry, file) > 0;
+}
+
+function feeReceivedEntryMatchScore(entry, file) {
+  const serviceScore = feeReceivedTextScore(entry.serviceType, file.serviceType, { exact: 45, token: 18 });
+  if (!serviceScore) return 0;
+
+  const entryPan = normalizeImportIdentifierText(entry.pan);
+  const filePan = normalizeImportIdentifierText(file.pan);
+  const hasUsablePan = isUsableImportPan(entryPan);
+  const panScore = hasUsablePan && entryPan === filePan ? 130 : 0;
+  const nameScore = feeReceivedTextScore(entry.name, file.name, { exact: 55, token: 16 });
+  if (hasUsablePan && !panScore) return 0;
+  if (!hasUsablePan && !nameScore) return 0;
+
+  let score = serviceScore + panScore + nameScore;
+  const expectedStaff = entry.reAssignedStaff || entry.assignedStaff;
+  const optionalTextMatches = [
+    [entry.careOf, file.careOf || "Direct", 12],
+    [entry.mode, file.mode || "", 6],
+    [expectedStaff, file.assignedStaff, 10],
+  ];
+  optionalTextMatches.forEach(([left, right, points]) => {
+    if (left && normalizeImportMatchText(left) === normalizeImportMatchText(right)) score += points;
+  });
+
+  const optionalDateMatches = [
+    [entry.fileReceivedDate, file.fileReceivedDate, 10],
+    [entry.workAllotmentDate, file.workAllotmentDate, 8],
+    [entry.reAssignedDate, file.reAssignedDate, 5],
+    [entry.dueDate, file.dueDate, 12],
+    [entry.completedDate, workCompletedDate(file), 12],
+  ];
+  optionalDateMatches.forEach(([left, right, points]) => {
+    if (left && bulkBillingDatesEqual(left, right)) score += points;
+  });
+
+  return hasUsablePan ? score : (score >= 90 ? score : 0);
+}
+
+function feeReceivedTextScore(left, right, points) {
+  const leftText = normalizeImportMatchText(left);
+  const rightText = normalizeImportMatchText(right);
+  if (!leftText || !rightText) return 0;
+  if (leftText === rightText) return points.exact;
+  const leftCompact = leftText.replace(/[^a-z0-9]/g, "");
+  const rightCompact = rightText.replace(/[^a-z0-9]/g, "");
+  if (leftCompact && leftCompact === rightCompact) return points.exact;
+  const overlap = importNameTokenOverlapScore(leftText, rightText);
+  return overlap ? Math.min(points.exact - 1, overlap * points.token) : 0;
+}
+
+function isUsableImportPan(value) {
+  const normalized = normalizeImportIdentifierText(value);
+  return Boolean(normalized && !["na", "n/a", "nil", "none", "-"].includes(normalized));
+}
+
+function receivedAmountValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const numeric = Number(raw.replace(/,/g, ""));
+  if (Number.isFinite(numeric) && numeric > 0) return raw;
+  return "";
+}
+
+function feeReceivedReportRow(file, before, entry) {
+  return {
+    "Excel Row": entry.sourceRow,
+    Name: file.name,
+    "PAN / Regn Number": file.pan,
+    "Service Type": file.serviceType,
+    "File Received Date": displayDate(file.fileReceivedDate),
+    "Assigned Staff": file.assignedStaff,
+    "Completion Date": displayDate(workCompletedDate(file)),
+    "Received Amount": entry.receivedAmount,
+    "Previous Fee Received": before.feeReceived ? "Yes" : "No",
+    "New Fee Received": "Yes",
+    "Fee Received Date": displayDate(file.feeReceivedDate),
+  };
+}
+
+function feeReceivedIssueRow(entry, reason) {
+  return {
+    "Excel Row": entry.sourceRow,
+    SN: entry.serialNumber || "",
+    Name: entry.name,
+    "PAN / Regn Number": entry.pan,
+    "Service Type": entry.serviceType,
+    "File Received Date": displayDate(normalizeDayFirstImportDate(entry.fileReceivedDate) || normalizeImportDate(entry.fileReceivedDate)),
+    "Assigned Staff": entry.assignedStaff,
+    "Completion Date": displayDate(normalizeDayFirstImportDate(entry.completedDate) || normalizeImportDate(entry.completedDate)),
+    "Received Amount": entry.receivedAmount,
+    Reason: reason,
+  };
+}
+
+function isBulkBillingUpdateRows(rows) {
+  if (!rows.length) return false;
+  if (isTrackerFileImportRows(rows)) return false;
+  const headers = rows[0].map(normalizeImportHeader);
+  const has = (...keys) => keys.some((key) => headers.includes(normalizeImportHeader(key)));
+  return has("Name", "Client", "Client Name")
+    && has("PAN / Regn Number", "PAN", "Regn Number", "Registration Number")
+    && has("Service Type", "Service")
+    && has("File Received Date", "Received Date", "Date Received")
+    && has("Assigned Staff", "Staff")
+    && has("Completed on", "Completed On", "Completed Date", "Date Completed")
+    && has("Status", "Workflow", "Final Status");
+}
+
+function processBulkBillingUpdateRows(rows) {
+  const backup = structuredClone(state.files || []);
+  const generatedAt = new Date().toISOString();
+  const source = "New XLS Worksheet.xls";
+  try {
+    localStorage.setItem(`${STORAGE_KEY}-bulk-billing-backup`, JSON.stringify({
+      source,
+      generatedAt,
+      files: backup,
+    }));
+  } catch (error) {
+    console.warn("Bulk billing backup could not be saved", error);
+  }
+  try {
+    const headers = rows[0].map(normalizeImportHeader);
+    const entries = rows.slice(1)
+      .map((row, index) => bulkBillingEntryFromRow(headers, row, index + 2))
+      .filter((entry) => entry.name);
+    const excelGroups = groupBy(entries, (entry) => entry.excelKey);
+    const completedFiles = (state.files || [])
+      .map((file, index) => ({ file, index }))
+      .filter(({ file }) => isCheckedCompleted(file));
+    const matchedIndices = new Set();
+    const protectedIndices = new Set();
+    const nonBilledRows = [];
+    const billedRows = [];
+    const unmatchedRows = [];
+    const ambiguousRows = [];
+    const auditRows = [];
+    excelGroups.forEach((group) => {
+      const candidates = completedFiles.filter(({ file, index }) => !matchedIndices.has(index) && bulkBillingEntryMatchesFile(group[0], file));
+      if (!candidates.length) {
+        group.forEach((entry) => unmatchedRows.push(bulkBillingIssueRow(entry, "No matching completed file found")));
+        return;
+      }
+      if (candidates.length !== group.length) {
+        candidates.forEach(({ index }) => protectedIndices.add(index));
+        const reason = candidates.length > group.length
+          ? `Ambiguous match: ${candidates.length} completed files found for ${group.length} Excel row(s)`
+          : `Incomplete match: ${group.length} Excel row(s), ${candidates.length} completed file(s) found`;
+        group.forEach((entry) => ambiguousRows.push(bulkBillingIssueRow(entry, reason)));
+        return;
+      }
+      candidates.forEach(({ file, index }, candidateIndex) => {
+        const before = bulkBillingSnapshot(file);
+        file.billed = false;
+        file.billingType = "Non-Billable";
+        file.billedDate = "";
+        file.feeReceived = false;
+        file.feeReceivedDate = "";
+        file.updatedAt = Date.now();
+        matchedIndices.add(index);
+        nonBilledRows.push(bulkBillingReportRow(file, before, "Non-Billed", group[candidateIndex]));
+        auditRows.push(bulkBillingAuditRow(file, before, "Non-Billed", "", generatedAt, source));
+      });
+    });
+    completedFiles.forEach(({ file, index }) => {
+      if (matchedIndices.has(index) || protectedIndices.has(index)) return;
+      const before = bulkBillingSnapshot(file);
+      const completedDate = normalizeImportDate(workCompletedDate(file));
+      file.billed = true;
+      file.billingType = "Billable";
+      file.billedDate = completedDate || "";
+      file.updatedAt = Date.now();
+      billedRows.push(bulkBillingReportRow(file, before, "Billed", null));
+      auditRows.push(bulkBillingAuditRow(file, before, "Billed", file.billedDate, generatedAt, source));
+    });
+    const summary = {
+      totalExcelRows: entries.length,
+      nonBilled: nonBilledRows.length,
+      unmatched: unmatchedRows.length,
+      ambiguous: ambiguousRows.length,
+      billed: billedRows.length,
+      skipped: protectedIndices.size,
+      errors: 0,
+    };
+    state.auditLog = [...(state.auditLog || []), ...auditRows].slice(-1000);
+    state.bulkBillingReports = {
+      source,
+      generatedAt,
+      summary,
+      nonBilled: nonBilledRows,
+      billed: billedRows,
+      unmatchedOrAmbiguous: [...unmatchedRows, ...ambiguousRows],
+    };
+    return { summary };
+  } catch (error) {
+    state.files = backup;
+    state.bulkBillingReports = {
+      source,
+      generatedAt,
+      summary: {
+        totalExcelRows: Math.max(rows.length - 1, 0),
+        nonBilled: 0,
+        unmatched: 0,
+        ambiguous: 0,
+        billed: 0,
+        skipped: 0,
+        errors: 1,
+      },
+      nonBilled: [],
+      billed: [],
+      unmatchedOrAmbiguous: [{ Reason: error.message || "Bulk billing update failed and was rolled back." }],
+    };
+    throw error;
+  }
+}
+
+function bulkBillingEntryFromRow(headers, row, sourceRow) {
+  const get = (...keys) => {
+    for (const key of keys) {
+      const index = headers.indexOf(normalizeImportHeader(key));
+      if (index >= 0 && row[index] !== undefined && String(row[index]).trim()) return String(row[index]).trim();
+    }
+    return "";
+  };
+  const entry = {
+    sourceRow,
+    name: get("Name", "Client", "Client Name"),
+    pan: get("PAN / Regn Number", "PAN", "Regn Number", "Registration Number"),
+    serviceType: get("Service Type", "Service"),
+    fileReceivedDate: get("File Received Date", "Received Date", "Date Received"),
+    assignedStaff: get("Assigned Staff", "Staff"),
+    completedDate: get("Completed on", "Completed On", "Completed Date", "Date Completed"),
+  };
+  entry.excelKey = [
+    normalizeImportMatchText(entry.name),
+    normalizeImportMatchText(entry.pan) || "na",
+    normalizeImportMatchText(entry.serviceType),
+    normalizeImportMatchText(entry.assignedStaff),
+    [...bulkBillingDateVariants(entry.fileReceivedDate)].sort().join("/"),
+    [...bulkBillingDateVariants(entry.completedDate)].sort().join("/"),
+  ].join("|");
+  return entry;
+}
+
+function bulkBillingEntryMatchesFile(entry, file) {
+  return normalizeImportMatchText(entry.name) === normalizeImportMatchText(file.name)
+    && (normalizeImportMatchText(entry.pan) || "na") === (normalizeImportMatchText(file.pan) || "na")
+    && normalizeImportMatchText(entry.serviceType) === normalizeImportMatchText(file.serviceType)
+    && normalizeImportMatchText(entry.assignedStaff) === normalizeImportMatchText(file.assignedStaff)
+    && bulkBillingDatesEqual(entry.fileReceivedDate, file.fileReceivedDate)
+    && bulkBillingDatesEqual(entry.completedDate, workCompletedDate(file));
+}
+
+function bulkBillingDatesEqual(left, right) {
+  const leftVariants = bulkBillingDateVariants(left);
+  const rightVariants = bulkBillingDateVariants(right);
+  return [...leftVariants].some((date) => rightVariants.has(date));
+}
+
+function bulkBillingDateVariants(value) {
+  const variants = new Set();
+  const normalized = normalizeImportDate(value);
+  const dayFirst = normalizeDayFirstImportDate(value);
+  if (normalized) variants.add(normalized);
+  if (dayFirst) variants.add(dayFirst);
+  return variants;
+}
+
+function normalizeDayFirstImportDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (!match) return normalizeImportDate(raw);
+  const day = String(Number(match[1])).padStart(2, "0");
+  const month = String(Number(match[2])).padStart(2, "0");
+  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+  return `${year}-${month}-${day}`;
+}
+
+function groupBy(items, getKey) {
+  const map = new Map();
+  items.forEach((item) => {
+    const key = getKey(item);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(item);
+  });
+  return map;
+}
+
+function bulkBillingSnapshot(file) {
+  return {
+    billingStatus: file.billed ? "Billed" : (file.billingType === "Non-Billable" ? "Non-Billed" : "Not Billed"),
+    billedDate: file.billedDate || "",
+  };
+}
+
+function bulkBillingAuditRow(file, before, newBillingStatus, newBilledDate, generatedAt, source) {
+  return {
+    fileId: file.id,
+    fileName: file.name,
+    pan: file.pan,
+    serviceType: file.serviceType,
+    previousBillingStatus: before.billingStatus,
+    newBillingStatus,
+    previousBilledDate: before.billedDate,
+    newBilledDate,
+    updatedAt: generatedAt,
+    updatedBy: state.currentUser || "CA Sadique",
+    source,
+  };
+}
+
+function bulkBillingReportRow(file, before, newBillingStatus, entry) {
+  return {
+    "Excel Row": entry?.sourceRow || "",
+    Name: file.name,
+    "PAN / Regn Number": file.pan,
+    "Service Type": file.serviceType,
+    "File Received Date": displayDate(file.fileReceivedDate),
+    "Assigned Staff": file.assignedStaff,
+    "Completion Date": displayDate(workCompletedDate(file)),
+    "Previous Billing Status": before.billingStatus,
+    "New Billing Status": newBillingStatus,
+    "Previous Billed Date": displayDate(before.billedDate),
+    "New Billed Date": displayDate(file.billedDate),
+  };
+}
+
+function bulkBillingIssueRow(entry, reason) {
+  return {
+    "Excel Row": entry.sourceRow,
+    Name: entry.name,
+    "PAN / Regn Number": entry.pan,
+    "Service Type": entry.serviceType,
+    "File Received Date": displayDate(normalizeDayFirstImportDate(entry.fileReceivedDate) || normalizeImportDate(entry.fileReceivedDate)),
+    "Assigned Staff": entry.assignedStaff,
+    "Completion Date": displayDate(normalizeDayFirstImportDate(entry.completedDate) || normalizeImportDate(entry.completedDate)),
+    Reason: reason,
+  };
+}
+
+function parseImportRows(text) {
+  if (/<table[\s>]/i.test(text)) {
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    return [...doc.querySelectorAll("tr")]
+      .map((tr) => [...tr.children].map((cell) => cell.textContent.trim()))
+      .filter((row) => row.some(Boolean));
+  }
+  return parseDelimitedRows(text);
+}
+
+function parseDelimitedRows(text) {
+  const delimiter = text.includes("\t") ? "\t" : ",";
+  const rows = [];
+  let row = [];
+  let value = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (char === '"' && quoted && next === '"') {
+      value += '"';
+      i += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === delimiter && !quoted) {
+      row.push(value.trim());
+      value = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(value.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      value = "";
+    } else {
+      value += char;
+    }
+  }
+  row.push(value.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function importRows(rows, options = {}) {
+  if (!rows.length) return 0;
+  const headers = rows[0].map(normalizeImportHeader);
+  const importedRecords = [];
+  const importBatchTime = Date.now();
+  rows.slice(1).forEach((row, rowIndex) => {
+    const excelRowNumber = rowIndex + 2;
+    const get = (...keys) => {
+      for (const key of keys) {
+        const index = headers.indexOf(normalizeImportHeader(key));
+        if (index >= 0 && row[index] !== undefined && String(row[index]).trim()) return String(row[index]).trim();
+      }
+      return "";
+    };
+    const name = get("Name", "Client", "Client Name");
+    if (!name) return;
+    const importSerialNumber = normalizeImportSerial(get("SN", "S.N", "S No", "S.No", "Sl No", "Sl.No", "Serial No", "Serial Number", "No")) || (options.assignSerials ? rowIndex + 1 : "");
+    const serviceType = get("Service Type", "Service") || state.services[0] || "Other Services";
+    const careOf = get("C/o", "Care Of", "CO", "C O") || "Direct";
+    const fy = get("FY", "Financial Year", "F.Y", "Assessment Year") || "NA";
+    const mode = normalizeMode(get("Mode")) || "Whatsapp";
+    const assignedStaff = canonicalStaffName(normalizeImportStaff(get("Assigned Staff", "Staff")), "Not Assigned");
+    const reAssignedStaff = canonicalStaffName(normalizeImportStaff(get("Re Assigned", "Reassigned", "Re Assigned Staff")), "");
+    const status = get("Status", "Workflow", "Final Status");
+    const fileReceivedDate = normalizeImportDate(get(
+      "File Received Date",
+      "Received Date",
+      "Date Received",
+      "Receipt Date",
+      "File Date",
+      "Inward Date",
+      "Received On",
+      "Date",
+    )) || todayDate();
+    let workAllotmentDate = normalizeImportDate(get("Work Allotment Date", "Allotment Date", "Allotted Date")) || fileReceivedDate;
+    const importedWorkStartedDate = normalizeImportDate(get("Work Started Date", "WIP Date", "Work Start Date"));
+    const completedDate = normalizeImportDate(get("Completed on", "Completed On", "Completed Date", "Completion Date", "Date Completed", "Filed Date"));
+    const billingImport = billingFromImport(get("Billed"), get("Fee Received", "Received"), get("Billing Type", "Billable"));
+    const stagesObj = stagesFromImport(status, {
+      workDone: get("Work Done"),
+      approvalPending: get("Approval Pending", "Shared"),
+      approved: get("Approved"),
+      completed: get("Completed", "Filed"),
+      billed: get("Billed"),
+    });
+    const billed = billingImport.billed || stagesObj.Billed;
+    const completed = stagesObj.Completed || billed;
+    stagesObj.Completed = completed;
+    stagesObj.Billed = billed;
+    const finalAssignedStaff = reAssignedStaff || assignedStaff;
+    if (hasAssignedStaffValue(finalAssignedStaff)) stagesObj.Allotted = true;
+    else stagesObj.Allotted = false;
+    const record = {
+      id: crypto.randomUUID(),
+      name,
+      pan: get("PAN / Regn Number", "PAN", "Regn Number", "Registration Number"),
+      serviceType,
+      careOf,
+      fy,
+      mode,
+      fileReceivedDate,
+      workDone: stagesObj["Work Done"],
+      shared: stagesObj["Approval Pending"],
+      reportPrepared: stagesObj["Work Done"],
+      approved: stagesObj.Approved,
+      filed: stagesObj.Completed,
+      billed,
+      billedDate: billingImport.billed ? (normalizeImportDate(get("Billed Date", "Billing Date", "Bill Date")) || completedDate || "") : "",
+      billingType: billingImport.billingType,
+      feeReceived: billingImport.feeReceived,
+      feeReceivedDate: billingImport.feeReceived ? (normalizeImportDate(get("Fee Received Date", "Payment Received Date", "Fee Payment Date")) || completedDate || "") : "",
+      stages: stagesObj,
+      assignedStaff: finalAssignedStaff,
+      workAllotmentDate,
+      workStartedDate: importedWorkStartedDate || (stagesObj.WIP ? workAllotmentDate : ""),
+      reAssignedStaff,
+      reAssignedDate: normalizeImportDate(get("Re Assigned Date", "Reassigned Date")) || "",
+      dueDate: normalizeImportDate(get("Due Date", "Due")) || todayDate(),
+      priority: normalizePriority(get("Priority")) || "Medium",
+      completionDate: completed ? completedDate : "",
+      checkedBy: get("Checked By"),
+      checkedDate: normalizeImportDate(get("Checked Date")),
+      checkingRemarks: get("Checking Remarks", "Check Remarks"),
+      remarks: get("Remarks", "Remark", "Notes"),
+      attachments: [],
+      excelRowNumber,
+      importSerialNumber,
+      lastUpdatedDate: "2026-07-14",
+      updatedAt: importBatchTime,
+    };
+    rememberImportedLists(record);
+    importedRecords.push(record);
+  });
+  const finalImportedRecords = collapseDuplicateImportedFiles(importedRecords);
+  if (options.replace) {
+    state.files = finalImportedRecords;
+    state.deletedFileIds = [];
+    return { total: finalImportedRecords.length, added: finalImportedRecords.length, updated: 0, skipped: 0 };
+  }
+  const existingFiles = state.files || [];
+  const addedRecords = [];
+  let skipped = 0;
+  finalImportedRecords.forEach((record) => {
+    const duplicate = [...existingFiles, ...addedRecords].some((file) => sameImportedFile(file, record));
+    if (duplicate) {
+      skipped += 1;
+      return;
+    }
+    addedRecords.push(record);
+  });
+  state.files = [...existingFiles, ...addedRecords];
+  return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped };
+}
+
+function collapseDuplicateImportedFiles(files) {
+  const map = new Map();
+  const passthrough = [];
+  files.forEach((file) => {
+    const key = importedDuplicateKey(file);
+    if (!key) {
+      passthrough.push(file);
+      return;
+    }
+    if (!map.has(key)) {
+      map.set(key, file);
+      return;
+    }
+    map.set(key, mergeDuplicateFileRecord(map.get(key), file));
+  });
+  return [...map.values(), ...passthrough].sort((a, b) => fileChangeTime(b) - fileChangeTime(a));
+}
+
+function importedDuplicateKey(file) {
+  if (file.importSerialNumber) return `sn:${file.importSerialNumber}`;
+  const name = normalizeImportMatchText(file.name);
+  const service = normalizeImportMatchText(file.serviceType);
+  const pan = normalizeImportMatchText(file.pan);
+  if (!name) return "";
+  if (pan && pan !== "na") return `pan:${pan}|name:${name}`;
+  if (service) return `name:${name}|service:${service}`;
+  return `name:${name}`;
+}
+
+function mergeDuplicateFileRecord(primary, duplicate) {
+  return {
+    ...duplicate,
+    ...primary,
+    fileReceivedDate: primary.fileReceivedDate || duplicate.fileReceivedDate || "",
+    fy: primary.fy || duplicate.fy || "NA",
+    workAllotmentDate: primary.workAllotmentDate || duplicate.workAllotmentDate || "",
+    dueDate: primary.dueDate || duplicate.dueDate || "",
+    completionDate: primary.completionDate || duplicate.completionDate || "",
+    checkedBy: primary.checkedBy || duplicate.checkedBy || "",
+    checkedDate: primary.checkedDate || duplicate.checkedDate || "",
+    checkingRemarks: primary.checkingRemarks || duplicate.checkingRemarks || "",
+    correctionRemarks: primary.correctionRemarks || duplicate.correctionRemarks || "",
+    excelRowNumber: primary.excelRowNumber || duplicate.excelRowNumber || "",
+    updatedAt: Math.max(Number(primary.updatedAt || 0), Number(duplicate.updatedAt || 0)),
+  };
+}
+
+function mergeImportedFileRecord(existingFile, importedFile, importBatchTime) {
+  const importedAssignedUser = findUserByStaffIdentity(importedFile.assignedStaff) || {};
+  const importedReAssignedUser = findUserByStaffIdentity(importedFile.reAssignedStaff) || {};
+  const assignedStaff = hasAssignedStaffValue(importedFile.assignedStaff) ? importedFile.assignedStaff : (existingFile.assignedStaff || "Not Assigned");
+  const reAssignedStaff = hasAssignedStaffValue(importedFile.reAssignedStaff) ? importedFile.reAssignedStaff : (existingFile.reAssignedStaff || "");
+  return {
+    ...existingFile,
+    fileReceivedDate: importedFile.fileReceivedDate,
+    workAllotmentDate: importedFile.workAllotmentDate,
+    dueDate: importedFile.dueDate,
+    assignedStaff,
+    assignedStaffId: importedAssignedUser.id || existingFile.assignedStaffId || "",
+    assignedStaffEmail: importedAssignedUser.email || existingFile.assignedStaffEmail || "",
+    reAssignedStaff,
+    reAssignedStaffId: importedReAssignedUser.id || existingFile.reAssignedStaffId || "",
+    reAssignedStaffEmail: importedReAssignedUser.email || existingFile.reAssignedStaffEmail || "",
+    reAssignedDate: importedFile.reAssignedDate || existingFile.reAssignedDate || "",
+    workDone: importedFile.workDone,
+    shared: importedFile.shared,
+    reportPrepared: importedFile.reportPrepared,
+    approved: importedFile.approved,
+    filed: importedFile.filed,
+    billed: importedFile.billed,
+    stages: importedFile.stages,
+    completionDate: importedFile.completionDate || existingFile.completionDate || "",
+    checkedBy: importedFile.checkedBy || existingFile.checkedBy || "",
+    checkedDate: importedFile.checkedDate || existingFile.checkedDate || "",
+    checkingRemarks: importedFile.checkingRemarks || existingFile.checkingRemarks || "",
+    correctionRemarks: existingFile.correctionRemarks || "",
+    excelRowNumber: importedFile.excelRowNumber || existingFile.excelRowNumber || "",
+    importSerialNumber: importedFile.importSerialNumber || existingFile.importSerialNumber || "",
+    lastUpdatedDate: todayDate(),
+    updatedAt: importBatchTime,
+  };
+}
+
+function findExistingImportMatch(importedFile) {
+  if (importedFile.importSerialNumber) return findImportSerialMatch(importedFile);
+  const exactIndex = state.files.findIndex((file) => sameImportedFile(file, importedFile));
+  if (exactIndex >= 0) return exactIndex;
+  const candidates = state.files
+    .map((file, index) => ({ file, index }))
+    .filter(({ file }) => existingImportDatesMissing(file))
+    .map(({ file, index }) => ({ index, score: importedFileMatchScore(file, importedFile) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!candidates.length) return -1;
+  const best = candidates[0];
+  const next = candidates[1];
+  if (best.score >= 100 && (!next || best.score > next.score)) return best.index;
+  if (best.score >= 140) return best.index;
+  return -1;
+}
+
+function findImportSerialMatch(importedFile) {
+  const serial = Number(importedFile.importSerialNumber || 0);
+  if (!Number.isInteger(serial) || serial <= 0) return -1;
+  const allFiles = visibleFiles();
+  const byFileListSn = allFiles[serial - 1];
+  if (byFileListSn) return state.files.findIndex((file) => file.id === byFileListSn.id);
+  return -1;
+}
+
+function importedFileMatchScore(existingFile, importedFile) {
+  const existingPan = normalizeImportMatchText(existingFile.pan);
+  const importedPan = normalizeImportMatchText(importedFile.pan);
+  const samePan = existingPan && importedPan && existingPan !== "na" && importedPan !== "na" && existingPan === importedPan;
+  const sameService = normalizeImportMatchText(existingFile.serviceType) === normalizeImportMatchText(importedFile.serviceType);
+  const sameName = normalizeImportMatchText(existingFile.name) === normalizeImportMatchText(importedFile.name);
+  let score = 0;
+  if (sameName) score += 110;
+  if (samePan) score += 60;
+  if (sameService) score += 30;
+  score += importNameTokenOverlapScore(existingFile.name, importedFile.name) * 12;
+  if (!existingFile.dueDate && importedFile.dueDate) score += 12;
+  if (!existingFile.fileReceivedDate && importedFile.fileReceivedDate) score += 8;
+  if (!existingFile.workAllotmentDate && importedFile.workAllotmentDate) score += 8;
+  if (!sameName && !samePan) score = 0;
+  return score;
+}
+
+function sameImportedFile(existingFile, importedFile) {
+  if (existingFile.importSerialNumber || importedFile.importSerialNumber) {
+    return Boolean(existingFile.importSerialNumber && importedFile.importSerialNumber && Number(existingFile.importSerialNumber) === Number(importedFile.importSerialNumber));
+  }
+  if (existingFile.excelRowNumber && importedFile.excelRowNumber && Number(existingFile.excelRowNumber) === Number(importedFile.excelRowNumber)) return true;
+  const existingPan = normalizeImportMatchText(existingFile.pan);
+  const importedPan = normalizeImportMatchText(importedFile.pan);
+  const sameName = normalizeImportMatchText(existingFile.name) === normalizeImportMatchText(importedFile.name);
+  const sameService = normalizeImportMatchText(existingFile.serviceType) === normalizeImportMatchText(importedFile.serviceType);
+  const hasUsablePan = existingPan && importedPan && existingPan !== "na" && importedPan !== "na";
+  if (hasUsablePan && existingPan === importedPan) {
+    if (sameName) return true;
+    if (sameService && importNameTokenOverlap(existingFile.name, importedFile.name)) return true;
+  }
+  if (sameName && existingImportDatesMissing(existingFile)) return true;
+  return sameName && sameService;
+}
+
+function normalizeImportMatchText(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeImportIdentifierText(value) {
+  return normalizeImportMatchText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function fileMatchKey(name, pan, service) {
+  return `${normalizeImportMatchText(name)}|${normalizeImportMatchText(pan) || "na"}|${normalizeImportMatchText(service)}`;
+}
+
+function isForcedNonBilledFile(file) {
+  return false;
+}
+
+function normalizeImportSerial(value) {
+  const match = String(value || "").trim().match(/\d+/);
+  return match ? Number(match[0]) : "";
+}
+
+function billingFromImport(billedValue, feeReceivedValue, billingTypeValue = "") {
+  const billedText = normalizeImportMatchText(billedValue);
+  const feeText = normalizeImportMatchText(feeReceivedValue);
+  const typeText = normalizeImportMatchText(billingTypeValue);
+  const compact = `${billedText} ${feeText} ${typeText}`.replace(/[^a-z0-9]/g, "");
+  if (compact.includes("nonbillable") || compact.includes("nonbilled") || compact.includes("nonbilling")) {
+    return { billed: false, feeReceived: false, billingType: "Non-Billable" };
+  }
+  const billed = isYes(billedValue);
+  const feeReceived = billed && isYes(feeReceivedValue);
+  return {
+    billed,
+    feeReceived,
+    billingType: billed ? "Billable" : "",
+  };
+}
+
+function existingImportDatesMissing(file) {
+  return !file?.fileReceivedDate || !file?.workAllotmentDate || !file?.dueDate;
+}
+
+function importNameTokenOverlap(existingName, importedName) {
+  return importNameTokenOverlapScore(existingName, importedName) > 0;
+}
+
+function importNameTokenOverlapScore(existingName, importedName) {
+  const existingTokens = new Set(normalizeImportMatchText(existingName).split(" ").filter((token) => token.length > 4));
+  return normalizeImportMatchText(importedName).split(" ").filter((token) => token.length > 4 && existingTokens.has(token)).length;
+}
+
+function importChronologyTime(file) {
+  const date = file.workAllotmentDate || file.fileReceivedDate || file.dueDate || file.lastUpdatedDate || todayDate();
+  return Date.parse(date) || 0;
+}
+
+function normalizeImportHeader(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeImportDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const isoDateTime = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?/);
+  if (isoDateTime) {
+    return `${isoDateTime[1]}-${isoDateTime[2].padStart(2, "0")}-${isoDateTime[3].padStart(2, "0")}`;
+  }
+  if (/^\d+(\.\d+)?$/.test(raw) && Number(raw) > 25000) {
+    return dateInput(new Date((Number(raw) - 25569) * MS_DAY));
+  }
+  const match = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (match) {
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const dayValue = first > 12 ? first : second;
+    const monthValue = first > 12 ? second : first;
+    const day = String(dayValue).padStart(2, "0");
+    const month = String(monthValue).padStart(2, "0");
+    const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+    return `${year}-${month}-${day}`;
+  }
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? "" : dateInput(date);
+}
+
+function normalizePriority(value) {
+  const found = ["Low", "Medium", "High", "Urgent"].find((item) => item.toLowerCase() === String(value || "").trim().toLowerCase());
+  return found || "";
+}
+
+function normalizeMode(value) {
+  return modes.find((item) => item.toLowerCase() === String(value || "").trim().toLowerCase()) || "";
+}
+
+function isYes(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return ["yes", "y", "true", "1", "received", "paid"].includes(clean);
+}
+
+function normalizeImportStaff(value) {
+  const name = String(value || "").trim();
+  if (!name) return "";
+  if (name.toLowerCase() === "not assigned") return "Not Assigned";
+  const existing = state.users.find((user) => user.name.toLowerCase() === name.toLowerCase());
+  if (existing) return existing.name;
+  state.users.push({
+    id: crypto.randomUUID(),
+    name,
+    email: `${name.toLowerCase().replaceAll(" ", ".")}@mandaca.in`,
+    role: "Staff",
+    password: "Password@123",
+  });
+  return name;
+}
+
+function stagesFromImport(status, flags) {
+  const stageObj = Object.fromEntries(stages.map((stage) => [stage, false]));
+  stageObj.Received = true;
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  const matchedStage = stages.find((stage) => stage.toLowerCase() === normalizedStatus)
+    || (normalizedStatus === "file received" ? "Received" : "")
+    || (normalizedStatus === "filed" ? "Completed" : "");
+  if (matchedStage) {
+    const index = stages.indexOf(matchedStage);
+    stages.forEach((stage, stageIndex) => {
+      if (stageIndex <= index) stageObj[stage] = true;
+    });
+  }
+  if (yesValue(flags.workDone)) stageObj["Work Done"] = true;
+  if (yesValue(flags.approvalPending)) stageObj["Approval Pending"] = true;
+  if (yesValue(flags.approved)) stageObj.Approved = true;
+  if (yesValue(flags.completed)) stageObj.Completed = true;
+  if (yesValue(flags.billed)) stageObj.Billed = true;
+  return stageObj;
+}
+
+function yesValue(value) {
+  return ["yes", "true", "1", "y", "completed", "billed"].includes(String(value || "").trim().toLowerCase());
+}
+
+function rememberImportedLists(record) {
+  if (record.serviceType && !state.services.includes(record.serviceType)) state.services.push(record.serviceType);
+  if (record.careOf && !state.careOfList.includes(record.careOf)) state.careOfList.push(record.careOf);
+  state.services = sortList(state.services);
+  state.careOfList = sortList(state.careOfList);
+}
+
+function canUseVisitorModules() {
+  return ["Admin", "Manager"].includes(state.currentRole);
+}
+
+function visitorSortTime(visitor) {
+  return (Date.parse(visitor.date || "") || 0) * 1000000 + Number(visitor.createdAt || visitor.updatedAt || 0);
+}
+
+function visitorPersonOptions() {
+  return sortList([
+    ...state.users.map((user) => user.name),
+    "CA Sadique",
+    "Najmunnisa",
+    "Chindu",
+  ]);
+}
+
+function filteredVisitors() {
+  const f = state.filters;
+  return (state.visitors || [])
+    .filter((visitor) => {
+      const selectedDate = f.visitorDate || todayDate();
+      if (selectedDate && visitor.date !== selectedDate) return false;
+      if (f.visitorFrom && visitor.date < f.visitorFrom) return false;
+      if (f.visitorTo && visitor.date > f.visitorTo) return false;
+      if (f.visitorName && !normalizeImportMatchText(visitor.visitorName).includes(normalizeImportMatchText(f.visitorName))) return false;
+      if (f.visitorMetWhom && !normalizeImportMatchText(visitor.metWhom).includes(normalizeImportMatchText(f.visitorMetWhom))) return false;
+      return true;
+    })
+    .sort((a, b) => visitorSortTime(b) - visitorSortTime(a));
+}
+
+function renderVisitorsPage() {
+  const page = document.querySelector("#visitors");
+  if (!page) return;
+  if (!canUseVisitorModules()) {
+    page.innerHTML = `<div class="permission-note">Visitors is available only for Admin and Manager logins.</div>`;
+    return;
+  }
+  const visitors = filteredVisitors();
+  const selectedDate = state.filters.visitorDate || todayDate();
+  page.innerHTML = `
+    <div class="panel visitor-panel">
+      <div class="filter-hero">
+        <div>
+          <h3>Visitor Register</h3>
+          <p>${displayDate(selectedDate)} | ${visitors.length} visitor record(s)</p>
+        </div>
+        <button class="primary-button" id="addVisitorButton">+ Add Visitor</button>
+      </div>
+      <div class="filters visitor-filters">
+        ${visitorDateInput("visitorDate", "Date")}
+        ${visitorDateInput("visitorFrom", "From")}
+        ${visitorDateInput("visitorTo", "To")}
+        ${visitorTextInput("visitorName", "Visitor Name", "Search visitor")}
+        ${visitorTextInput("visitorMetWhom", "Met Whom", "Search person")}
+      </div>
+      <div class="action-row visitor-action-row">
+        <button class="secondary-button" id="clearVisitorFilters">Clear Filters</button>
+        <button class="secondary-button" id="exportVisitorsExcel" ${rolePerm().export ? "" : "disabled"}>Export to Excel</button>
+        <button class="secondary-button" id="exportVisitorsPdf" ${rolePerm().export ? "" : "disabled"}>Export to PDF</button>
+      </div>
+      ${state.filters.visitorEntryOpen === "Yes" ? renderVisitorInlineEntry() : ""}
+      ${renderVisitorsTable(visitors)}
+    </div>
+  `;
+  bindVisitorsPage(visitors);
+}
+
+function visitorTextInput(key, label, placeholder) {
+  return `<div class="field"><label>${label}</label><input data-visitor-filter="${key}" value="${escapeHtml(state.filters[key] || "")}" placeholder="${placeholder}"></div>`;
+}
+
+function visitorDateInput(key, label) {
+  const value = key === "visitorDate" ? (state.filters[key] || todayDate()) : (state.filters[key] || "");
+  return `<div class="field"><label>${label}</label><input type="date" data-visitor-filter="${key}" value="${escapeHtml(value)}"></div>`;
+}
+
+function renderVisitorInlineEntry() {
+  const date = state.filters.visitorEntryDate || state.filters.visitorDate || todayDate();
+  return `
+    <section class="visitor-inline-entry">
+      <div class="field daily-date-field">
+        <label>Visitor Date</label>
+        <input type="date" id="visitorEntryDate" value="${escapeHtml(date)}">
+        <span class="small-muted">${displayDate(date)}</span>
+      </div>
+      <div class="visitor-entry-table-wrap">
+        <table class="visitor-entry-table">
+          <thead><tr><th>Name</th><th>Purpose of Visit</th><th>Met Whom</th><th>Followup</th><th>Actions</th></tr></thead>
+          <tbody id="visitorEntryRows">
+            ${visitorEntryRow({}, 0)}
+          </tbody>
+        </table>
+      </div>
+      <div class="drawer-actions visitor-inline-actions">
+        <button type="button" class="secondary-button" id="addVisitorLine">+ Add New Line</button>
+        <button type="button" class="primary-button" id="saveVisitorButton">Save All</button>
+        <button type="button" class="secondary-button" id="cancelVisitorEntry">Cancel</button>
+      </div>
+      <datalist id="visitorPersonList">${visitorPersonOptions().map((person) => `<option value="${escapeHtml(person)}"></option>`).join("")}</datalist>
+    </section>
+  `;
+}
+
+function renderVisitorEditRow(visitor, index) {
+  return `
+    <tr class="visitor-edit-row" data-edit-visitor-row="${visitor.id}">
+      <td>${index + 1}</td>
+      <td><input type="date" data-edit-field="date" value="${escapeHtml(visitor.date || todayDate())}"></td>
+      <td><input data-edit-field="visitorName" value="${escapeHtml(visitor.visitorName || "")}"></td>
+      <td><textarea data-edit-field="purpose" rows="2">${escapeHtml(visitor.purpose || "")}</textarea></td>
+      <td>${visitorPersonSelect("data-edit-field=\"metWhom\"", visitor.metWhom || "")}</td>
+      <td><textarea data-edit-field="followUp" rows="2">${escapeHtml(visitor.followUp || "")}</textarea></td>
+      <td><div class="action-row">
+        <button class="mini-button success" data-save-visitor-edit="${visitor.id}">Save</button>
+        <button class="mini-button" data-cancel-visitor-edit>Cancel</button>
+      </div></td>
+    </tr>
+    <tr class="hidden"><td colspan="7"></td></tr>
+  `;
+}
+
+function renderVisitorsTable(visitors) {
+  if (!visitors.length) return empty("No visitors match these filters.");
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact visitor-table">
+        <thead><tr><th>SN</th><th>Date</th><th>Name</th><th>Purpose of Visit</th><th>Met Whom</th><th>Followup</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${visitors.map((visitor, index) => `
+            ${state.filters.editVisitorId === visitor.id ? renderVisitorEditRow(visitor, index) : `<tr>
+              <td>${index + 1}</td>
+              <td>${displayDate(visitor.date)}</td>
+              <td><span class="client-name">${escapeHtml(visitor.visitorName)}</span></td>
+              <td class="visitor-purpose-cell">${escapeHtml(visitor.purpose)}</td>
+              <td>${escapeHtml(visitor.metWhom)}</td>
+              <td class="visitor-purpose-cell">${escapeHtml(visitor.followUp || "")}</td>
+              <td><div class="action-row">
+                <button class="mini-button" data-edit-visitor="${visitor.id}">Edit</button>
+                <button class="mini-button danger" data-delete-visitor="${visitor.id}">Delete</button>
+              </div></td>
+            </tr>`}
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function bindVisitorsPage(visitors) {
+  document.querySelector("#addVisitorButton").onclick = () => {
+    state.filters.visitorEntryOpen = "Yes";
+    state.filters.visitorEntryDate = state.filters.visitorDate || todayDate();
+    saveState();
+    renderVisitorsPage();
+  };
+  document.querySelectorAll("[data-visitor-filter]").forEach((input) => {
+    input.oninput = (event) => {
+      state.filters[event.target.dataset.visitorFilter] = event.target.value;
+      saveState();
+      renderVisitorsPage();
+    };
+    input.onchange = input.oninput;
+  });
+  document.querySelector("#clearVisitorFilters").onclick = () => {
+    ["visitorDate", "visitorFrom", "visitorTo", "visitorName", "visitorPurpose", "visitorMetWhom"].forEach((key) => (state.filters[key] = ""));
+    saveState();
+    renderVisitorsPage();
+  };
+  document.querySelector("#exportVisitorsExcel").onclick = () => exportVisitorsExcel(visitors);
+  document.querySelector("#exportVisitorsPdf").onclick = () => printVisitorRows(visitors, "pdf");
+  bindVisitorInlineEntry();
+  document.querySelectorAll("[data-edit-visitor]").forEach((btn) => {
+    btn.onclick = () => {
+      state.filters.editVisitorId = btn.dataset.editVisitor;
+      saveState();
+      renderVisitorsPage();
+    };
+  });
+  document.querySelectorAll("[data-cancel-visitor-edit]").forEach((btn) => {
+    btn.onclick = () => {
+      state.filters.editVisitorId = "";
+      saveState();
+      renderVisitorsPage();
+    };
+  });
+  document.querySelectorAll("[data-save-visitor-edit]").forEach((btn) => {
+    btn.onclick = () => saveVisitorInlineEdit(btn.dataset.saveVisitorEdit);
+  });
+  document.querySelectorAll("[data-delete-visitor]").forEach((btn) => (btn.onclick = () => deleteVisitor(btn.dataset.deleteVisitor)));
+}
+
+function visitorExportRow(visitor, index) {
+  return {
+    SN: index + 1,
+    Date: displayDate(visitor.date),
+    Name: visitor.visitorName,
+    "Purpose of Visit": visitor.purpose,
+    "Met Whom": visitor.metWhom,
+    Followup: visitor.followUp || "",
+  };
+}
+
+async function exportVisitorsExcel(visitors) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  await downloadXlsxRows(`visitors-${todayDate()}`, visitors.map(visitorExportRow));
+  addAuditLog("Visitors exported", { format: "Excel", count: visitors.length });
+  saveState();
+  toast("Visitor Excel downloaded");
+}
+
+async function printVisitorRows(visitors, format) {
+  if (format === "pdf" && !rolePerm().export) return toast("This role cannot export data.");
+  const rows = visitors.map(visitorExportRow);
+  if (format === "pdf") {
+    await downloadPdfRows(`visitors-${todayDate()}`, rows, ["Muhammad & Associates,", "Chartered Accountants,", "Visitor Register"]);
+    addAuditLog("Visitors exported", { format: "PDF", count: visitors.length });
+    saveState();
+    toast("Visitor PDF downloaded");
+    return;
+  }
+  printStructuredReport({
+    title: "Visitor Register",
+    sections: [{ title: "Visitors", rows }],
+    format,
+  });
+  addAuditLog("Visitors exported", { format: format === "pdf" ? "PDF" : "Print", count: visitors.length });
+  saveState();
+}
+
+function visitorEntryRow(visitor = {}, index = 0) {
+  return `
+    <tr data-visitor-entry-row>
+      <td><input data-visitor-entry="visitorName" value="${escapeHtml(visitor.visitorName || "")}" placeholder="Visitor name"></td>
+      <td><textarea data-visitor-entry="purpose" rows="2" placeholder="Purpose of visit">${escapeHtml(visitor.purpose || "")}</textarea></td>
+      <td>${visitorPersonSelect("data-visitor-entry=\"metWhom\"", visitor.metWhom || "")}</td>
+      <td><textarea data-visitor-entry="followUp" rows="2" placeholder="Followup">${escapeHtml(visitor.followUp || "")}</textarea></td>
+      <td class="visitor-remove-cell"><div class="action-row">
+        <button type="button" class="mini-button" data-clear-visitor-row>Clear Row</button>
+        ${index === 0 ? "" : `<button type="button" class="mini-button danger" data-remove-visitor-row>Remove Row</button>`}
+      </div></td>
+    </tr>
+  `;
+}
+
+function bindVisitorInlineEntry() {
+  const dateInput = document.querySelector("#visitorEntryDate");
+  if (dateInput) {
+    dateInput.onchange = () => {
+      state.filters.visitorEntryDate = dateInput.value || todayDate();
+      saveState();
+    };
+  }
+  const addLine = document.querySelector("#addVisitorLine");
+  if (addLine) addLine.onclick = () => {
+    const body = document.querySelector("#visitorEntryRows");
+    body.insertAdjacentHTML("beforeend", visitorEntryRow({}, body.children.length));
+    bindVisitorEntryRows();
+  };
+  const cancel = document.querySelector("#cancelVisitorEntry");
+  if (cancel) cancel.onclick = () => {
+    state.filters.visitorEntryOpen = "";
+    saveState();
+    renderVisitorsPage();
+  };
+  const save = document.querySelector("#saveVisitorButton");
+  if (save) save.onclick = saveVisitorInlineRows;
+  bindVisitorEntryRows();
+}
+
+function visitorPersonSelect(attributes = "", value = "") {
+  const options = visitorPersonOptions();
+  return `<select ${attributes}>
+    <option value="">Select staff</option>
+    ${options.map((person) => `<option value="${escapeHtml(person)}" ${person === value ? "selected" : ""}>${escapeHtml(person)}</option>`).join("")}
+  </select>`;
+}
+
+function bindVisitorEntryRows() {
+  document.querySelectorAll("[data-remove-visitor-row]").forEach((btn) => {
+    btn.onclick = () => btn.closest("[data-visitor-entry-row]")?.remove();
+  });
+  document.querySelectorAll("[data-clear-visitor-row]").forEach((btn) => {
+    btn.onclick = () => {
+      btn.closest("[data-visitor-entry-row]")?.querySelectorAll("[data-visitor-entry]").forEach((input) => (input.value = ""));
+    };
+  });
+  document.querySelectorAll("[data-visitor-entry='metWhom']").forEach((input) => {
+    input.onkeydown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        document.querySelector("#addVisitorLine")?.click();
+        setTimeout(() => document.querySelector("#visitorEntryRows tr:last-child [data-visitor-entry='visitorName']")?.focus(), 0);
+      }
+    };
+  });
+}
+
+function saveVisitorInlineRows() {
+  const saveButton = document.querySelector("#saveVisitorButton");
+  if (saveButton?.disabled) return;
+  if (saveButton) saveButton.disabled = true;
+  const date = document.querySelector("#visitorEntryDate")?.value || state.filters.visitorEntryDate || todayDate();
+  const now = Date.now();
+  const rows = [...document.querySelectorAll("[data-visitor-entry-row]")];
+  const records = [];
+  let invalid = 0;
+  rows.forEach((row) => {
+    row.classList.remove("invalid-row");
+    const values = Object.fromEntries([...row.querySelectorAll("[data-visitor-entry]")].map((input) => [input.dataset.visitorEntry, String(input.value || "").trim()]));
+    const blank = !values.visitorName && !values.purpose && !values.metWhom && !values.followUp;
+    if (blank) return;
+    if (!values.visitorName || !values.purpose || !values.metWhom) {
+      row.classList.add("invalid-row");
+      invalid += 1;
+      return;
+    }
+    records.push({
+      id: crypto.randomUUID(),
+      date,
+      visitorName: values.visitorName,
+      purpose: values.purpose,
+      metWhom: values.metWhom,
+      followUp: values.followUp || "",
+      enteredBy: state.currentUser || "CA Sadique",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+  if (!records.length) {
+    if (saveButton) saveButton.disabled = false;
+    return toast(invalid ? "Please complete the highlighted visitor rows." : "Please enter at least one visitor.");
+  }
+  records.forEach((record) => {
+    state.visitors = [record, ...(state.visitors || [])];
+    addAuditLog("Visitor added", { updated: visitorAuditSnapshot(record) });
+  });
+  if (invalid) {
+    toast(`${records.length} valid visitor(s) saved. Highlighted row(s) were not saved.`);
+    document.querySelectorAll("[data-visitor-entry-row]:not(.invalid-row)").forEach((row) => row.remove());
+    if (!document.querySelectorAll("[data-visitor-entry-row]").length) {
+      document.querySelector("#visitorEntryRows")?.insertAdjacentHTML("beforeend", visitorEntryRow({}, 0));
+    }
+    bindVisitorEntryRows();
+    if (saveButton) saveButton.disabled = false;
+    saveState();
+    return;
+  } else {
+    toast(`${records.length} visitor record(s) saved`);
+  }
+  state.filters.visitorEntryOpen = "";
+  state.filters.visitorDate = date;
+  saveState();
+  renderAll();
+}
+
+function saveVisitorInlineEdit(id) {
+  const row = [...document.querySelectorAll("[data-edit-visitor-row]")].find((item) => item.dataset.editVisitorRow === id);
+  const existing = state.visitors.find((visitor) => visitor.id === id);
+  if (!row || !existing) return toast("Visitor record not found.");
+  row.classList.remove("invalid-row");
+  const values = Object.fromEntries([...row.querySelectorAll("[data-edit-field]")].map((input) => [input.dataset.editField, String(input.value || "").trim()]));
+  if (!values.date || !values.visitorName || !values.purpose || !values.metWhom) {
+    row.classList.add("invalid-row");
+    return toast("Please complete the highlighted visitor row.");
+  }
+  const record = {
+    ...existing,
+    date: values.date,
+    visitorName: values.visitorName,
+    purpose: values.purpose,
+    metWhom: values.metWhom,
+    followUp: values.followUp || "",
+    updatedAt: Date.now(),
+  };
+  state.visitors = state.visitors.map((visitor) => visitor.id === id ? record : visitor);
+  state.filters.editVisitorId = "";
+  addAuditLog("Visitor edited", { previous: visitorAuditSnapshot(existing), updated: visitorAuditSnapshot(record) });
+  saveState();
+  toast("Visitor updated");
+  renderAll();
+}
+
+function deleteVisitor(id) {
+  if (!canUseVisitorModules()) return toast("Visitors is available only for Admin and Manager.");
+  const visitor = state.visitors.find((item) => item.id === id);
+  if (!visitor) return toast("Visitor record not found.");
+  if (!confirm(`Delete visitor record for ${visitor.visitorName}?`)) return;
+  state.deletedVisitorIds = [...new Set([...(state.deletedVisitorIds || []), id])];
+  state.visitors = state.visitors.filter((item) => item.id !== id);
+  addAuditLog("Visitor deleted", { previous: visitorAuditSnapshot(visitor) });
+  saveState({ skipMerge: true });
+  toast("Visitor deleted");
+  renderAll();
+}
+
+function visitorAuditSnapshot(visitor) {
+  return {
+    date: visitor.date,
+    visitorName: visitor.visitorName,
+    purpose: visitor.purpose,
+    metWhom: visitor.metWhom,
+    followUp: visitor.followUp || "",
+    enteredBy: visitor.enteredBy || "",
+  };
+}
+
+function canUseExpenseModule() {
+  return ["Admin", "Manager"].includes(state.currentRole);
+}
+
+function renderExpensesPage() {
+  const root = document.querySelector("#expenses");
+  if (!root) return;
+  if (!canUseExpenseModule()) {
+    root.innerHTML = "";
+    return;
+  }
+  const tab = state.filters.expenseTab || "collections";
+  const balance = cashBalanceForRange();
+  root.innerHTML = `
+    <div class="expense-shell">
+      <div class="expense-hero">
+        <div>
+          <span>Finance Desk</span>
+          <h3>Expenses</h3>
+          <p>Manage daily expenses, other cash collections and cash balance in one place.</p>
+        </div>
+        <strong>${money(balance.closing)}</strong>
+      </div>
+      <div class="expense-overview-grid">
+        ${expenseOverviewCard("Cash Balance", balance.closing, "balance")}
+        ${expenseOverviewCard("Cash Expenses", balance.cashExpenses, "expense")}
+        ${expenseOverviewCard("Other Cash Collections", balance.otherCollections, "collection")}
+        ${expenseOverviewCard("Fee Collections", balance.feeCollections, "fee")}
+      </div>
+      <div class="expense-tabs">
+        ${expenseTabButton("collections", "Collections", tab)}
+        ${expenseTabButton("expenses", "Expenses", tab)}
+        ${expenseTabButton("balance", "Cash Balance Report", tab)}
+      </div>
+      ${tab === "collections" ? renderCashCollectionsTab() : tab === "balance" ? renderCashBalanceTab() : renderExpenseEntryTab()}
+    </div>
+  `;
+  bindExpensePage();
+}
+
+function expenseOverviewCard(label, amount, tone) {
+  return `<div class="expense-overview-card ${tone}"><span>${label}</span><strong>${money(amount)}</strong></div>`;
+}
+
+function expenseTabButton(key, label, selected) {
+  return `<button class="expense-tab-button tab-${key} ${selected === key ? "active-tab" : ""}" data-expense-tab="${key}">${label}</button>`;
+}
+
+function renderExpenseEntryTab() {
+  const rows = filteredExpenses();
+  return `
+    <section class="expense-stack">
+      <form id="expenseForm" class="expense-form expense-entry-form">
+        <div class="expense-card-head">
+          <span>Entry</span>
+          <h3>${state.filters.editExpenseId ? "Edit Expense" : "Add Expense"}</h3>
+        </div>
+        ${expenseDateField("expenseDate", "Expense Date", editingExpense()?.date || todayDate())}
+        ${expenseItemField(editingExpense()?.particulars || "")}
+        ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "")}
+        ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01")}
+        ${expenseSelect("expenseMode", "Mode", ["Cash", "Bank", "UPI", "Cheque"], editingExpense()?.mode || "Cash")}
+        ${expenseInput("expenseVoucherNo", "Voucher No.", editingExpense()?.voucherNo || "")}
+        ${expenseTextarea("expenseRemarks", "Remarks", editingExpense()?.remarks || "")}
+        ${expenseAttachmentField(editingExpense())}
+        <div class="action-row">
+          <button class="primary-button" type="submit">${state.filters.editExpenseId ? "Update Expense" : "Save Expense"}</button>
+          ${state.filters.editExpenseId ? `<button class="secondary-button" type="button" id="cancelExpenseEdit">Cancel</button>` : ""}
+        </div>
+      </form>
+      ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
+      <div class="expense-tools-card">
+        <div class="expense-card-head">
+          <span>Search & Reports</span>
+          <h3>Expense Register</h3>
+        </div>
+        ${renderExpenseFilters()}
+      </div>
+    </section>
+    ${expenseSearchActive() ? renderExpenseTable(rows) : empty("Use the search filters to view expense entries.")}
+  `;
+}
+
+function renderOpeningBalancePanel() {
+  const rows = [...(state.openingBalances || [])].sort((a, b) => a.date.localeCompare(b.date));
+  return `
+    <div class="expense-tools-card opening-balance-card">
+      <div class="expense-card-head">
+        <span>Admin Only</span>
+        <h3>Opening Balances</h3>
+      </div>
+      <form id="openingBalanceForm" class="opening-balance-form">
+        ${expenseInput("openingParticulars", "Particulars")}
+        ${expenseInput("openingDate", "Date", todayDate(), "date")}
+        ${expenseInput("openingAmount", "Amount", "", "number", "0.01")}
+        <div class="field"><label>Action</label><button class="primary-button" type="submit">Add Balance</button></div>
+      </form>
+      ${rows.length ? `<div class="table-wrap opening-balance-list"><table class="file-table expense-table"><thead><tr><th>Particulars</th><th>Date</th><th class="amount-col">Amount</th><th>Action</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${escapeHtml(item.particulars)}</td><td>${expenseDisplayDate(item.date)}</td><td class="amount-cell">${money(item.amount)}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+    </div>
+  `;
+}
+
+function renderCashCollectionsTab() {
+  const rows = filteredCashCollections();
+  return `
+    <section class="expense-stack">
+      <form id="cashCollectionForm" class="expense-form collection-form">
+        <div class="expense-card-head">
+          <span>Collection</span>
+          <h3>${state.filters.editCashId ? "Edit Collection" : "Add Client Collection"}</h3>
+        </div>
+        ${expenseDateField("cashDate", "Date", editingCashCollection()?.date || todayDate())}
+        ${expenseInput("cashParticularsEntry", "Particulars", editingCashCollection()?.particulars || "")}
+        ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
+        ${expenseInput("cashVoucherNo", "Ref No.", editingCashCollection()?.voucherNo || "")}
+        ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01")}
+        ${expenseSelect("cashModeEntry", "Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
+        ${expenseTextarea("cashRemarks", "Remarks", editingCashCollection()?.remarks || "")}
+        ${cashAttachmentField(editingCashCollection())}
+        <div class="action-row">
+          <button class="primary-button" type="submit">${state.filters.editCashId ? "Update Collection" : "Save Collection"}</button>
+          ${state.filters.editCashId ? `<button class="secondary-button" type="button" id="cancelCashEdit">Cancel</button>` : ""}
+        </div>
+      </form>
+      <div class="expense-tools-card">
+        <div class="expense-card-head">
+          <span>Search & Reports</span>
+          <h3>Client Collection Register</h3>
+        </div>
+        ${renderCashFilters()}
+      </div>
+    </section>
+    ${cashSearchActive() ? renderCashCollectionTable(rows) : empty("Use the search filters to view cash collection entries.")}
+  `;
+}
+
+function renderCashBalanceTab() {
+  const from = state.filters.balanceFrom || "";
+  const to = state.filters.balanceTo || "";
+  const balance = cashBalanceForRange(from, to);
+  return `
+    <div class="expense-tools-card balance-tools">
+      <div class="expense-card-head">
+        <span>Cash Position</span>
+        <h3>Cash Balance Report</h3>
+      </div>
+      <div class="filters colourful-filters expense-filters balance-filter-row">
+        ${expenseFilterInput("balanceFrom", "From Date", "date")}
+        ${expenseFilterInput("balanceTo", "To Date", "date")}
+        <div class="field"><label>Action</label><button class="secondary-button" id="balanceSearch">Search</button></div>
+        <div class="field"><label>Reset</label><button class="secondary-button" id="balanceReset">Reset</button></div>
+        <div class="field"><label>Export</label><button class="secondary-button" id="balanceExcel">Export Excel</button></div>
+        <div class="field"><label>PDF</label><button class="secondary-button" id="balancePdf">Export PDF</button></div>
+      </div>
+    </div>
+    <div class="cash-balance-grid">
+      ${cashBalanceCard("Opening Cash Balance", balance.opening)}
+      ${cashBalanceCard("Cash Fee Collections", balance.feeCollections)}
+      ${cashBalanceCard("Other Cash Collections", balance.otherCollections)}
+      ${cashBalanceCard("Cash Expenses", balance.cashExpenses)}
+      ${cashBalanceCard("Closing Cash Balance", balance.closing, true)}
+    </div>
+  `;
+}
+
+function cashBalanceCard(label, amount, highlight = false) {
+  return `<div class="cash-balance-card ${highlight ? "highlight" : ""}"><span>${label}</span><strong>${money(amount)}</strong></div>`;
+}
+
+function renderExpenseFilters() {
+  return `
+    <div class="filters colourful-filters expense-filters expense-search-row">
+      ${expenseFilterInput("expenseFrom", "From Date", "date")}
+      ${expenseFilterInput("expenseTo", "To Date", "date")}
+      ${expenseFilterInput("expenseParticulars", "Particulars")}
+      ${expenseFilterInput("expensePaidTo", "Paid To")}
+      <div class="field"><label>Search</label><button class="secondary-button" id="expenseSearch">Search</button></div>
+      <div class="field"><label>Clear</label><button class="secondary-button" id="expenseReset">Clear</button></div>
+      <div class="field"><label>Export</label><button class="secondary-button" id="expenseExcel">Export Excel</button></div>
+      <div class="field"><label>PDF</label><button class="secondary-button" id="expensePdf">Export PDF</button></div>
+    </div>
+  `;
+}
+
+function renderCashFilters() {
+  return `
+    <div class="filters colourful-filters expense-filters">
+      ${expenseFilterInput("cashFrom", "From Date", "date")}
+      ${expenseFilterInput("cashTo", "To Date", "date")}
+      ${expenseFilterInput("cashParticulars", "Particulars")}
+      ${expenseFilterSelect("cashMode", "Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
+      ${expenseFilterInput("cashReceivedFrom", "Received From")}
+      ${expenseFilterInput("cashVoucher", "V.No")}
+      <div class="field"><label>Search</label><button class="secondary-button" id="cashSearch">Search</button></div>
+      <div class="field"><label>Reset</label><button class="secondary-button" id="cashReset">Reset</button></div>
+      <div class="field"><label>Export</label><button class="secondary-button" id="cashExcel">Export Excel</button></div>
+      <div class="field"><label>PDF</label><button class="secondary-button" id="cashPdf">Export PDF</button></div>
+    </div>
+  `;
+}
+
+function expenseInput(id, label, value = "", type = "text", step = "") {
+  return `<div class="field"><label>${label}</label><input id="${id}" type="${type}" ${type === "date" ? `max="9999-12-31"` : ""} ${step ? `step="${step}"` : ""} value="${escapeHtml(value)}"></div>`;
+}
+
+function expenseTextarea(id, label, value = "") {
+  return `<div class="field expense-remarks-field"><label>${label}</label><textarea id="${id}" rows="4">${escapeHtml(value)}</textarea></div>`;
+}
+
+function expenseAttachmentField(expense) {
+  const name = expense?.attachment?.name || expense?.attachmentName || "";
+  return `
+    <div class="field expense-attachment-field">
+      <label>Attachment</label>
+      <input id="expenseAttachment" type="file" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      ${name ? `<small>Current: ${escapeHtml(name)}</small>` : `<small>PDF or Excel file</small>`}
+    </div>
+  `;
+}
+
+function cashAttachmentField(collection) {
+  const name = collection?.attachment?.name || collection?.attachmentName || "";
+  return `
+    <div class="field expense-attachment-field">
+      <label>Attachments</label>
+      <input id="cashAttachment" type="file" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      ${name ? `<small>Current: ${escapeHtml(name)}</small>` : `<small>PDF or Excel file</small>`}
+    </div>
+  `;
+}
+
+function expenseDateField(id, label, value) {
+  return expenseInput(id, label, value, "date");
+}
+
+function expenseSelect(id, label, options, value = "") {
+  return `<div class="field"><label>${label}</label><select id="${id}">${options.map((option) => `<option value="${escapeHtml(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHtml(option || "Select")}</option>`).join("")}</select></div>`;
+}
+
+function expenseItemField(value = "") {
+  return `
+    <div class="field expense-item-field">
+      <label>Particulars / Expense Item</label>
+      <div class="expense-item-combo">
+        <select id="expenseParticularsEntry">${state.expenseItems.map((item) => `<option value="${escapeHtml(item)}" ${item === value ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select>
+        <input id="newExpenseItem" placeholder="New item">
+        <select id="expenseItemAction" class="expense-action-select">
+          <option value="">Item Action</option>
+          <option value="add">Add New Item</option>
+          <option value="remove">Remove Item</option>
+        </select>
+      </div>
+    </div>
+  `;
+}
+
+function cashReceivedFromField(value = "") {
+  const options = cashReceivedFromOptions(value);
+  return `
+    <div class="field expense-item-field">
+      <label>Received From</label>
+      <div class="expense-item-combo">
+        <select id="cashReceivedFrom"><option value="">Select client/source</option>${options.map((item) => `<option value="${escapeHtml(item)}" ${item === value ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select>
+        <input id="newCashReceivedFrom" placeholder="New client / source">
+        <button class="secondary-button" id="addCashReceivedFrom" type="button">Add</button>
+      </div>
+    </div>
+  `;
+}
+
+function cashReceivedFromOptions(currentValue = "") {
+  const staffNames = new Set((state.users || []).map((user) => normalizePersonName(user.name)).filter(Boolean));
+  return sortList([
+    "CA Sadique",
+    currentValue,
+    ...(state.otherCashCollectionSources || []),
+    ...(state.files || []).map((file) => file.name),
+  ].map(properCaseName).filter((name) => name && (name === "CA Sadique" || !staffNames.has(normalizePersonName(name)))));
+}
+
+function expenseFilterInput(key, label, type = "text") {
+  return `<div class="field"><label>${label}</label><input data-expense-filter="${key}" type="${type}" ${type === "date" ? `max="9999-12-31"` : ""} value="${escapeHtml(state.filters[key] || "")}"></div>`;
+}
+
+function expenseFilterSelect(key, label, options) {
+  return `<div class="field"><label>${label}</label><select data-expense-filter="${key}">${options.map((option) => `<option value="${escapeHtml(option)}" ${state.filters[key] === option ? "selected" : ""}>${escapeHtml(option || "All")}</option>`).join("")}</select></div>`;
+}
+
+function bindExpensePage() {
+  document.querySelectorAll("[data-expense-tab]").forEach((btn) => {
+    btn.onclick = () => {
+      state.filters.expenseTab = btn.dataset.expenseTab;
+      saveState();
+      renderAll();
+    };
+  });
+  document.querySelectorAll("[data-expense-filter]").forEach((input) => {
+    input.oninput = () => {
+      state.filters[input.dataset.expenseFilter] = input.value;
+    };
+    input.onchange = input.oninput;
+  });
+  const expenseForm = document.querySelector("#expenseForm");
+  if (expenseForm) expenseForm.onsubmit = saveExpenseEntry;
+  const openingForm = document.querySelector("#openingBalanceForm");
+  if (openingForm) openingForm.onsubmit = saveOpeningBalance;
+  const cashForm = document.querySelector("#cashCollectionForm");
+  if (cashForm) cashForm.onsubmit = saveCashCollectionEntry;
+  document.querySelector("#cancelExpenseEdit")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
+  document.querySelector("#cancelCashEdit")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
+  document.querySelector("#expenseItemAction")?.addEventListener("change", handleExpenseItemAction);
+  document.querySelector("#addCashReceivedFrom")?.addEventListener("click", addCashReceivedFromSource);
+  document.querySelector("#expenseSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
+  document.querySelector("#expenseReset")?.addEventListener("click", resetExpenseFilters);
+  document.querySelector("#cashSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
+  document.querySelector("#cashReset")?.addEventListener("click", resetCashFilters);
+  document.querySelector("#balanceSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
+  document.querySelector("#balanceReset")?.addEventListener("click", resetBalanceFilters);
+  document.querySelector("#expenseExcel")?.addEventListener("click", exportExpenseExcel);
+  document.querySelector("#expensePdf")?.addEventListener("click", exportExpensePdf);
+  document.querySelector("#cashExcel")?.addEventListener("click", exportCashExcel);
+  document.querySelector("#cashPdf")?.addEventListener("click", exportCashPdf);
+  document.querySelector("#balanceExcel")?.addEventListener("click", exportBalanceExcel);
+  document.querySelector("#balancePdf")?.addEventListener("click", exportBalancePdf);
+  document.querySelectorAll("[data-edit-expense]").forEach((btn) => btn.onclick = () => { state.filters.editExpenseId = btn.dataset.editExpense; saveState(); renderAll(); });
+  document.querySelectorAll("[data-delete-expense]").forEach((btn) => btn.onclick = () => deleteExpense(btn.dataset.deleteExpense));
+  document.querySelectorAll("[data-delete-opening]").forEach((btn) => btn.onclick = () => deleteOpeningBalance(btn.dataset.deleteOpening));
+  document.querySelectorAll("[data-edit-cash]").forEach((btn) => btn.onclick = () => { state.filters.editCashId = btn.dataset.editCash; saveState(); renderAll(); });
+  document.querySelectorAll("[data-delete-cash]").forEach((btn) => btn.onclick = () => deleteCashCollection(btn.dataset.deleteCash));
+}
+
+async function saveExpenseEntry(event) {
+  event.preventDefault();
+  const amount = Number(document.querySelector("#expenseAmount")?.value || 0);
+  if (!amount) return toast("Please enter expense amount.");
+  const existing = editingExpense();
+  const uploadedAttachment = await readExpenseAttachment(document.querySelector("#expenseAttachment")?.files?.[0]);
+  const attachment = uploadedAttachment || existing?.attachment || null;
+  const record = {
+    ...(existing || {}),
+    id: existing?.id || crypto.randomUUID(),
+    date: document.querySelector("#expenseDate")?.value || existing?.date || todayDate(),
+    particulars: document.querySelector("#expenseParticularsEntry").value,
+    voucherNo: document.querySelector("#expenseVoucherNo").value.trim(),
+    amount,
+    mode: document.querySelector("#expenseMode").value,
+    paidTo: document.querySelector("#expensePaidTo").value.trim(),
+    remarks: document.querySelector("#expenseRemarks").value.trim(),
+    attachment,
+    attachmentName: attachment?.name || existing?.attachmentName || "",
+    createdAt: existing?.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+  state.expenses = existing ? state.expenses.map((item) => item.id === existing.id ? record : item) : [record, ...(state.expenses || [])];
+  rememberExpenseItem(record.particulars);
+  state.filters.editExpenseId = "";
+  saveState();
+  toast(existing ? "Expense updated" : "Expense saved");
+  renderAll();
+}
+
+function saveOpeningBalance(event) {
+  event.preventDefault();
+  if (state.currentRole !== "Admin") return toast("Only Admin can add opening balances.");
+  const amount = Number(document.querySelector("#openingAmount")?.value || 0);
+  const particulars = document.querySelector("#openingParticulars")?.value.trim();
+  if (!particulars) return toast("Enter opening balance particulars.");
+  if (!amount) return toast("Enter opening balance amount.");
+  state.openingBalances = [
+    ...(state.openingBalances || []),
+    {
+      id: crypto.randomUUID(),
+      particulars,
+      date: document.querySelector("#openingDate")?.value || todayDate(),
+      amount,
+      createdAt: Date.now(),
+    },
+  ];
+  saveState();
+  toast("Opening balance added");
+  renderAll();
+}
+
+function deleteOpeningBalance(id) {
+  if (state.currentRole !== "Admin") return toast("Only Admin can delete opening balances.");
+  if (!confirm("Delete this opening balance?")) return;
+  state.openingBalances = (state.openingBalances || []).filter((item) => item.id !== id);
+  saveState();
+  renderAll();
+}
+
+function readExpenseAttachment(file) {
+  if (!file) return Promise.resolve(null);
+  const allowed = [
+    "application/pdf",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ];
+  const extensionAllowed = /\.(pdf|xls|xlsx)$/i.test(file.name);
+  if (!allowed.includes(file.type) && !extensionAllowed) {
+    toast("Attach PDF or Excel files only.");
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, dataUrl: reader.result });
+    reader.onerror = () => {
+      toast("Could not read the attachment.");
+      resolve(null);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function saveCashCollectionEntry(event) {
+  event.preventDefault();
+  const amount = Number(document.querySelector("#cashAmount")?.value || 0);
+  if (!amount) return toast("Please enter collection amount.");
+  const existing = editingCashCollection();
+  const uploadedAttachment = await readExpenseAttachment(document.querySelector("#cashAttachment")?.files?.[0]);
+  const attachment = uploadedAttachment || existing?.attachment || null;
+  const record = {
+    ...(existing || {}),
+    id: existing?.id || crypto.randomUUID(),
+    date: document.querySelector("#cashDate").value || todayDate(),
+    particulars: document.querySelector("#cashParticularsEntry").value.trim(),
+    voucherNo: document.querySelector("#cashVoucherNo").value.trim(),
+    amount,
+    mode: document.querySelector("#cashModeEntry").value,
+    receivedFrom: properCaseName(document.querySelector("#newCashReceivedFrom")?.value.trim() || document.querySelector("#cashReceivedFrom").value.trim()),
+    remarks: document.querySelector("#cashRemarks").value.trim(),
+    attachment,
+    attachmentName: attachment?.name || existing?.attachmentName || "",
+    createdAt: existing?.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+  rememberCashReceivedFrom(record.receivedFrom);
+  state.otherCashCollections = existing ? state.otherCashCollections.map((item) => item.id === existing.id ? record : item) : [record, ...(state.otherCashCollections || [])];
+  state.filters.editCashId = "";
+  saveState();
+  toast(existing ? "Cash collection updated" : "Cash collection saved");
+  renderAll();
+}
+
+function editingExpense() {
+  return (state.expenses || []).find((item) => item.id === state.filters.editExpenseId);
+}
+
+function editingCashCollection() {
+  return (state.otherCashCollections || []).find((item) => item.id === state.filters.editCashId);
+}
+
+function addExpenseItem() {
+  const value = document.querySelector("#newExpenseItem")?.value.trim();
+  if (!value) return toast("Enter expense item name.");
+  rememberExpenseItem(value);
+  saveState();
+  toast("Expense item added");
+  renderAll();
+}
+
+function removeExpenseItem() {
+  const value = document.querySelector("#newExpenseItem")?.value.trim() || document.querySelector("#expenseParticularsEntry")?.value;
+  if (!value) return toast("Select or enter expense item to remove.");
+  const used = (state.expenses || []).some((item) => String(item.particulars || "").trim().toLowerCase() === value.toLowerCase());
+  if (used) return toast("This expense item is already used in entries and cannot be removed.");
+  state.expenseItems = (state.expenseItems || []).filter((item) => item.toLowerCase() !== value.toLowerCase());
+  saveState();
+  toast("Expense item removed");
+  renderAll();
+}
+
+function handleExpenseItemAction(event) {
+  const action = event.target.value;
+  if (action === "add") addExpenseItem();
+  if (action === "remove") removeExpenseItem();
+  event.target.value = "";
+}
+
+function rememberExpenseItem(value) {
+  if (!value) return;
+  state.expenseItems = sortList([...(state.expenseItems || []), value]);
+}
+
+function addCashReceivedFromSource() {
+  const value = properCaseName(document.querySelector("#newCashReceivedFrom")?.value.trim());
+  if (!value) return toast("Enter received from name.");
+  rememberCashReceivedFrom(value);
+  saveState();
+  toast("Received from name added");
+  renderAll();
+}
+
+function rememberCashReceivedFrom(value) {
+  if (!value) return;
+  state.otherCashCollectionSources = sortList([...(state.otherCashCollectionSources || []), properCaseName(value)]);
+}
+
+function deleteExpense(id) {
+  if (!confirm("Delete this expense entry?")) return;
+  state.expenses = (state.expenses || []).filter((item) => item.id !== id);
+  saveState();
+  renderAll();
+}
+
+function deleteCashCollection(id) {
+  if (!confirm("Delete this cash collection entry?")) return;
+  state.otherCashCollections = (state.otherCashCollections || []).filter((item) => item.id !== id);
+  saveState();
+  renderAll();
+}
+
+function expenseSearchActive() {
+  return ["expenseFrom", "expenseTo", "expenseParticulars", "expensePaidTo"].some((key) => state.filters[key]);
+}
+
+function cashSearchActive() {
+  return ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashReceivedFrom", "cashVoucher"].some((key) => state.filters[key]);
+}
+
+function filteredExpenses() {
+  return (state.expenses || []).filter((item) => {
+    if (state.filters.expenseFrom && item.date < state.filters.expenseFrom) return false;
+    if (state.filters.expenseTo && item.date > state.filters.expenseTo) return false;
+    if (state.filters.expenseParticulars && !item.particulars.toLowerCase().includes(state.filters.expenseParticulars.toLowerCase())) return false;
+    if (state.filters.expensePaidTo && !item.paidTo.toLowerCase().includes(state.filters.expensePaidTo.toLowerCase())) return false;
+    return true;
+  }).sort((a, b) => a.date.localeCompare(b.date) || String(a.voucherNo).localeCompare(String(b.voucherNo)));
+}
+
+function filteredCashCollections() {
+  return (state.otherCashCollections || []).filter((item) => {
+    if (state.filters.cashFrom && item.date < state.filters.cashFrom) return false;
+    if (state.filters.cashTo && item.date > state.filters.cashTo) return false;
+    if (state.filters.cashParticulars && !item.particulars.toLowerCase().includes(state.filters.cashParticulars.toLowerCase())) return false;
+    if (state.filters.cashMode && item.mode !== state.filters.cashMode) return false;
+    if (state.filters.cashReceivedFrom && !item.receivedFrom.toLowerCase().includes(state.filters.cashReceivedFrom.toLowerCase())) return false;
+    if (state.filters.cashVoucher && !item.voucherNo.toLowerCase().includes(state.filters.cashVoucher.toLowerCase())) return false;
+    return true;
+  }).sort((a, b) => a.date.localeCompare(b.date) || String(a.voucherNo).localeCompare(String(b.voucherNo)));
+}
+
+function renderExpenseTable(rows) {
+  if (!rows.length) return empty("No expense entries found.");
+  return `<div class="table-wrap"><table class="file-table expense-table"><thead><tr><th>SN</th><th>Date</th><th>Particulars</th><th>V.No</th><th class="amount-col">Amount</th><th>Mode</th><th>Paid To</th><th>Attachment</th><th>Action</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.mode)}</td><td>${escapeHtml(item.paidTo)}</td><td>${expenseAttachmentLink(item)}</td><td><button class="mini-button" data-edit-expense="${item.id}">Edit</button><button class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function expenseAttachmentLink(item) {
+  const attachment = item.attachment;
+  const name = attachment?.name || item.attachmentName || "";
+  if (!name) return "";
+  if (attachment?.dataUrl) return `<a class="attachment-link" href="${attachment.dataUrl}" download="${escapeHtml(name)}">${escapeHtml(name)}</a>`;
+  return escapeHtml(name);
+}
+
+function renderCashCollectionTable(rows) {
+  if (!rows.length) return empty("No cash collection entries found.");
+  return `<div class="table-wrap"><table class="file-table expense-table"><thead><tr><th>SN</th><th>Date</th><th>Particulars</th><th>V.No</th><th class="amount-col">Amount</th><th>Mode</th><th>Received From</th><th>Remarks</th><th>Action</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.mode)}</td><td>${escapeHtml(item.receivedFrom)}</td><td>${escapeHtml(item.remarks)}</td><td><button class="mini-button" data-edit-cash="${item.id}">Edit</button><button class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function resetExpenseFilters() {
+  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expensePaidTo", "expenseVoucher"].forEach((key) => state.filters[key] = "");
+  saveState();
+  renderAll();
+}
+
+function resetCashFilters() {
+  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashReceivedFrom", "cashVoucher"].forEach((key) => state.filters[key] = "");
+  saveState();
+  renderAll();
+}
+
+function resetBalanceFilters() {
+  state.filters.balanceFrom = "";
+  state.filters.balanceTo = "";
+  saveState();
+  renderAll();
+}
+
+function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
+  const effectiveTo = to || from || todayDate();
+  const inRange = (date) => (!from || date >= from) && (!effectiveTo || date <= effectiveTo);
+  const opening = (Number(state.openingCashBalance || 0) || 0) + (state.openingBalances || []).filter((item) => !effectiveTo || item.date <= effectiveTo).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0);
+  const otherCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return { opening, feeCollections, otherCollections, cashExpenses, closing: opening + feeCollections + otherCollections - cashExpenses };
+}
+
+function expenseReportRows(rows = filteredExpenses()) {
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), Particulars: item.particulars, "V.No": item.voucherNo, "Paid To": item.paidTo, Mode: item.mode, Amount: money(item.amount), Remarks: item.remarks }));
+  return [...mapped, { SN: "", Date: "", Particulars: "", "V.No": "", "Paid To": "", Mode: "Total", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), Remarks: "" }];
+}
+
+function cashReportRows(rows = filteredCashCollections()) {
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), Particulars: item.particulars, "V.No": item.voucherNo, "Received From": item.receivedFrom, Mode: item.mode, Amount: money(item.amount), Remarks: item.remarks }));
+  return [...mapped, { SN: "", Date: "", Particulars: "", "V.No": "", "Received From": "", Mode: "Total", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), Remarks: "" }];
+}
+
+function balanceReportRows() {
+  const b = cashBalanceForRange();
+  return [
+    { Particulars: "Opening Cash Balance", Amount: money(b.opening) },
+    { Particulars: "Cash Fee Collections", Amount: money(b.feeCollections) },
+    { Particulars: "Other Cash Collections", Amount: money(b.otherCollections) },
+    { Particulars: "Cash Expenses", Amount: money(b.cashExpenses) },
+    { Particulars: "Closing Cash Balance", Amount: money(b.closing) },
+  ];
+}
+
+function exportExpenseExcel() { downloadExcelTable("expense-report", expenseReportRows()); }
+function exportCashExcel() { downloadExcelTable("other-cash-collection-report", cashReportRows()); }
+function exportBalanceExcel() { downloadExcelTable("cash-balance-report", balanceReportRows()); }
+async function exportExpensePdf() { await downloadPdfRows("expense-report", expenseReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Expense Report"]); }
+async function exportCashPdf() { await downloadPdfRows("other-cash-collection-report", cashReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Other Cash Collection Report"]); }
+async function exportBalancePdf() { await downloadPdfRows("cash-balance-report", balanceReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Cash Balance Report"]); }
+
+function expenseDisplayDate(date) {
+  const normalized = normalizeImportDate(date);
+  return normalized ? normalized.split("-").reverse().join(".") : "";
+}
+
+function money(value) {
+  return Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function addAuditLog(action, details = {}) {
+  state.auditLog = [
+    ...(state.auditLog || []),
+    {
+      id: crypto.randomUUID(),
+      action,
+      details,
+      user: state.currentUser || "CA Sadique",
+      role: state.currentRole || "",
+      at: new Date().toISOString(),
+    },
+  ].slice(-1000);
+}
+
+function dailyReportDate() {
+  return state.filters.dailyReportDate || todayDate();
+}
+
+function dailyCompletedFiles(date = dailyReportDate()) {
+  const seen = new Set();
+  return visibleFiles()
+    .filter((file) => isCheckedCompleted(file) && normalizeImportDate(workCompletedDate(file)) === date)
+    .filter((file) => {
+      const key = file.id || `${file.name}|${file.pan}|${file.serviceType}|${workCompletedDate(file)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
+}
+
+function dailyNewWorkFiles(date = dailyReportDate()) {
+  const seen = new Set();
+  return visibleFiles()
+    .filter((file) => normalizeImportDate(file.fileReceivedDate) === date)
+    .filter((file) => {
+      const key = file.id || `${file.name}|${file.pan}|${file.serviceType}|${file.fileReceivedDate}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
+}
+
+function dailyVisitors(date = dailyReportDate()) {
+  const seen = new Set();
+  return (state.visitors || [])
+    .filter((visitor) => visitor.date === date)
+    .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
+    .filter((visitor) => {
+      const key = visitor.id || `${visitor.date}|${visitor.visitorName}|${visitor.purpose}|${visitor.metWhom}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function dailyCompletedRows(date = dailyReportDate()) {
+  return dailyCompletedFiles(date).map((file, index) => ({
+    SN: index + 1,
+    Name: file.name,
+    "Type of Service": file.serviceType,
+    "C/o": file.careOf || "Direct",
+    "Work Done By": workDoneBy(file),
+    "Checked By": file.checkedBy || "",
+  }));
+}
+
+function dailyNewWorkRows(date = dailyReportDate()) {
+  return dailyNewWorkFiles(date).map((file, index) => ({
+    SN: index + 1,
+    Name: file.name,
+    "Type of Service": file.serviceType,
+    "C/o": file.careOf || "Direct",
+    "Assigned To": file.assignedStaff || "Not Assigned",
+  }));
+}
+
+function dailyVisitorRows(date = dailyReportDate()) {
+  return dailyVisitors(date).map((visitor, index) => ({
+    SN: index + 1,
+    Name: visitor.visitorName,
+    "Purpose of Visit": visitor.purpose,
+    "Met Whom": visitor.metWhom,
+  }));
+}
+
+function dailyExpenseRows(date = dailyReportDate()) {
+  return (state.expenses || [])
+    .filter((expense) => normalizeImportDate(expense.date) === date)
+    .sort((a, b) => String(a.particulars || "").localeCompare(String(b.particulars || "")))
+    .map((expense, index) => ({
+    SN: index + 1,
+    Particulars: expense.particulars || "",
+    "Voucher No": expense.voucherNo || "",
+    "Paid to": expense.paidTo || "",
+    Amount: money(expense.amount),
+    Mode: expense.mode || "",
+    }));
+}
+
+function dailyCollectionRows(date = dailyReportDate()) {
+  return (state.otherCashCollections || [])
+    .filter((collection) => normalizeImportDate(collection.date) === date)
+    .sort((a, b) => String(a.receivedFrom || a.particulars || "").localeCompare(String(b.receivedFrom || b.particulars || "")))
+    .map((collection, index) => ({
+      SN: index + 1,
+      "Received from": collection.receivedFrom || collection.particulars || "",
+      "Receipt No": collection.voucherNo || "",
+      Amount: money(collection.amount),
+      Mode: collection.mode || "",
+    }));
+}
+
+function workDoneBy(file) {
+  return sortList([file.assignedStaff, file.reAssignedStaff].filter((name) => hasAssignedStaffValue(name))).join(", ") || file.assignedStaff || "";
+}
+
+function renderDailyReportPage() {
+  const page = document.querySelector("#dailyReport");
+  if (!page) return;
+  if (!canUseVisitorModules()) {
+    page.innerHTML = `<div class="permission-note">Daily Report is available only for Admin and Manager logins.</div>`;
+    return;
+  }
+  const date = dailyReportDate();
+  const newWorkRows = dailyNewWorkRows(date);
+  const completedRows = dailyCompletedRows(date);
+  const visitorRows = dailyVisitorRows(date);
+  const collectionRows = dailyCollectionRows(date);
+  const expenseRows = dailyExpenseRows(date);
+  page.innerHTML = `
+    <div class="panel daily-report-panel">
+      <div class="daily-report-head">
+        <div>
+          <h3>Daily Report M&amp;A - ${displayDate(date)}</h3>
+          <p>New work, completed files and visitors for the selected date.</p>
+        </div>
+        <div class="daily-report-actions">
+          <button class="secondary-button" id="dailyReportPdf" ${rolePerm().export ? "" : "disabled"}>Export to PDF</button>
+          <button class="secondary-button" id="dailyReportExcel" ${rolePerm().export ? "" : "disabled"}>Export to Excel</button>
+          <button class="secondary-button" id="dailyReportPrint">Print</button>
+          <button class="secondary-button" id="dailyReportRefresh">Refresh</button>
+        </div>
+      </div>
+      <div class="field daily-date-field">
+        <label>Report Date</label>
+        <input type="date" id="dailyReportDate" max="9999-12-31" value="${date}">
+      </div>
+      ${renderDailySection("New Work Came", newWorkRows, ["SN", "Name", "Type of Service", "C/o", "Assigned To"], `Total New Work Received: ${newWorkRows.length}`, "No new work was received on the selected date.")}
+      ${renderDailySection("Completed Files", completedRows, ["SN", "Name", "Type of Service", "C/o", "Work Done By", "Checked By"], `Total Completed Files: ${completedRows.length}`, "No files were completed on the selected date.")}
+      ${renderDailySection("Visitors List", visitorRows, ["SN", "Name", "Purpose of Visit", "Met Whom"], `Total Visitors: ${visitorRows.length}`, "No visitors were recorded on the selected date.")}
+      ${renderDailySection("Collections", collectionRows, ["SN", "Received from", "Receipt No", "Amount", "Mode"], `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No collections were recorded on the selected date.")}
+      ${renderDailySection("Expense Report", expenseRows, ["SN", "Particulars", "Voucher No", "Paid to", "Amount", "Mode"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
+    </div>
+  `;
+  bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
+}
+
+function renderDailySection(title, rows, headers, totalText, emptyText) {
+  return `
+    <section class="daily-report-section">
+      <h3>${title}</h3>
+      ${rows.length ? `
+        <div class="table-wrap file-table-wrap">
+          <table class="file-table file-table-compact daily-report-table">
+            <thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead>
+            <tbody>${rows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody>
+          </table>
+        </div>
+      ` : `<div class="empty">${emptyText}</div>`}
+      <p class="daily-report-total">${totalText}</p>
+    </section>
+  `;
+}
+
+function bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows) {
+  document.querySelector("#dailyReportDate").onchange = (event) => {
+    state.filters.dailyReportDate = event.target.value || todayDate();
+    saveState();
+    renderDailyReportPage();
+  };
+  document.querySelector("#dailyReportRefresh").onclick = () => {
+    syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+    renderDailyReportPage();
+    toast("Daily Report refreshed");
+  };
+  document.querySelector("#dailyReportPdf").onclick = (event) => exportDailyReport("PDF", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
+  document.querySelector("#dailyReportExcel").onclick = (event) => exportDailyReport("Excel", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
+  document.querySelector("#dailyReportPrint").onclick = (event) => exportDailyReport("Print", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
+}
+
+async function exportDailyReport(format, date = dailyReportDate(), newWorkRows = dailyNewWorkRows(date), completedRows = dailyCompletedRows(date), visitorRows = dailyVisitorRows(date), collectionRows = dailyCollectionRows(date), expenseRows = dailyExpenseRows(date), button = null) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  if (button?.disabled) return;
+  const originalText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = format === "Excel" ? "Preparing Excel..." : (format === "PDF" ? "Preparing PDF..." : "Preparing Print...");
+  }
+  const title = `Daily Report M&A - ${displayDate(date)}`;
+  try {
+    if (format === "Excel") {
+      await downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
+      addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
+      saveState();
+      toast("Daily Report Excel downloaded");
+      return;
+    }
+    const sections = [
+      { title: "New Work Came", rows: newWorkRows, total: `Total New Work Received: ${newWorkRows.length}`, empty: "No new work was received on the selected date." },
+      { title: "Completed Files", rows: completedRows, total: `Total Completed Files: ${completedRows.length}`, empty: "No files were completed on the selected date." },
+      { title: "Visitors List", rows: visitorRows, total: `Total Visitors: ${visitorRows.length}`, empty: "No visitors were recorded on the selected date." },
+      { title: "Collections", rows: collectionRows, total: `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, empty: "No collections were recorded on the selected date." },
+      { title: "Expense Report", rows: expenseRows, total: `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, empty: "No expenses were recorded on the selected date." },
+    ];
+    if (format === "PDF") {
+      await downloadPdfSections(`daily-report-${date}`, sections, ["Muhammad & Associates,", "Chartered Accountants,", title]);
+      addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
+      saveState();
+      toast("Daily Report PDF downloaded");
+      return;
+    }
+    const opened = printStructuredReport({
+      title,
+      sections,
+      format,
+      showPrintAction: format === "Print",
+    });
+    if (opened) {
+      addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
+      saveState();
+      toast("Daily Report opened in a new tab");
+    }
+  } catch (error) {
+    toast(error.message || "Unable to export Daily Report.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
+async function downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows) {
+  const title = `Daily Report M&A - ${displayDate(date)}`;
+  await downloadXlsxSheets(`daily-report-${date}`, [
+    { name: "New Work Came", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Assigned To": "" }, ...newWorkRows, { SN: "", Name: `Total New Work Received: ${newWorkRows.length}`, "Type of Service": "", "C/o": "", "Assigned To": "" }] },
+    { name: "Completed Files", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }, ...completedRows, { SN: "", Name: `Total Completed Files: ${completedRows.length}`, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }] },
+    { name: "Visitors List", rows: [{ SN: "", Name: title, "Purpose of Visit": "", "Met Whom": "" }, ...visitorRows, { SN: "", Name: `Total Visitors: ${visitorRows.length}`, "Purpose of Visit": "", "Met Whom": "" }] },
+    { name: "Collections", rows: [{ SN: "", "Received from": title, "Receipt No": "", Amount: "", Mode: "" }, ...collectionRows, { SN: "", "Received from": "Total Collections", "Receipt No": "", Amount: money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), Mode: "" }] },
+    { name: "Expense Report", rows: [{ SN: "", Particulars: title, "Voucher No": "", "Paid to": "", Amount: "", Mode: "" }, ...expenseRows, { SN: "", Particulars: "Total Expenses", "Voucher No": "", "Paid to": "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), Mode: "" }] },
+  ]);
+}
+
+function printStructuredReport({ title, subtitle = "", sections = [], format = "Print", showPrintAction = true }) {
+  const firmName = state.company?.name || "Muhammad & Associates";
+  const html = `
+    <html>
+      <head>
+        <title>${escapeHtml(title)}</title>
+        <style>
+          @page { size: A4 landscape; margin: 10mm; }
+          body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
+          .report-page { padding: 8px; }
+          .firm { color: #1d4ed8; font-size: 11px; font-weight: 800; text-transform: uppercase; margin-bottom: 2px; }
+          h1 { margin: 0 0 8px; font-size: 15px; color: #0f172a; }
+          h2 { margin: 10px 0 5px; font-size: 12px; color: #123f6d; }
+          table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; page-break-inside: auto; }
+          thead { display: table-header-group; }
+          th { background: #dceeff; color: #0f3f6f; border: 1px solid #9bc7f5; padding: 4px 5px; text-align: left; }
+          td { border: 1px solid #d1d5db; padding: 4px 5px; vertical-align: top; word-wrap: break-word; }
+          th:first-child, td:first-child { width: 34px; max-width: 34px; text-align: center; }
+          tr { page-break-inside: avoid; }
+          tr:nth-child(even) td { background: #f8fafc; }
+          .total { margin: 5px 0 0; font-weight: 800; color: #0f172a; font-size: 10px; }
+          .empty { padding: 7px; border: 1px dashed #cbd5e1; background: #f8fafc; color: #64748b; font-size: 10px; }
+          .screen-actions { position: sticky; top: 0; padding: 8px 0; background: #fff; border-bottom: 1px solid #e5e7eb; margin-bottom: 8px; }
+          button { border: 0; border-radius: 8px; padding: 7px 10px; background: #1d4ed8; color: #fff; cursor: pointer; }
+          @media print { .screen-actions { display: none; } .report-page { padding: 0; } }
+        </style>
+      </head>
+      <body>
+        ${showPrintAction ? `<div class="screen-actions"><button onclick="window.print()">Print / Save as PDF</button></div>` : ""}
+        <div class="report-page">
+          <div class="firm">${escapeHtml(firmName)}</div>
+          <h1>${escapeHtml(title)}</h1>
+          ${sections.map((section) => structuredReportSection(section)).join("")}
+        </div>
+      </body>
+    </html>
+  `;
+  return openHtmlReportTab(html, title);
+}
+
+function structuredReportSection(section) {
+  const rows = section.rows || [];
+  const headers = Object.keys(rows[0] || {});
+  return `
+    <section>
+      <h2>${escapeHtml(section.title || "")}</h2>
+      ${rows.length ? `
+        <table>
+          <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      ` : `<div class="empty">${escapeHtml(section.empty || "No records found.")}</div>`}
+      ${section.total ? `<p class="total">${escapeHtml(section.total)}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderReportsPage() {
+  const fromDate = state.filters.reportFrom || "";
+  const toDate = state.filters.reportTo || "";
+  const all = filterFilesByReportDate(visibleFiles(), fromDate, toDate);
+  const bulkReport = state.bulkBillingReports || null;
+  const bulkReports = bulkReport ? [
+    ["bulk-non-billed", "Files Marked Non-Billed", bulkReport.nonBilled || []],
+    ["bulk-billed", "Files Marked Billed", bulkReport.billed || []],
+    ["bulk-unmatched-ambiguous", "Unmatched / Ambiguous Records", bulkReport.unmatchedOrAmbiguous || []],
+  ] : [];
+  const feeReport = state.bulkFeeReceivedReports || null;
+  const feeReports = feeReport ? [
+    ["fee-received-marked", "Files Marked Fee Received", feeReport.received || []],
+    ["fee-received-unmatched", "Unmatched / Ambiguous Fee Records", feeReport.unmatchedOrAmbiguous || []],
+  ] : [];
+  const reports = [
+    ["all-files", "All Files", all, "grad-blue"],
+    ["completed", "Completed", all.filter((f) => f.filed), "grad-green"],
+    ["overdue", "Overdue", all.filter(isOverdue), "grad-red"],
+    ["work-in-progress", "Allotted / WIP / Work Done", all.filter((f) => ["Allotted", "WIP", "Work Done"].includes(statusOf(f).label)), "grad-purple"],
+    ["pending-files", "Pending Files", all.filter((f) => !isCheckedCompleted(f)), "grad-yellow"],
+    ["approval-pending", "Approval Pending", all.filter(pendingApproval), "grad-yellow"],
+    ["billing-pending", "Billing Pending", all.filter(completedNotBilled), "grad-pink"],
+  ];
+  document.querySelector("#reports").innerHTML = `
+    <div class="panel">
+      <div class="report-list-hero">
+        <div>
+          <h3>Reports & Export Centre</h3>
+          <p>Download office reports in Excel or PDF format.</p>
+        </div>
+        <span>${all.length} records</span>
+      </div>
+      <div class="report-date-filter">
+        <div class="field">
+          <label>From</label>
+          <input type="date" id="reportFromDate" value="${fromDate}">
+        </div>
+        <div class="field">
+          <label>To</label>
+          <input type="date" id="reportToDate" value="${toDate}">
+        </div>
+        <div class="field">
+          <label>Action</label>
+          <button class="secondary-button" id="clearReportDates">Clear Dates</button>
+        </div>
+      </div>
+      <div class="grid metrics report-card-grid">
+        ${reports.map(([key, title, rows, className]) => `
+          <div class="metric-card report-export-card ${className}">
+            <span>${title}</span>
+            <strong>${rows.length}</strong>
+          <p>Record(s)</p>
+            <div class="report-card-actions">
+              <button data-excel="${key}" ${rolePerm().export ? "" : "disabled"}>Excel</button>
+              <button data-pdf="${key}" ${rolePerm().export ? "" : "disabled"}>Pdf</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      ${bulkReport ? `
+        <div class="bulk-report-panel">
+          <div>
+            <h3>Latest Bulk Billing Update</h3>
+            <p>Source: ${escapeHtml(bulkReport.source || "Excel upload")} | Updated ${fmt((bulkReport.generatedAt || "").slice(0, 10))}</p>
+          </div>
+          <div class="bulk-report-summary">
+            <span>Total Excel Rows <strong>${bulkReport.summary?.totalExcelRows || 0}</strong></span>
+            <span>Non-Billed <strong>${bulkReport.summary?.nonBilled || 0}</strong></span>
+            <span>Billed <strong>${bulkReport.summary?.billed || 0}</strong></span>
+            <span>Unmatched <strong>${bulkReport.summary?.unmatched || 0}</strong></span>
+            <span>Ambiguous <strong>${bulkReport.summary?.ambiguous || 0}</strong></span>
+            <span>Skipped <strong>${bulkReport.summary?.skipped || 0}</strong></span>
+          </div>
+          <div class="report-list compact-report-list">
+            ${bulkReports.map(([key, title, rows]) => `
+              <div class="report-row">
+                <strong>${title} <span class="small-muted">(${rows.length})</span></strong>
+                <button data-bulk-excel="${key}" ${rolePerm().export ? "" : "disabled"}>Excel</button>
+                <button data-bulk-pdf="${key}" ${rolePerm().export ? "" : "disabled"}>Pdf</button>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      ` : ""}
+      ${feeReport ? `
+        <div class="bulk-report-panel">
+          <div>
+            <h3>Latest Fee Received Update</h3>
+            <p>Source: ${escapeHtml(feeReport.source || "Excel upload")} | Updated ${fmt((feeReport.generatedAt || "").slice(0, 10))}</p>
+          </div>
+          <div class="bulk-report-summary">
+            <span>Total Excel Rows <strong>${feeReport.summary?.totalExcelRows || 0}</strong></span>
+            <span>Marked Received <strong>${feeReport.summary?.received || 0}</strong></span>
+            <span>Unmatched <strong>${feeReport.summary?.unmatched || 0}</strong></span>
+            <span>Ambiguous <strong>${feeReport.summary?.ambiguous || 0}</strong></span>
+          </div>
+          <div class="report-list compact-report-list">
+            ${feeReports.map(([key, title, rows]) => `
+              <div class="report-row">
+                <strong>${title} <span class="small-muted">(${rows.length})</span></strong>
+                <button data-fee-excel="${key}" ${rolePerm().export ? "" : "disabled"}>Excel</button>
+                <button data-fee-pdf="${key}" ${rolePerm().export ? "" : "disabled"}>Pdf</button>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      ` : ""}
+      <div class="report-list compact-report-list">
+        ${reports.map(([key, title, rows]) => `
+          <div class="report-row">
+            <strong>${title} <span class="small-muted">(${rows.length})</span></strong>
+            <button data-excel="${key}" ${rolePerm().export ? "" : "disabled"}>Excel</button>
+            <button data-pdf="${key}" ${rolePerm().export ? "" : "disabled"}>Pdf</button>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+  document.querySelectorAll("[data-excel]").forEach((btn) => {
+    btn.onclick = () => exportExcel(btn.dataset.excel, reports.find((r) => r[0] === btn.dataset.excel)[2]);
+  });
+  document.querySelectorAll("[data-pdf]").forEach((btn) => {
+    btn.onclick = () => exportPdf(btn.dataset.pdf, reports.find((r) => r[0] === btn.dataset.pdf)[2]);
+  });
+  document.querySelectorAll("[data-bulk-excel]").forEach((btn) => {
+    btn.onclick = () => exportExcel(btn.dataset.bulkExcel, bulkReports.find((r) => r[0] === btn.dataset.bulkExcel)[2]);
+  });
+  document.querySelectorAll("[data-bulk-pdf]").forEach((btn) => {
+    btn.onclick = () => exportPdf(btn.dataset.bulkPdf, bulkReports.find((r) => r[0] === btn.dataset.bulkPdf)[2]);
+  });
+  document.querySelectorAll("[data-fee-excel]").forEach((btn) => {
+    btn.onclick = () => exportExcel(btn.dataset.feeExcel, feeReports.find((r) => r[0] === btn.dataset.feeExcel)[2]);
+  });
+  document.querySelectorAll("[data-fee-pdf]").forEach((btn) => {
+    btn.onclick = () => exportPdf(btn.dataset.feePdf, feeReports.find((r) => r[0] === btn.dataset.feePdf)[2]);
+  });
+  document.querySelector("#reportFromDate").onchange = (event) => {
+    state.filters.reportFrom = event.target.value;
+    saveState();
+    renderReportsPage();
+  };
+  document.querySelector("#reportToDate").onchange = (event) => {
+    state.filters.reportTo = event.target.value;
+    saveState();
+    renderReportsPage();
+  };
+  document.querySelector("#clearReportDates").onclick = () => {
+    state.filters.reportFrom = "";
+    state.filters.reportTo = "";
+    saveState();
+    renderReportsPage();
+  };
+}
+
+function filterFilesByReportDate(files, fromDate = "", toDate = "") {
+  return (files || []).filter((file) => {
+    const reportDate = file.workAllotmentDate || file.fileReceivedDate || file.lastUpdatedDate || file.dueDate;
+    if (fromDate && reportDate < fromDate) return false;
+    if (toDate && reportDate > toDate) return false;
+    return true;
+  });
+}
+
+function staffReportRows() {
+  return state.users.map((user) => ({ name: user.name, role: user.role, ...staffStats(user.name) }));
+}
+
+function cleanReportRows(rows) {
+  const fileReport = rows.some(isFileRecord);
+  const normalized = rows.map((row) => isFileRecord(row) ? flattenFile(row) : row);
+  const allowedHeaders = [
+    "Name",
+    "PAN / Regn Number",
+    "Service Type",
+    "C/o",
+    "Mode",
+    "File Received Date",
+    "Assigned Staff",
+    "Work Allotment Date",
+    "Re Assigned",
+    "Re Assigned Date",
+    "Due Date",
+    "Billed Date",
+    "Fee Received Date",
+    "Fee Received Amount",
+    "Priority",
+    "Status",
+    "Last Updated Date",
+    "Remarks",
+  ];
+  const blockedHeaders = new Set([
+    "id",
+    "name",
+    "pan",
+    "serviceType",
+    "careOf",
+    "mode",
+    "fileReceivedDate",
+    "workDone",
+    "shared",
+    "reportPrepared",
+    "approved",
+    "filed",
+    "billed",
+    "stages",
+    "assignedStaff",
+    "workAllotmentDate",
+    "workStartedDate",
+    "dueDate",
+    "billedDate",
+    "feeReceivedDate",
+    "feeReceivedAmount",
+    "priority",
+    "lastUpdatedDate",
+    "updatedAt",
+    "assignedStaffId",
+    "assignedStaffEmail",
+    "reAssignedStaff",
+    "reAssignedStaffId",
+    "reAssignedStaffEmail",
+  ]);
+  const rawHeaders = [...new Set(normalized.flatMap((row) => Object.keys(row)))].filter((header) => !blockedHeaders.has(String(header).trim()));
+  const headers = fileReport ? allowedHeaders.filter((header) => rawHeaders.includes(header)) : rawHeaders;
+  const visibleHeaders = headers.filter((header) => normalized.some((row) => {
+    const value = row[header];
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  }));
+  return normalized.map((row) => Object.fromEntries(visibleHeaders.map((header) => [header, row[header] ?? ""])));
+}
+
+function isFileRecord(row) {
+  return row && typeof row === "object" && ("name" in row || "serviceType" in row || "fileReceivedDate" in row || "assignedStaff" in row);
+}
+
+async function exportExcel(name, rows) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const normalized = cleanReportRows(rows);
+  await downloadXlsxRows(`${name}-${todayDate()}`, normalized);
+  toast("Excel file downloaded");
+}
+
+async function exportPdf(name, rows) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const printableRows = cleanReportRows(rows);
+  if (!printableRows.length) return toast("No data to export.");
+  await downloadPdfRows(`${name}-${todayDate()}`, printableRows, ["Muhammad & Associates,", "Chartered Accountants,", titleCaseReportName(name)]);
+  toast("PDF file downloaded");
+}
+
+function flattenFile(file) {
+  return {
+    Name: file.name,
+    "PAN / Regn Number": file.pan,
+    "Service Type": file.serviceType,
+    "C/o": file.careOf || "Direct",
+    FY: file.fy || "NA",
+    Mode: file.mode || "Whatsapp",
+    "File Received Date": displayDate(file.fileReceivedDate),
+    "Assigned Staff": file.assignedStaff,
+    "Work Allotment Date": displayDate(file.workAllotmentDate),
+    "Re Assigned": file.reAssignedStaff || "",
+    "Re Assigned Date": displayDate(file.reAssignedDate),
+    "Due Date": displayDate(file.dueDate),
+    "Billed Date": displayDate(file.billedDate),
+    "Fee Received Date": displayDate(file.feeReceivedDate),
+    "Fee Received Amount": file.feeReceivedAmount || "",
+    Priority: file.priority,
+    Status: statusOf(file).label,
+    "Last Updated Date": displayDate(file.lastUpdatedDate),
+    Remarks: file.remarks,
+  };
+}
+
+function openNotifications() {
+  const panel = document.querySelector("#notificationPanel");
+  const items = notifications();
+  panel.innerHTML = `
+    <div class="drawer-head">
+      <div><h3>Notification Panel</h3><p class="small-muted">${items.length} unread reminder(s)</p></div>
+      <button class="icon-button" id="closeNotifications">X</button>
+    </div>
+    <div class="drawer-body">
+      <div class="action-row">
+        <button class="secondary-button" id="markAllRead" ${items.length ? "" : "disabled"}>Mark all as read</button>
+      </div>
+      ${items.map((item) => alertCard(item, true)).join("") || empty("No unread notifications.")}
+    </div>
+  `;
+  panel.classList.add("open");
+  document.querySelector("#backdrop").classList.add("show");
+  document.querySelector("#closeNotifications").onclick = closeOverlays;
+  document.querySelector("#markAllRead").onclick = () => {
+    state.readNotifications = [...new Set([...state.readNotifications, ...items.map((item) => item.id)])];
+    const chatIds = items.filter((item) => item.chatId).map((item) => item.chatId);
+    if (chatIds.length) {
+      markChatMessagesRead(chatIds);
+    }
+    saveState();
+    mount();
+    openNotifications();
+  };
+  document.querySelectorAll("[data-mark-read]").forEach((btn) => {
+    btn.onclick = () => {
+      state.readNotifications = [...new Set([...state.readNotifications, btn.dataset.markRead])];
+      if (btn.dataset.markRead.startsWith("chat-")) {
+        markChatMessageRead(btn.dataset.markRead.replace("chat-", ""));
+      }
+      saveState();
+      mount();
+      openNotifications();
+    };
+  });
+}
+
+function openTeamChat(clearDraft = false) {
+  syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+  const panel = document.querySelector("#teamChatPanel");
+  const previousText = clearDraft ? "" : (document.querySelector("#chatText")?.value || "");
+  const previousType = document.querySelector("#chatTargetType")?.value || "all";
+  const recipients = chatRecipientUsers();
+  const firstRecipient = recipients[0]?.id || "";
+  const previousRecipient = document.querySelector("#chatRecipient")?.value || firstRecipient;
+  const messages = chatConversationMessages(previousType, previousRecipient).slice(-100);
+  const unreadIds = messages
+    .filter((message) => !chatSenderIsCurrentUser(message) && !isChatMessageRead(message))
+    .map((message) => message.id);
+  if (unreadIds.length) {
+    markChatMessagesRead(unreadIds);
+    saveTabSession();
+  }
+  panel.innerHTML = `
+    <div class="drawer-head">
+      <div><h3>Team Chat</h3><p class="small-muted">View all messages, or filter Group and Personal chats.</p></div>
+      <button class="icon-button" id="closeTeamChat">X</button>
+    </div>
+    <div class="drawer-body team-chat-body">
+      <div class="chat-messages" id="chatMessages">
+        ${messages.map(chatMessageCard).join("") || empty("No Messages Yet. Start the Conversation.")}
+      </div>
+      <div class="chat-compose">
+        <div class="chat-target-row">
+          <div class="field">
+            <label>Chat Type</label>
+            <select id="chatTargetType">
+              <option value="all" ${previousType === "all" ? "selected" : ""}>All Chats</option>
+              <option value="group" ${previousType === "group" ? "selected" : ""}>Group Chat</option>
+              <option value="personal" ${previousType === "personal" ? "selected" : ""}>Personal Chat</option>
+            </select>
+          </div>
+          <div class="field ${previousType === "personal" ? "" : "hidden"}" id="chatRecipientField">
+            <label>Send To</label>
+            <select id="chatRecipient">
+              ${recipients
+                .map((user) => `<option value="${user.id}" ${previousRecipient === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.role)}</option>`)
+                .join("")}
+              ${rolePerm().invite ? `<option value="__add_new_staff">+ Add New Staff</option>` : ""}
+            </select>
+          </div>
+        </div>
+        <div class="chat-attachment-row">
+          <label class="secondary-button chat-attach-button" for="chatAttachment">Attach PDF / Excel</label>
+          <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <span class="small-muted" id="chatAttachmentName">No file selected</span>
+        </div>
+        <textarea id="chatText" placeholder="${previousType === "personal" ? "Type a personal message" : "Type a message to the team"}">${escapeHtml(previousText)}</textarea>
+        <button class="primary-button" id="sendChatMessage">Send Message</button>
+      </div>
+    </div>
+  `;
+  panel.classList.add("open");
+  document.querySelector("#backdrop").classList.add("show");
+  document.querySelector("#closeTeamChat").onclick = closeOverlays;
+  document.querySelector("#sendChatMessage").onclick = sendChatMessage;
+  document.querySelector("#chatTargetType").onchange = (event) => {
+    document.querySelector("#chatRecipientField").classList.toggle("hidden", event.target.value !== "personal");
+    openTeamChat();
+  };
+  const recipientSelect = document.querySelector("#chatRecipient");
+  if (recipientSelect) {
+    recipientSelect.onchange = () => {
+      if (recipientSelect.value === "__add_new_staff") {
+        addChatStaffFromPrompt();
+        return;
+      }
+      openTeamChat();
+    };
+  }
+  const attachmentInput = document.querySelector("#chatAttachment");
+  if (attachmentInput) {
+    attachmentInput.onchange = () => {
+      const file = attachmentInput.files?.[0];
+      document.querySelector("#chatAttachmentName").textContent = file ? `${file.name} (${formatFileSize(file.size)})` : "No file selected";
+    };
+  }
+  document.querySelector("#chatText").onkeydown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendChatMessage();
+    }
+  };
+  const list = document.querySelector("#chatMessages");
+  if (list) list.scrollTop = list.scrollHeight;
+  const chatButton = document.querySelector("#chatButton");
+  if (chatButton) chatButton.textContent = chatButtonLabel();
+  const notifyButton = document.querySelector("#notifyButton");
+  if (notifyButton) notifyButton.textContent = `Notifications ${notifications().length}`;
+}
+
+function addChatStaffFromPrompt() {
+  if (!rolePerm().invite) return toast("Only Admin and Manager can add staff.");
+  const name = prompt("Enter staff name");
+  if (!name) return openTeamChat();
+  const email = prompt("Enter staff email ID");
+  if (!email) return openTeamChat();
+  const password = prompt("Enter login password for this staff");
+  if (!password) return openTeamChat();
+  const result = createOrUpdateTeamLogin({ name, email, role: "Staff", password });
+  if (result.error) {
+    toast(result.error);
+    return openTeamChat();
+  }
+  saveAccessState();
+  toast(result.updated ? "Staff updated and added to chat list" : "New staff added to chat list");
+  openTeamChat();
+  const typeSelect = document.querySelector("#chatTargetType");
+  const recipientSelect = document.querySelector("#chatRecipient");
+  if (typeSelect) typeSelect.value = "personal";
+  if (recipientSelect) recipientSelect.value = result.user.id;
+  document.querySelector("#chatRecipientField")?.classList.remove("hidden");
+}
+
+function chatMessageCard(message) {
+  const own = chatSenderIsCurrentUser(message);
+  const targetLabel = (message.targetType || "group") === "personal" ? `Personal${message.targetUserName ? ` to ${message.targetUserName}` : ""}` : "Group";
+  const attachments = message.attachments || [];
+  return `
+    <div class="chat-message ${own ? "own" : ""}">
+      <div class="chat-meta">
+        <strong>${escapeHtml(message.user || "Team Member")}</strong>
+        <span>${escapeHtml(targetLabel)} | ${fmt(message.date)} ${escapeHtml(message.time || "")}</span>
+      </div>
+      ${message.text ? `<p>${escapeHtml(message.text || "")}</p>` : ""}
+      ${attachments.map((file) => `
+        <a class="chat-attachment-card" href="${file.dataUrl}" download="${escapeHtml(file.name)}" target="_blank" rel="noopener">
+          <span>Attachment</span>
+          <strong>${escapeHtml(file.name)}</strong>
+          <small>${escapeHtml(file.type || "File")} | ${formatFileSize(file.size || 0)}</small>
+        </a>
+      `).join("")}
+    </div>`;
+}
+
+async function sendChatMessage() {
+  const input = document.querySelector("#chatText");
+  const fileInput = document.querySelector("#chatAttachment");
+  const text = input?.value.trim();
+  const uploadedFile = fileInput?.files?.[0] || null;
+  if (!text && !uploadedFile) return toast("Please type a message or attach a file.");
+  syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+  const sender = loggedInUser() || {};
+  const selectedType = document.querySelector("#chatTargetType")?.value || "all";
+  const targetType = selectedType === "personal" ? "personal" : "group";
+  const selectedRecipientId = document.querySelector("#chatRecipient")?.value || "";
+  const targetUser = targetType === "personal"
+    ? state.users.find((user) => user.id === selectedRecipientId)
+    : null;
+  if (targetType === "personal" && selectedRecipientId === "__add_new_staff") return addChatStaffFromPrompt();
+  if (targetType === "personal" && !targetUser) return toast("Please select a team member.");
+  let attachments = [];
+  if (uploadedFile) {
+    const allowedExtensions = [".pdf", ".xls", ".xlsx"];
+    const lowerName = uploadedFile.name.toLowerCase();
+    const allowed = allowedExtensions.some((ext) => lowerName.endsWith(ext));
+    if (!allowed) return toast("Please attach only PDF or Excel files.");
+    if (uploadedFile.size > 1500000) return toast("Please attach a file below 1.5 MB for this local version.");
+    attachments = [await readChatAttachment(uploadedFile)];
+  }
+  const messageId = crypto.randomUUID();
+  state.chatMessages = [
+    ...(state.chatMessages || []),
+    {
+      id: messageId,
+      userId: sender.id || state.session?.userId || "",
+      user: sender.name || state.currentUser || "Team Member",
+      userEmail: sender.email || state.session?.userEmail || "",
+      role: sender.role || state.currentRole || "",
+      targetType,
+      targetUserId: targetUser?.id || "",
+      targetUserName: targetUser?.name || "",
+      targetUserEmail: targetUser?.email || "",
+      text,
+      attachments,
+      date: todayDate(),
+      time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+    },
+  ].slice(-300);
+  markChatMessageRead(messageId, sender);
+  saveState();
+  if (input) input.value = "";
+  if (fileInput) fileInput.value = "";
+  openTeamChat(true);
+}
+
+function readChatAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      id: crypto.randomUUID(),
+      name: file.name,
+      type: file.type || "File",
+      size: file.size,
+      dataUrl: reader.result,
+      uploadedAt: todayDate(),
+      uploadedBy: state.currentUser,
+    });
+    reader.onerror = () => reject(new Error("Unable to read attachment"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatFileSize(size = 0) {
+  const bytes = Number(size) || 0;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function alertCard(item, canMark = false) {
+  return `<div class="alert-card"><div><span class="badge ${item.tone}">${item.type}</span><strong class="subtext" style="color:var(--text);font-size:14px">${item.title}</strong><p>${item.text}</p></div>${canMark ? `<button class="mini-button" data-mark-read="${item.id}">Mark read</button>` : ""}</div>`;
+}
+
+function closeOverlays() {
+  document.querySelector("#fileDrawer")?.classList.remove("open");
+  document.querySelector("#notificationPanel")?.classList.remove("open");
+  document.querySelector("#teamChatPanel")?.classList.remove("open");
+  document.querySelector("#sidebar")?.classList.remove("open");
+  document.querySelector("#backdrop")?.classList.remove("show");
+}
+
+function toast(message) {
+  const el = document.querySelector("#toast");
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(window.toastTimer);
+  window.toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+function empty(message) {
+  return `<div class="empty">${message}</div>`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+mount();
+
+

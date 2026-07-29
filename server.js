@@ -1,9 +1,10 @@
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+require("dotenv").config({ path: path.join(__dirname, ".env"), override: true });
 require("dotenv").config();
 
 const express = require("express");
 const helmet = require("helmet");
+const compression = require("compression");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 
@@ -23,6 +24,7 @@ app.use(cors({
   origin: env.corsOrigin,
   credentials: true,
 }));
+app.use(compression());
 app.use(rateLimit({
   windowMs: env.rateLimitWindowMs,
   max: env.rateLimitMax,
