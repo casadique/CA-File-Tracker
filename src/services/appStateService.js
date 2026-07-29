@@ -12,6 +12,20 @@ async function getAppState() {
   return data?.state || emptyState();
 }
 
+async function getAppStateRecord() {
+  const { data, error } = await supabaseAdmin
+    .from("app_state")
+    .select("state, updated_at, updated_by")
+    .eq("id", APP_STATE_ID)
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    state: data?.state || emptyState(),
+    updatedAt: data?.updated_at || null,
+    updatedBy: data?.updated_by || null,
+  };
+}
+
 async function saveAppState(state, updatedBy = null) {
   const { data, error } = await supabaseAdmin
     .from("app_state")
@@ -81,6 +95,7 @@ function backupPayload(state, exportedBy = "") {
 
 module.exports = {
   getAppState,
+  getAppStateRecord,
   saveAppState,
   patchAppState,
   backupPayload,

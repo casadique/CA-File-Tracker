@@ -287,11 +287,17 @@ let activePage = "dashboard";
 let filterTimer = null;
 let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
+let lastCentralRefreshAt = 0;
+let lastCentralVersion = "";
+let lastCentralVersionCheckAt = 0;
 const accessRestoreEmails = new Set();
 let syncChannel = null;
 try {
   syncChannel = new BroadcastChannel(`${STORAGE_KEY}-channel`);
-  syncChannel.onmessage = () => syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+  syncChannel.onmessage = () => {
+    if (isSupabaseMode()) refreshCentralState();
+    else syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+  };
 } catch {
   syncChannel = null;
 }
@@ -300,6 +306,10 @@ saveState();
 startAutoBackupScheduler();
 
 window.addEventListener("storage", (event) => {
+  if (isSupabaseMode()) {
+    refreshCentralState();
+    return;
+  }
   if (event.key === STORAGE_KEY && event.newValue) {
     syncSharedState(event.newValue, true);
   }
@@ -309,11 +319,14 @@ window.addEventListener("storage", (event) => {
 });
 
 window.addEventListener("focus", () => {
-  syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+  if (isSupabaseMode()) refreshCentralState({ force: true });
+  else syncSharedState(localStorage.getItem(STORAGE_KEY), true);
 });
 
 setInterval(() => {
-  if (state.session?.loggedIn && sessionStorage.getItem(API_MODE_KEY) !== "supabase") {
+  if (state.session?.loggedIn && isSupabaseMode()) {
+    checkCentralStateVersion();
+  } else if (state.session?.loggedIn) {
     syncSharedState(localStorage.getItem(STORAGE_KEY), true);
   }
 }, 5000);
@@ -792,7 +805,7 @@ function saveState(options = {}) {
   saveTabSession();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedStateForStorage(state)));
   localStorage.setItem(SYNC_EVENT_KEY, String(Date.now()));
-  if (!options.skipRemote) saveStateToApi();
+  if (options.fullRemote && !options.skipRemote) saveStateToApi();
   if (syncChannel) syncChannel.postMessage({ type: "state-updated", at: Date.now() });
 }
 
@@ -807,6 +820,15 @@ function apiToken() {
 function setApiToken(token) {
   if (token) sessionStorage.setItem(API_TOKEN_KEY, token);
   else sessionStorage.removeItem(API_TOKEN_KEY);
+}
+
+function isSupabaseMode() {
+  return sessionStorage.getItem(API_MODE_KEY) === "supabase" && Boolean(apiToken());
+}
+
+function allowLocalLoginFallback() {
+  const host = location.hostname;
+  return location.protocol === "file:" || host === "localhost" || host === "127.0.0.1";
 }
 
 async function apiJson(path, options = {}) {
@@ -847,13 +869,33 @@ async function saveStateToApi() {
 async function saveFileToApi(file) {
   if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase" || !file?.id) return;
   try {
-    await apiJson(`/api/files/${encodeURIComponent(file.id)}`, {
+    return await apiJson(`/api/files/${encodeURIComponent(file.id)}`, {
       method: "PUT",
       body: JSON.stringify({ file }),
     });
   } catch (error) {
     console.warn("Central file save failed", error);
+    throw error;
   }
+}
+
+async function deleteFileFromApi(fileId) {
+  if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase" || !fileId) return;
+  return apiJson(`/api/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+}
+
+async function syncFileRecordToApi(file) {
+  const result = await saveFileToApi(file);
+  if (result?.files) state.files = result.files;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function syncFileDeleteToApi(fileId) {
+  const result = await deleteFileFromApi(fileId);
+  if (result?.files) state.files = result.files;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
 }
 
 async function loadStateFromApi() {
@@ -861,13 +903,78 @@ async function loadStateFromApi() {
   try {
     const payload = await apiJson("/api/state");
     if (!payload.state) return false;
-    restoreSharedData(payload.state, "Central data loaded", { targetPage: activePage || "dashboard", skipRemote: true });
+    lastCentralVersion = payload.updatedAt || lastCentralVersion;
+    applyCentralState(payload.state, { targetPage: activePage || "dashboard", rerender: true });
     sessionStorage.setItem(API_MODE_KEY, "supabase");
     return true;
   } catch (error) {
     console.warn("Central database load failed", error);
     return false;
   }
+}
+
+async function refreshCentralState(options = {}) {
+  if (!state.session?.loggedIn || !isSupabaseMode()) return false;
+  if (!options.force && Date.now() - lastCentralRefreshAt < 12000) return false;
+  if (!options.force && document.hidden) return false;
+  if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
+  lastCentralRefreshAt = Date.now();
+  try {
+    const payload = await apiJson("/api/state");
+    if (!payload.state) return false;
+    lastCentralVersion = payload.updatedAt || lastCentralVersion;
+    applyCentralState(payload.state, { rerender: true });
+    return true;
+  } catch (error) {
+    console.warn("Central refresh failed", error);
+    return false;
+  }
+}
+
+async function checkCentralStateVersion() {
+  if (!state.session?.loggedIn || !isSupabaseMode()) return false;
+  if (document.hidden) return false;
+  if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
+  if (Date.now() - lastCentralVersionCheckAt < 5000) return false;
+  lastCentralVersionCheckAt = Date.now();
+  try {
+    const payload = await apiJson("/api/state/version");
+    if (!payload.updatedAt) return false;
+    if (!lastCentralVersion) {
+      lastCentralVersion = payload.updatedAt;
+      return false;
+    }
+    if (payload.updatedAt !== lastCentralVersion) {
+      return refreshCentralState({ force: true });
+    }
+    return false;
+  } catch (error) {
+    console.warn("Central version check failed", error);
+    return false;
+  }
+}
+
+function applyCentralState(incomingState, options = {}) {
+  const currentSession = {
+    session: state.session,
+    currentUser: state.currentUser,
+    currentRole: state.currentRole,
+    filters: state.filters,
+    readNotifications: state.readNotifications,
+    readChatMessages: state.readChatMessages,
+  };
+  state = {
+    ...normalizeState(incomingState),
+    ...currentSession,
+    filters: currentSession.filters,
+    readNotifications: currentSession.readNotifications,
+    readChatMessages: currentSession.readChatMessages,
+  };
+  if (options.targetPage) activePage = options.targetPage;
+  saveState({ skipMerge: true, skipRemote: true });
+  if (!options.rerender) return;
+  if (document.querySelector(".app-shell")) renderAll();
+  else mount();
 }
 
 function saveAccessState() {
@@ -879,6 +986,7 @@ function saveAccessState() {
 }
 
 function mergeLatestSharedStateBeforeSave() {
+  if (isSupabaseMode()) return;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
@@ -1112,7 +1220,7 @@ function restoreSharedData(incomingState, message = "Data restored", options = {
     readNotifications: currentSession.readNotifications,
     readChatMessages: currentSession.readChatMessages,
   };
-  saveState({ skipMerge: true, skipRemote: Boolean(options.skipRemote) });
+  saveState({ skipMerge: true, skipRemote: Boolean(options.skipRemote), fullRemote: Boolean(options.fullRemote) });
   toast(message);
   mount();
   activePage = options.targetPage || "users";
@@ -1186,13 +1294,21 @@ function handleBackupRestore(event) {
   if (state.currentRole !== "Admin") return toast("Only Admin can restore backups.");
   if (!confirm("Restore this backup? Current site data in this browser will be replaced.")) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const payload = JSON.parse(String(reader.result || "{}"));
       const incomingState = payload.state || payload;
-      restoreSharedData(incomingState, "Backup restored");
-    } catch {
-      toast("Backup restore failed. Please choose a valid JSON backup.");
+      if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
+        const result = await apiJson("/api/state/restore", {
+          method: "POST",
+          body: JSON.stringify({ state: incomingState }),
+        });
+        restoreSharedData(result.state || incomingState, "Central backup restored", { targetPage: "dashboard", skipRemote: true });
+        return;
+      }
+      restoreSharedData(incomingState, "Backup restored", { targetPage: "dashboard", fullRemote: true });
+    } catch (error) {
+      toast(error.message || "Backup restore failed. Please choose a valid JSON backup.");
     }
   };
   reader.readAsText(file);
@@ -1203,13 +1319,10 @@ async function syncDataToSite() {
   const button = document.querySelector("#syncSiteData");
   if (button) button.disabled = true;
   try {
-    const response = await fetch("/api/site-data", {
+    const result = await apiJson("/api/site-data", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(backupPayload()),
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || "Site sync failed.");
     toast(`Site data synced (${result.files || 0} file records)`);
   } catch (error) {
     toast(error.message || "Site sync is available only when hosted with the Node server.");
@@ -1224,10 +1337,8 @@ async function pullDataFromSite() {
   const button = document.querySelector("#pullSiteData");
   if (button) button.disabled = true;
   try {
-    const response = await fetch("/api/site-data");
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "No synced site data found.");
-    restoreSharedData(payload.state || payload, "Site data pulled");
+    const payload = await apiJson("/api/site-data");
+    restoreSharedData(payload.state || payload, "Site data pulled", { targetPage: "dashboard", skipRemote: true });
   } catch (error) {
     toast(error.message || "Unable to pull site data.");
   } finally {
@@ -1237,6 +1348,7 @@ async function pullDataFromSite() {
 
 async function autoRecoverAdminDataIfEmpty() {
   if ((state.files || []).length) return;
+  if (!allowLocalLoginFallback()) return;
   if (location.protocol === "file:") return;
   try {
     const response = await fetch("/api/site-data", { cache: "no-store" });
@@ -1259,6 +1371,7 @@ async function autoRecoverAdminDataIfEmpty() {
 
 function autoLoadPreparedDataIfEmpty() {
   if ((state.files || []).length) return false;
+  if (!allowLocalLoginFallback()) return false;
   if (!window.PREPARED_IMPORT_CSV) return false;
   try {
     finishImport(parseImportRows(window.PREPARED_IMPORT_CSV), { forceFreshImport: true });
@@ -1308,6 +1421,7 @@ function restoreActivePage() {
 }
 
 function syncSharedState(raw, rerender = false) {
+  if (isSupabaseMode()) return;
   if (!raw) return;
   const previous = sharedSnapshot(state);
   const currentSession = {
@@ -2320,7 +2434,7 @@ async function handleLogin() {
     });
     setApiToken(login.session?.access_token || "");
     sessionStorage.setItem(API_MODE_KEY, "supabase");
-    const me = await apiJson("/api/auth/me");
+    const me = login.profile ? { user: login.user, profile: login.profile } : await apiJson("/api/auth/me");
     user = {
       id: me.profile?.id || me.user?.id,
       email: me.profile?.email || me.user?.email,
@@ -2329,13 +2443,17 @@ async function handleLogin() {
       authUserId: me.user?.id,
       source: "supabase-auth",
     };
-  } catch {
+  } catch (error) {
     setApiToken("");
     sessionStorage.removeItem(API_MODE_KEY);
+    if (!allowLocalLoginFallback()) {
+      console.warn("Hosted Supabase login failed", error);
+      return toast(error.message || "Unable to login. Please check Supabase user access.");
+    }
     user = authenticateUser(email, password);
   }
   if (!user) return toast("Invalid user name or password.");
-  const masterUser = staff.find((item) => normalizeEmail(item.email) === normalizeEmail(user.email));
+  const masterUser = user.source === "supabase-auth" ? null : staff.find((item) => normalizeEmail(item.email) === normalizeEmail(user.email));
   if (masterUser) {
     user.name = masterUser.name;
     user.role = masterUser.role;
@@ -2346,9 +2464,15 @@ async function handleLogin() {
   resetFilters();
   activePage = "dashboard";
   saveTabSession();
+  if (user.source === "supabase-auth") {
+    state.files = [];
+    state.fileNotifications = [];
+  }
   saveState({ skipMerge: true, skipRemote: true });
-  mount();
-  if (!(await loadStateFromApi())) autoRecoverAdminDataIfEmpty();
+  if (!(await loadStateFromApi())) {
+    mount();
+    autoRecoverAdminDataIfEmpty();
+  }
 }
 
 function bindShell() {
@@ -3640,6 +3764,15 @@ function bindFileActions() {
         state.deletedFileIds = [...new Set([...(state.deletedFileIds || []), file.id])];
         state.files = state.files.filter((f) => f.id !== file.id);
         saveState({ skipMerge: true });
+        if (isSupabaseMode()) {
+          syncFileDeleteToApi(file.id)
+            .then(() => {
+              toast("File record deleted and synced");
+              renderAll();
+            })
+            .catch(() => toast("File deleted locally, but central sync failed. Please retry."));
+          return;
+        }
         toast("File record deleted permanently");
         renderAll();
       }
@@ -3647,7 +3780,7 @@ function bindFileActions() {
   });
 }
 
-function checkCompletedFile(fileId) {
+async function checkCompletedFile(fileId) {
   if (!canManageChecking()) return toast("Only authorised checkers can check completed files.");
   const index = state.files.findIndex((file) => file.id === fileId);
   if (index < 0) return toast("File record not found.");
@@ -3692,7 +3825,12 @@ function checkCompletedFile(fileId) {
     checkingRemarks,
   });
   saveState();
-  toast("File marked as checked");
+  try {
+    await syncFileRecordToApi(updated);
+  } catch {
+    return toast("Checked locally, but central sync failed. Please retry.");
+  }
+  toast("File marked as checked and synced");
   renderAll();
 }
 
@@ -3716,7 +3854,7 @@ function openStaffFilesFromDashboard(kind) {
   renderAll();
 }
 
-function returnFileForCorrection(fileId) {
+async function returnFileForCorrection(fileId) {
   if (!canManageChecking()) return toast("Only authorised checkers can return files for correction.");
   const index = state.files.findIndex((file) => file.id === fileId);
   if (index < 0) return toast("File record not found.");
@@ -3754,11 +3892,16 @@ function returnFileForCorrection(fileId) {
     returnedDate,
   });
   saveState();
-  toast("File returned for correction");
+  try {
+    await syncFileRecordToApi(updated);
+  } catch {
+    return toast("Correction saved locally, but central sync failed. Please retry.");
+  }
+  toast("File returned for correction and synced");
   renderAll();
 }
 
-function updateFileBilling(fileId, updates, message, nextListView = "") {
+async function updateFileBilling(fileId, updates, message, nextListView = "") {
   if (!rolePerm().assign) return toast("This role cannot update billing.");
   const index = state.files.findIndex((file) => file.id === fileId);
   if (index < 0) return toast("File record not found.");
@@ -3775,8 +3918,13 @@ function updateFileBilling(fileId, updates, message, nextListView = "") {
   state.files[index] = updated;
   queueFileChangeNotification(updated, billingChangeText(file, updated), updates.billed ? "Billed" : updates.feeReceived ? "Fee Received" : "Billing Update");
   saveState();
+  try {
+    await syncFileRecordToApi(updated);
+  } catch {
+    return toast("Billing saved locally, but central sync failed. Please retry.");
+  }
   if (nextListView) state.filters.listView = nextListView;
-  toast(message);
+  toast(`${message} and synced`);
   renderAll();
 }
 
@@ -4207,7 +4355,7 @@ function cascadeStages(stage, checked) {
   }
 }
 
-function saveFileFromDrawer() {
+async function saveFileFromDrawer() {
   const form = document.querySelector("#fileForm");
   if (!form.reportValidity()) return;
   syncSharedState(localStorage.getItem(STORAGE_KEY), false);
@@ -4513,8 +4661,13 @@ function saveFileFromDrawer() {
     });
   }
   saveState();
+  try {
+    await syncFileRecordToApi(record);
+  } catch (error) {
+    return toast("File saved locally, but central update failed. Please retry.");
+  }
   closeOverlays();
-  toast("File record saved");
+  toast("File record saved and synced");
   renderAll();
 }
 
@@ -4906,7 +5059,7 @@ function renderVerificationPage() {
     </div>
     <div class="panel" style="margin-top:16px">
       <h3>Login & Allotment Verification</h3>
-      <p class="small-muted">Counts use the same staff matching rules as the login pages. If a staff row shows assigned files here, those files should appear in that staff login.</p>
+      <p class="small-muted">Counts use the same staff matching rules as the login pages. If a staff row shows assigned files here, those files should appear in that staff login. Current browser mode: ${isSupabaseMode() ? "Supabase central database" : "Local browser data"}.</p>
       <div class="table-wrap">
         <table class="file-table file-table-compact">
           <thead>
@@ -8922,6 +9075,14 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-mount();
+async function bootApp() {
+  if (state.session?.loggedIn && isSupabaseMode()) {
+    const loaded = await loadStateFromApi();
+    if (loaded) return;
+  }
+  mount();
+}
+
+bootApp();
 
 

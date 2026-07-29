@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require("../config/supabase");
+const { profileForAuthUser } = require("../services/userService");
 
 async function requireAuth(req, res, next) {
   try {
@@ -14,13 +15,7 @@ async function requireAuth(req, res, next) {
       return;
     }
 
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from("app_users")
-      .select("*")
-      .eq("auth_user_id", data.user.id)
-      .maybeSingle();
-
-    if (profileError) throw profileError;
+    const profile = await profileForAuthUser(data.user);
     if (!profile || profile.is_active === false) {
       res.status(403).json({ error: "User access is inactive." });
       return;

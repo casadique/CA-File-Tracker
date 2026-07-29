@@ -1,0 +1,13 @@
+node_modules/
+.npm-cache/
+tmp/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+server-out.txt
+server-err.txt
+*.zip
+CA-File-Tracker-update-*/
+CA-File-Tracker-new-import-*.htm
+CA-File-Tracker-new-import-*.html

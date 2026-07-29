@@ -38,13 +38,23 @@ app.use("/api", apiRoutes);
 app.use(["/src", "/database", "/tools", "/Backups", "/data"], (_req, res) => {
   res.status(404).send("Not found");
 });
+app.use((req, res, next) => {
+  if (req.path === "/" || req.path.endsWith(".html")) {
+    res.set("Cache-Control", "no-store");
+  } else if (req.path.endsWith(".js") || req.path.endsWith(".css")) {
+    res.set("Cache-Control", "no-cache, must-revalidate");
+  }
+  next();
+});
 app.use(express.static(publicRoot, {
   extensions: ["html"],
   dotfiles: "deny",
-  maxAge: env.isProduction ? "10m" : 0,
+  etag: true,
+  maxAge: 0,
 }));
 
 app.get("*", (_req, res) => {
+  res.set("Cache-Control", "no-store");
   res.sendFile(path.join(publicRoot, "index.html"));
 });
 

@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
-const { patchAppState } = require("./appStateService");
+const { getAppState, patchAppState } = require("./appStateService");
 
 async function createUser({ email, password, name, role }) {
   const cleanEmail = String(email || "").trim().toLowerCase();
@@ -65,6 +65,45 @@ async function sendPasswordReset(email) {
   return { ok: true };
 }
 
+async function profileForAuthUser(authUser) {
+  const email = String(authUser?.email || "").trim().toLowerCase();
+  if (!authUser?.id || !email) return null;
+
+  const { data: byAuthId, error: byAuthError } = await supabaseAdmin
+    .from("app_users")
+    .select("*")
+    .eq("auth_user_id", authUser.id)
+    .maybeSingle();
+  if (byAuthError) throw byAuthError;
+  if (byAuthId) return byAuthId;
+
+  const { data: byEmail, error: byEmailError } = await supabaseAdmin
+    .from("app_users")
+    .select("*")
+    .eq("email", email)
+    .maybeSingle();
+  if (byEmailError) throw byEmailError;
+  if (byEmail) {
+    return upsertProfile({
+      ...byEmail,
+      auth_user_id: authUser.id,
+      is_active: byEmail.is_active !== false,
+    });
+  }
+
+  const state = await getAppState();
+  const legacyUser = (state.users || []).find((user) => String(user.email || "").trim().toLowerCase() === email);
+  const metadata = authUser.user_metadata || {};
+  const profile = {
+    auth_user_id: authUser.id,
+    email,
+    name: legacyUser?.name || metadata.name || email,
+    role: legacyUser?.role || metadata.role || (email === "casadique@gmail.com" ? "Admin" : "Staff"),
+    is_active: legacyUser?.isActive !== false,
+  };
+  return upsertProfile(profile);
+}
+
 async function upsertProfile(profile) {
   const payload = {
     id: profile.id || crypto.randomUUID(),
@@ -111,4 +150,5 @@ module.exports = {
   updateUser,
   setUserActive,
   sendPasswordReset,
+  profileForAuthUser,
 };
