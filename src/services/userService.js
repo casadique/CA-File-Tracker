@@ -65,6 +65,67 @@ async function sendPasswordReset(email) {
   return { ok: true };
 }
 
+async function recoverAdminUser({ email, password, name = "CA Sadique" }) {
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const cleanPassword = String(password || "");
+  if (!cleanEmail || !cleanPassword || cleanPassword.length < 8) {
+    const error = new Error("Admin email and a password of at least 8 characters are required.");
+    error.status = 400;
+    throw error;
+  }
+
+  const { data: listed, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+  if (listError) throw listError;
+
+  const existingAuthUser = (listed.users || []).find((user) => String(user.email || "").trim().toLowerCase() === cleanEmail);
+  let authUser = existingAuthUser;
+  if (authUser) {
+    const { data, error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
+      password: cleanPassword,
+      email_confirm: true,
+      user_metadata: { name, role: "Admin" },
+    });
+    if (error) throw error;
+    authUser = data.user;
+  } else {
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email: cleanEmail,
+      password: cleanPassword,
+      email_confirm: true,
+      user_metadata: { name, role: "Admin" },
+    });
+    if (error) throw error;
+    authUser = data.user;
+  }
+
+  const { data: existingProfile, error: profileLookupError } = await supabaseAdmin
+    .from("app_users")
+    .select("*")
+    .eq("email", cleanEmail)
+    .maybeSingle();
+  if (profileLookupError) throw profileLookupError;
+
+  const profilePayload = {
+    id: existingProfile?.id || crypto.randomUUID(),
+    auth_user_id: authUser.id,
+    email: cleanEmail,
+    name,
+    role: "Admin",
+    is_active: true,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from("app_users")
+    .upsert(profilePayload, { onConflict: "email" })
+    .select("*")
+    .single();
+  if (profileError) throw profileError;
+
+  await patchLegacyUserList(profile);
+  return { authUser, profile };
+}
+
 async function profileForAuthUser(authUser) {
   const email = String(authUser?.email || "").trim().toLowerCase();
   if (!authUser?.id || !email) return null;
@@ -150,5 +211,6 @@ module.exports = {
   updateUser,
   setUserActive,
   sendPasswordReset,
+  recoverAdminUser,
   profileForAuthUser,
 };
