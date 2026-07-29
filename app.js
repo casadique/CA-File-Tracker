@@ -2,7 +2,10 @@ const STORAGE_KEY = "ma-ca-document-tracker-v1";
 const TAB_SESSION_KEY = `${STORAGE_KEY}-tab-session`;
 const SYNC_EVENT_KEY = `${STORAGE_KEY}-sync-event`;
 const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
+const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
+const BROWSER_SUPABASE_URL = "https://jzralbwcngqnmedjrzhn.supabase.co";
+const BROWSER_SUPABASE_ANON_KEY = "sb_publishable_WLoUZRZR90If19-r-nw6Vw_W-DUsBrD";
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
 const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
@@ -290,6 +293,7 @@ let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
+let browserSupabaseClient = null;
 const accessRestoreEmails = new Set();
 let syncChannel = null;
 try {
@@ -822,8 +826,35 @@ function setApiToken(token) {
   else sessionStorage.removeItem(API_TOKEN_KEY);
 }
 
+function setApiSession(session) {
+  setApiToken(session?.access_token || "");
+  if (session?.refresh_token) sessionStorage.setItem(API_REFRESH_TOKEN_KEY, session.refresh_token);
+  else sessionStorage.removeItem(API_REFRESH_TOKEN_KEY);
+}
+
 function isSupabaseMode() {
-  return sessionStorage.getItem(API_MODE_KEY) === "supabase" && Boolean(apiToken());
+  return ["supabase", "supabase-browser"].includes(sessionStorage.getItem(API_MODE_KEY)) && Boolean(apiToken());
+}
+
+function isBrowserSupabaseMode() {
+  return sessionStorage.getItem(API_MODE_KEY) === "supabase-browser" && Boolean(apiToken());
+}
+
+function browserSupabase() {
+  if (!window.supabase?.createClient) throw new Error("Supabase browser library is not loaded.");
+  if (!browserSupabaseClient) {
+    browserSupabaseClient = window.supabase.createClient(BROWSER_SUPABASE_URL, BROWSER_SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return browserSupabaseClient;
+}
+
+async function ensureBrowserSupabaseSession() {
+  const token = apiToken();
+  const refreshToken = sessionStorage.getItem(API_REFRESH_TOKEN_KEY) || "";
+  if (!token || !refreshToken) return;
+  await browserSupabase().auth.setSession({ access_token: token, refresh_token: refreshToken });
 }
 
 function allowLocalLoginFallback() {
@@ -832,6 +863,7 @@ function allowLocalLoginFallback() {
 }
 
 async function apiJson(path, options = {}) {
+  if (isBrowserSupabaseMode()) return browserSupabaseApiJson(path, options);
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -847,8 +879,136 @@ async function apiJson(path, options = {}) {
   return payload;
 }
 
+async function browserSupabaseApiJson(path, options = {}) {
+  await ensureBrowserSupabaseSession();
+  const method = String(options.method || "GET").toUpperCase();
+  const body = options.body ? JSON.parse(options.body) : {};
+
+  if (path === "/api/auth/me") return browserSupabaseMe();
+  if (path === "/api/state" && method === "GET") return browserLoadCentralState();
+  if (path === "/api/state" && method === "PUT") return browserSaveCentralState(body.state || {});
+  if (path === "/api/state/version" && method === "GET") return browserLoadCentralVersion();
+  if (path.startsWith("/api/files/") && method === "PUT") {
+    return browserUpsertCentralFile({ ...(body.file || body), id: decodeURIComponent(path.split("/").pop() || "") });
+  }
+  if (path.startsWith("/api/files/") && method === "DELETE") {
+    return browserDeleteCentralFile(decodeURIComponent(path.split("/").pop() || ""));
+  }
+  throw new Error("This action needs the backend server. Browser-Supabase mode supports login, files and status sync.");
+}
+
+async function browserSupabaseMe() {
+  const { data, error } = await browserSupabase().auth.getUser(apiToken());
+  if (error) throw error;
+  const profile = await browserProfileForAuthUser(data.user);
+  return { user: data.user, profile };
+}
+
+async function browserProfileForAuthUser(authUser) {
+  const email = normalizeEmail(authUser?.email);
+  const { data: byAuthId, error: authError } = await browserSupabase()
+    .from("app_users")
+    .select("*")
+    .eq("auth_user_id", authUser.id)
+    .maybeSingle();
+  if (authError) throw authError;
+  if (byAuthId) return byAuthId;
+
+  const { data: byEmail, error: emailError } = await browserSupabase()
+    .from("app_users")
+    .select("*")
+    .eq("email", email)
+    .maybeSingle();
+  if (emailError) throw emailError;
+  if (byEmail) return byEmail;
+
+  const central = await browserLoadCentralState();
+  const legacy = (central.state.users || []).find((user) => normalizeEmail(user.email) === email);
+  return {
+    id: authUser.id,
+    auth_user_id: authUser.id,
+    email,
+    name: legacy?.name || authUser.user_metadata?.name || email,
+    role: legacy?.role || authUser.user_metadata?.role || (email === "casadique@gmail.com" ? "Admin" : "Staff"),
+    is_active: legacy?.isActive !== false,
+  };
+}
+
+async function browserLoadCentralState() {
+  const { data, error } = await browserSupabase()
+    .from("app_state")
+    .select("state, updated_at, updated_by")
+    .eq("id", "default")
+    .maybeSingle();
+  if (error) throw error;
+  return { state: data?.state || normalizeState({}), updatedAt: data?.updated_at || "", updatedBy: data?.updated_by || "" };
+}
+
+async function browserLoadCentralVersion() {
+  const { data, error } = await browserSupabase()
+    .from("app_state")
+    .select("updated_at, updated_by")
+    .eq("id", "default")
+    .maybeSingle();
+  if (error) throw error;
+  return { ok: true, updatedAt: data?.updated_at || "", updatedBy: data?.updated_by || "" };
+}
+
+async function browserSaveCentralState(nextState) {
+  const { data: userData } = await browserSupabase().auth.getUser(apiToken());
+  const { data, error } = await browserSupabase()
+    .from("app_state")
+    .upsert({
+      id: "default",
+      state: sharedStateForStorage(normalizeState(nextState)),
+      updated_by: userData?.user?.id || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "id" })
+    .select("state, updated_at")
+    .single();
+  if (error) throw error;
+  return { ok: true, state: data.state, updatedAt: data.updated_at };
+}
+
+async function browserPatchCentralState(mutator) {
+  const payload = await browserLoadCentralState();
+  const next = await mutator(normalizeState(payload.state || {}));
+  return browserSaveCentralState(next || payload.state || {});
+}
+
+async function browserUpsertCentralFile(file) {
+  return browserPatchCentralState((centralState) => {
+    const now = Date.now();
+    const record = { ...file, id: file.id || crypto.randomUUID(), updatedAt: now };
+    const files = centralState.files || [];
+    const index = files.findIndex((item) => item.id === record.id);
+    if (index >= 0) files[index] = { ...files[index], ...record };
+    else files.push({ ...record, createdAt: now });
+    centralState.files = files;
+    return centralState;
+  }).then((result) => ({ ok: true, files: result.state.files || [], state: result.state, updatedAt: result.updatedAt }));
+}
+
+async function browserDeleteCentralFile(fileId) {
+  return browserPatchCentralState((centralState) => {
+    centralState.files = (centralState.files || []).filter((file) => file.id !== fileId);
+    centralState.deletedFileIds = [...new Set([...(centralState.deletedFileIds || []), fileId])];
+    return centralState;
+  }).then((result) => ({ ok: true, files: result.state.files || [], state: result.state, updatedAt: result.updatedAt }));
+}
+
+async function browserSupabaseLogin(email, password) {
+  const { data, error } = await browserSupabase().auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  setApiSession(data.session);
+  sessionStorage.setItem(API_MODE_KEY, "supabase-browser");
+  const profile = await browserProfileForAuthUser(data.user);
+  if (!profile || profile.is_active === false) throw new Error("User access is inactive or not linked.");
+  return { user: data.user, profile, session: data.session };
+}
+
 async function saveStateToApi() {
-  if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase") return;
+  if (!isSupabaseMode()) return;
   const shared = sharedStateForStorage(state);
   const snapshot = JSON.stringify(shared);
   if (snapshot === lastRemoteSaveSnapshot) return;
@@ -867,7 +1027,7 @@ async function saveStateToApi() {
 }
 
 async function saveFileToApi(file) {
-  if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase" || !file?.id) return;
+  if (!isSupabaseMode() || !file?.id) return;
   try {
     return await apiJson(`/api/files/${encodeURIComponent(file.id)}`, {
       method: "PUT",
@@ -880,7 +1040,7 @@ async function saveFileToApi(file) {
 }
 
 async function deleteFileFromApi(fileId) {
-  if (!apiToken() || sessionStorage.getItem(API_MODE_KEY) !== "supabase" || !fileId) return;
+  if (!isSupabaseMode() || !fileId) return;
   return apiJson(`/api/files/${encodeURIComponent(fileId)}`, { method: "DELETE" });
 }
 
@@ -2432,7 +2592,7 @@ async function handleLogin() {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    setApiToken(login.session?.access_token || "");
+    setApiSession(login.session);
     sessionStorage.setItem(API_MODE_KEY, "supabase");
     const me = login.profile ? { user: login.user, profile: login.profile } : await apiJson("/api/auth/me");
     user = {
@@ -2445,12 +2605,26 @@ async function handleLogin() {
     };
   } catch (error) {
     setApiToken("");
+    sessionStorage.removeItem(API_REFRESH_TOKEN_KEY);
     sessionStorage.removeItem(API_MODE_KEY);
     if (!allowLocalLoginFallback()) {
-      console.warn("Hosted Supabase login failed", error);
-      return toast(error.message || "Unable to login. Please check Supabase user access.");
+      try {
+        const login = await browserSupabaseLogin(email, password);
+        user = {
+          id: login.profile?.id || login.user?.id,
+          email: login.profile?.email || login.user?.email,
+          name: login.profile?.name || login.user?.email,
+          role: login.profile?.role || "Staff",
+          authUserId: login.user?.id,
+          source: "supabase-auth",
+        };
+      } catch (browserError) {
+        console.warn("Hosted Supabase login failed", error, browserError);
+        return toast(browserError.message || error.message || "Unable to login. Please check Supabase user access.");
+      }
+    } else {
+      user = authenticateUser(email, password);
     }
-    user = authenticateUser(email, password);
   }
   if (!user) return toast("Invalid user name or password.");
   const masterUser = user.source === "supabase-auth" ? null : staff.find((item) => normalizeEmail(item.email) === normalizeEmail(user.email));
@@ -2493,6 +2667,7 @@ function bindShell() {
   const runLogout = () => {
     state.session = { loggedIn: false };
     setApiToken("");
+    sessionStorage.removeItem(API_REFRESH_TOKEN_KEY);
     sessionStorage.removeItem(API_MODE_KEY);
     resetFilters();
     activePage = "dashboard";
