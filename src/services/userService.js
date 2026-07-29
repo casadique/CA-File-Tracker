@@ -98,15 +98,8 @@ async function recoverAdminUser({ email, password, name = "CA Sadique" }) {
     authUser = data.user;
   }
 
-  const { data: existingProfile, error: profileLookupError } = await supabaseAdmin
-    .from("app_users")
-    .select("*")
-    .eq("email", cleanEmail)
-    .maybeSingle();
-  if (profileLookupError) throw profileLookupError;
-
   const profilePayload = {
-    id: existingProfile?.id || crypto.randomUUID(),
+    id: crypto.randomUUID(),
     auth_user_id: authUser.id,
     email: cleanEmail,
     name,
@@ -115,15 +108,32 @@ async function recoverAdminUser({ email, password, name = "CA Sadique" }) {
     updated_at: new Date().toISOString(),
   };
 
+  const { error: deleteByEmailError } = await supabaseAdmin
+    .from("app_users")
+    .delete()
+    .eq("email", cleanEmail);
+  if (deleteByEmailError) throw deleteByEmailError;
+
+  const { error: deleteByAuthError } = await supabaseAdmin
+    .from("app_users")
+    .delete()
+    .eq("auth_user_id", authUser.id);
+  if (deleteByAuthError) throw deleteByAuthError;
+
   const { data: profile, error: profileError } = await supabaseAdmin
     .from("app_users")
-    .upsert(profilePayload, { onConflict: "email" })
+    .insert(profilePayload)
     .select("*")
     .single();
   if (profileError) throw profileError;
 
-  await patchLegacyUserList(profile);
-  return { authUser, profile };
+  let legacyWarning = "";
+  try {
+    await patchLegacyUserList(profile);
+  } catch (error) {
+    legacyWarning = error.message || "Legacy app state profile sync failed.";
+  }
+  return { authUser, profile, legacyWarning };
 }
 
 async function profileForAuthUser(authUser) {
