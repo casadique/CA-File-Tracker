@@ -851,14 +851,12 @@ function browserSupabase() {
 }
 
 async function ensureBrowserSupabaseSession() {
-  const token = apiToken();
-  const refreshToken = sessionStorage.getItem(API_REFRESH_TOKEN_KEY) || "";
-  if (!token || !refreshToken) return;
   const current = await browserSupabase().auth.getSession();
-  if (current?.data?.session?.access_token) return;
-  const { data, error } = await browserSupabase().auth.setSession({ access_token: token, refresh_token: refreshToken });
-  if (error) throw new Error("Login session expired. Please log out and log in again.");
-  if (data?.session?.access_token) setApiSession(data.session);
+  if (current?.data?.session?.access_token) {
+    setApiSession(current.data.session);
+    return;
+  }
+  throw new Error("Login session expired. Please log out and log in again.");
 }
 
 function allowLocalLoginFallback() {
