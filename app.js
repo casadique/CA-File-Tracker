@@ -937,39 +937,58 @@ async function browserProfileForAuthUser(authUser) {
 }
 
 async function browserLoadCentralState() {
-  const { data, error } = await browserSupabase()
-    .from("app_state")
-    .select("state, updated_at, updated_by")
-    .eq("id", "default")
-    .maybeSingle();
-  if (error) throw error;
-  return { state: data?.state || normalizeState({}), updatedAt: data?.updated_at || "", updatedBy: data?.updated_by || "" };
+  const rows = await browserSupabaseRest("app_state?id=eq.default&select=state,updated_at,updated_by");
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return { state: row?.state || normalizeState({}), updatedAt: row?.updated_at || "", updatedBy: row?.updated_by || "" };
 }
 
 async function browserLoadCentralVersion() {
-  const { data, error } = await browserSupabase()
-    .from("app_state")
-    .select("updated_at, updated_by")
-    .eq("id", "default")
-    .maybeSingle();
-  if (error) throw error;
-  return { ok: true, updatedAt: data?.updated_at || "", updatedBy: data?.updated_by || "" };
+  const rows = await browserSupabaseRest("app_state?id=eq.default&select=updated_at,updated_by");
+  const row = Array.isArray(rows) ? rows[0] : null;
+  return { ok: true, updatedAt: row?.updated_at || "", updatedBy: row?.updated_by || "" };
 }
 
 async function browserSaveCentralState(nextState) {
   const current = await browserSupabase().auth.getSession();
-  const { data, error } = await browserSupabase()
-    .from("app_state")
-    .upsert({
+  const session = current?.data?.session;
+  if (!session?.access_token) throw new Error("Login session expired. Please log out and log in again.");
+  const rows = await browserSupabaseRest("app_state?on_conflict=id&select=state,updated_at", {
+    method: "POST",
+    headers: {
+      Prefer: "resolution=merge-duplicates,return=representation",
+    },
+    body: JSON.stringify({
       id: "default",
       state: sharedStateForStorage(normalizeState(nextState)),
-      updated_by: current?.data?.session?.user?.id || null,
+      updated_by: session.user?.id || null,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "id" })
-    .select("state, updated_at")
-    .single();
-  if (error) throw error;
-  return { ok: true, state: data.state, updatedAt: data.updated_at };
+    }),
+  });
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  return { ok: true, state: row.state, updatedAt: row.updated_at };
+}
+
+async function browserSupabaseRest(path, options = {}) {
+  await ensureBrowserSupabaseSession();
+  const session = (await browserSupabase().auth.getSession())?.data?.session;
+  if (!session?.access_token) throw new Error("Login session expired. Please log out and log in again.");
+  const response = await fetch(`${BROWSER_SUPABASE_URL}/rest/v1/${path}`, {
+    method: options.method || "GET",
+    headers: {
+      apikey: BROWSER_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    body: options.body,
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    const message = payload?.message || payload?.error || payload?.hint || `Supabase REST ${response.status}`;
+    throw new Error(message);
+  }
+  return payload;
 }
 
 async function browserPatchCentralState(mutator) {
