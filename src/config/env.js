@@ -20,7 +20,7 @@ function readEnv() {
     supabaseUrl: process.env.SUPABASE_URL || "",
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-    adminRecoveryToken: process.env.ADMIN_RECOVERY_TOKEN || "FixAdminNow2026",
+    adminRecoveryToken: process.env.ADMIN_RECOVERY_TOKEN || "",
     storageBucket: process.env.SUPABASE_STORAGE_BUCKET || "ca-file-tracker-attachments",
     corsOrigin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",").map((item) => item.trim()) : true,
     rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
