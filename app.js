@@ -4839,7 +4839,8 @@ async function saveFileFromDrawer() {
   try {
     await syncFileRecordToApi(record);
   } catch (error) {
-    return toast("File saved locally, but central update failed. Please retry.");
+    console.error("Central file update failed", error);
+    return toast(`Central update failed: ${error.message || "Please retry."}`);
   }
   closeOverlays();
   toast("File record saved and synced");
