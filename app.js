@@ -866,6 +866,10 @@ function allowLocalLoginFallback() {
 
 async function apiJson(path, options = {}) {
   if (isBrowserSupabaseMode()) return browserSupabaseApiJson(path, options);
+  return backendApiJson(path, options);
+}
+
+async function backendApiJson(path, options = {}) {
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -1055,6 +1059,16 @@ async function saveFileToApi(file) {
       body: JSON.stringify({ file }),
     });
   } catch (error) {
+    if (isBrowserSupabaseMode()) {
+      try {
+        return await backendApiJson(`/api/files/${encodeURIComponent(file.id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ file }),
+        });
+      } catch (backendError) {
+        console.warn("Backend file save fallback failed", backendError);
+      }
+    }
     console.warn("Central file save failed", error);
     throw error;
   }
