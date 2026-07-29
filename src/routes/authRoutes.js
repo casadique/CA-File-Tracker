@@ -48,9 +48,16 @@ router.post("/recover-admin", async (req, res, next) => {
       email: result.authUser.email,
       role: result.profile.role,
       isActive: result.profile.is_active,
+      warning: result.legacyWarning || "",
     });
   } catch (error) {
-    next(error);
+    console.error("Admin recovery failed", error);
+    res.status(Number(error.status || error.statusCode || 500)).json({
+      error: error.message || "Admin recovery failed.",
+      code: error.code || "",
+      details: error.details || "",
+      hint: error.hint || "",
+    });
   }
 });
 
