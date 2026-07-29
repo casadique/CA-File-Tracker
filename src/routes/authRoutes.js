@@ -1,7 +1,8 @@
 const express = require("express");
 const { createSupabaseClient } = require("../config/supabase");
+const { env } = require("../config/env");
 const { requireAuth } = require("../middleware/auth");
-const { profileForAuthUser } = require("../services/userService");
+const { profileForAuthUser, recoverAdminUser } = require("../services/userService");
 
 const router = express.Router();
 
@@ -23,6 +24,30 @@ router.post("/login", async (req, res, next) => {
       session: data.session,
       user: data.user,
       profile,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/recover-admin", async (req, res, next) => {
+  try {
+    if (!env.adminRecoveryToken) {
+      res.status(404).json({ error: "Admin recovery is not enabled." });
+      return;
+    }
+    const token = req.get("x-admin-recovery-token") || req.body?.token || "";
+    if (token !== env.adminRecoveryToken) {
+      res.status(403).json({ error: "Invalid admin recovery token." });
+      return;
+    }
+    const { email = "casadique@gmail.com", password, name = "CA Sadique" } = req.body || {};
+    const result = await recoverAdminUser({ email, password, name });
+    res.json({
+      ok: true,
+      email: result.authUser.email,
+      role: result.profile.role,
+      isActive: result.profile.is_active,
     });
   } catch (error) {
     next(error);
