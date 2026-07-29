@@ -844,7 +844,7 @@ function browserSupabase() {
   if (!window.supabase?.createClient) throw new Error("Supabase browser library is not loaded.");
   if (!browserSupabaseClient) {
     browserSupabaseClient = window.supabase.createClient(BROWSER_SUPABASE_URL, BROWSER_SUPABASE_ANON_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false },
+      auth: { persistSession: true, autoRefreshToken: true },
     });
   }
   return browserSupabaseClient;
@@ -854,8 +854,10 @@ async function ensureBrowserSupabaseSession() {
   const token = apiToken();
   const refreshToken = sessionStorage.getItem(API_REFRESH_TOKEN_KEY) || "";
   if (!token || !refreshToken) return;
+  const current = await browserSupabase().auth.getSession();
+  if (current?.data?.session?.access_token) return;
   const { data, error } = await browserSupabase().auth.setSession({ access_token: token, refresh_token: refreshToken });
-  if (error) throw new Error("Invalid or expired login. Please log out and log in again.");
+  if (error) throw new Error("Login session expired. Please log out and log in again.");
   if (data?.session?.access_token) setApiSession(data.session);
 }
 
@@ -1003,7 +1005,6 @@ async function browserSupabaseLogin(email, password) {
   const { data, error } = await browserSupabase().auth.signInWithPassword({ email, password });
   if (error) throw error;
   setApiSession(data.session);
-  await ensureBrowserSupabaseSession();
   sessionStorage.setItem(API_MODE_KEY, "supabase-browser");
   const profile = await browserProfileForAuthUser(data.user);
   if (!profile || profile.is_active === false) throw new Error("User access is inactive or not linked.");
