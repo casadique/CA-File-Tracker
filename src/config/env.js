@@ -5,6 +5,7 @@ dotenv.config({ path: path.join(__dirname, "..", "..", ".env"), override: true }
 dotenv.config();
 
 const required = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
+const fallbackSupabaseUrl = "https://jzralbwcngqnmedjrzhh.supabase.co";
 
 function readEnv() {
   const missing = required.filter((key) => !process.env[key]);
@@ -17,7 +18,7 @@ function readEnv() {
     isConfigured: missing.length === 0,
     isProduction: process.env.NODE_ENV === "production",
     port: Number(process.env.PORT || 3000),
-    supabaseUrl: process.env.SUPABASE_URL || "",
+    supabaseUrl: process.env.SUPABASE_URL || fallbackSupabaseUrl,
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
     adminRecoveryToken: process.env.ADMIN_RECOVERY_TOKEN || "",
