@@ -900,7 +900,7 @@ async function browserSupabaseApiJson(path, options = {}) {
 }
 
 async function browserSupabaseMe() {
-  const { data, error } = await browserSupabase().auth.getUser(apiToken());
+  const { data, error } = await browserSupabase().auth.getUser();
   if (error) throw error;
   const profile = await browserProfileForAuthUser(data.user);
   return { user: data.user, profile };
@@ -957,13 +957,13 @@ async function browserLoadCentralVersion() {
 }
 
 async function browserSaveCentralState(nextState) {
-  const { data: userData } = await browserSupabase().auth.getUser(apiToken());
+  const current = await browserSupabase().auth.getSession();
   const { data, error } = await browserSupabase()
     .from("app_state")
     .upsert({
       id: "default",
       state: sharedStateForStorage(normalizeState(nextState)),
-      updated_by: userData?.user?.id || null,
+      updated_by: current?.data?.session?.user?.id || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "id" })
     .select("state, updated_at")
