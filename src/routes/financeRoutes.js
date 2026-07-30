@@ -6,6 +6,8 @@ const {
   deleteExpense,
   saveCollection,
   deleteCollection,
+  saveOpeningBalance,
+  deleteOpeningBalance,
 } = require("../services/financeService");
 
 const router = express.Router();
@@ -62,6 +64,24 @@ router.delete("/collections/:id", requireAuth, requireRole(...financeRoles), asy
   try {
     const state = await deleteCollection(req.params.id, req.user.id, req.profile);
     res.json({ ok: true, otherCashCollections: state.otherCashCollections || [] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/opening-balances", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await saveOpeningBalance(req.body.openingBalance || req.body, req.user.id, req.profile);
+    res.json({ ok: true, openingBalances: state.openingBalances || [] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/opening-balances/:id", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await deleteOpeningBalance(req.params.id, req.user.id, req.profile);
+    res.json({ ok: true, openingBalances: state.openingBalances || [] });
   } catch (error) {
     next(error);
   }

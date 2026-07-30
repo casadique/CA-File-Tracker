@@ -986,6 +986,23 @@ async function deleteCashCollectionFromApi(id) {
   return result;
 }
 
+async function saveOpeningBalanceToApi(openingBalance) {
+  const result = await apiJson("/api/finance/opening-balances", {
+    method: "POST",
+    body: JSON.stringify({ openingBalance }),
+  });
+  if (result?.openingBalances) state.openingBalances = result.openingBalances;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function deleteOpeningBalanceFromApi(id) {
+  const result = await apiJson(`/api/finance/opening-balances/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (result?.openingBalances) state.openingBalances = result.openingBalances;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function saveVisitorsToApi(visitors) {
   const result = await apiJson("/api/visitors", {
     method: "POST",
@@ -2456,7 +2473,7 @@ function mount() {
     <div class="app-shell ${isSidebarCollapsed() ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${isSidebarCollapsed() ? "collapsed" : ""}" id="sidebar">
         <div class="brand">
-          <div class="brand-mark ca-logo-mark" aria-hidden="true"><span>CA</span><small>✓</small></div>
+          <div class="brand-mark ca-logo-mark" aria-hidden="true"><img src="assets/ca-india-logo.png" alt=""></div>
           <div class="brand-text-only">
             <h1><span>CA</span> <em>File Tracker</em></h1>
             <p class="brand-byline">Muhammad &amp; Associates</p>
@@ -3173,7 +3190,7 @@ function renderModernDashboardShell(s) {
         </div>
         <div class="dashboard-compact-filterbar">
           <span class="dashboard-date-pill">${displayDate(today)}</span>
-          <button class="dashboard-filter-pill" id="dashboardTodayFilter">Today</button>
+          <span class="dashboard-filter-pill dashboard-today-label" aria-label="Today">Today</span>
         </div>
       </div>
       <div class="dashboard-kpi-grid">
@@ -3424,13 +3441,6 @@ function dashboardEmptyState(text) {
 }
 
 function bindModernDashboard() {
-  document.querySelector("#dashboardTodayFilter")?.addEventListener("click", () => {
-    state.filters.from = indiaTodayDate();
-    state.filters.to = indiaTodayDate();
-    activePage = "files";
-    saveState();
-    renderAll();
-  });
   document.querySelectorAll(".modern-dashboard [data-page]").forEach((button) => {
     button.addEventListener("click", () => {
       activePage = button.dataset.page;
@@ -8495,11 +8505,6 @@ function renderExpensesPage() {
           <h3>Transactions</h3>
           <p>Manage collections, expenses and cash reconciliation</p>
         </div>
-        <div class="transactions-head-actions">
-          <button class="secondary-button" type="button" data-expense-tab="collections">Add Collection</button>
-          <button class="secondary-button" type="button" data-expense-tab="expenses">Add Expense</button>
-          <button class="primary-button" type="button" data-expense-tab="balance">Reconcile Cash</button>
-        </div>
       </div>
       <div class="expense-overview-grid">
         ${expenseOverviewCard("Current Cash Balance", balance.closing, "balance", "Live cash position", "wallet")}
@@ -8580,11 +8585,10 @@ function renderExpenseEntryTab() {
           </div>
           ${expenseDateField("expenseDate", "Expense Date", editingExpense()?.date || todayDate())}
           ${expenseItemField(editingExpense()?.particulars || "")}
-          ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "")}
-          ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01")}
+          ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "", "text", "", "wide-field")}
+          ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01", "compact-field amount-field")}
           ${expenseSelect("expenseMode", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingExpense()?.mode || "Cash")}
-          ${expenseInput("expenseVoucherNo", "Voucher Number", editingExpense()?.voucherNo || "")}
-          ${expenseSelect("expenseCategory", "Expense Category", ["General", "Office", "Travel", "Client", "Utilities", "Compliance"], editingExpense()?.category || "General")}
+          ${expenseInput("expenseVoucherNo", "Voucher No.", editingExpense()?.voucherNo || "", "text", "", "compact-field ref-field")}
           ${expenseInput("expenseEnteredBy", "Entered By", editingExpense()?.createdBy || editingExpense()?.enteredBy || state.currentUser || "", "text")}
           ${expenseTextarea("expenseRemarks", "Remarks", editingExpense()?.remarks || "")}
           ${expenseAttachmentField(editingExpense())}
@@ -8593,7 +8597,6 @@ function renderExpenseEntryTab() {
             <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editExpenseId ? "Update Expense" : "Save Expense"}</button>
           </div>
         </form>
-        ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
         <div class="expense-tools-card">
           <div class="expense-card-head">
             <span>Search & Reports</span>
@@ -8614,15 +8617,15 @@ function renderOpeningBalancePanel() {
     <div class="expense-tools-card opening-balance-card">
       <div class="expense-card-head">
         <span>Admin Only</span>
-        <h3>Opening Balances</h3>
+        <h3>Set Opening Cash Balance</h3>
+        <p>Enter the opening cash position from which reconciliation should begin</p>
       </div>
       <form id="openingBalanceForm" class="opening-balance-form">
-        ${expenseInput("openingParticulars", "Particulars")}
-        ${expenseInput("openingDate", "Date", todayDate(), "date")}
-        ${expenseInput("openingAmount", "Amount", "", "number", "0.01")}
-        <div class="field"><label>Action</label><button class="primary-button" type="submit">Add Balance</button></div>
+        ${expenseInput("openingDate", "Opening Balance Date", todayDate(), "date", "", "compact-field")}
+        ${expenseInput("openingAmount", "Opening Balance Amount", "", "number", "0.01", "compact-field amount-field")}
+        <div class="field opening-balance-actions"><label>Action</label><button class="primary-button" type="submit">Save Opening Balance</button><button class="secondary-button" id="resetOpeningBalanceForm" type="button">Reset</button></div>
       </form>
-      ${rows.length ? `<div class="table-wrap opening-balance-list"><table class="file-table expense-table"><thead><tr><th>Particulars</th><th>Date</th><th class="amount-col">Amount</th><th>Action</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${escapeHtml(item.particulars)}</td><td>${expenseDisplayDate(item.date)}</td><td class="amount-cell">${money(item.amount)}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${rows.length ? `<div class="table-wrap opening-balance-list"><table class="file-table expense-table transaction-table"><thead><tr><th>Effective Date</th><th class="amount-col">Opening Amount</th><th>Entered By</th><th>Entered On</th><th>Updated On</th><th>Actions</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "")}</td><td>${escapeHtml(formatDateTime(item.createdAt || item.created_at || ""))}</td><td>${escapeHtml(formatDateTime(item.updatedAt || item.updated_at || ""))}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : ""}
     </div>
   `;
 }
@@ -8640,12 +8643,11 @@ function renderCashCollectionsTab() {
           ${expenseDateField("cashDate", "Collection Date", editingCashCollection()?.date || todayDate())}
           ${expenseSelect("cashCollectionType", "Collection Type", ["Other Cash Collection", "Fee Collection", "Bank Collection", "Other Collection"], editingCashCollection()?.collectionType || "Other Cash Collection")}
           ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
-          ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01")}
+          ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01", "compact-field amount-field")}
           ${expenseSelect("cashModeEntry", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
-          ${expenseInput("cashVoucherNo", "Reference Number", editingCashCollection()?.voucherNo || "")}
-          ${expenseInput("cashParticularsEntry", "Particulars", editingCashCollection()?.particulars || "")}
+          ${expenseInput("cashVoucherNo", "Ref No.", editingCashCollection()?.voucherNo || "", "text", "", "compact-field ref-field")}
+          ${expenseInput("cashParticularsEntry", "Particulars", editingCashCollection()?.particulars || "", "text", "", "particulars-field")}
           ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
-          ${expenseTextarea("cashRemarks", "Remarks", editingCashCollection()?.remarks || "")}
           ${cashAttachmentField(editingCashCollection())}
           <div class="action-row">
             <button class="secondary-button" type="button" id="resetCashForm">${state.filters.editCashId ? "Cancel" : "Reset"}</button>
@@ -8694,7 +8696,6 @@ function renderTransactionSidePanel(tab) {
       <button class="transaction-quick-action" type="button" data-expense-tab="collections">${transactionIcon("arrow-down")} Add Collection</button>
       <button class="transaction-quick-action" type="button" data-expense-tab="expenses">${transactionIcon("arrow-up")} Add Expense</button>
       <button class="transaction-quick-action" type="button" data-expense-tab="balance">${transactionIcon("wallet")} Cash Reconciliation</button>
-      <button class="transaction-quick-action" type="button" data-transaction-page="reports">${transactionIcon("receipt")} View Reports</button>
       <button class="transaction-quick-action" type="button" id="transactionImportShortcut">${transactionIcon("file")} Import Data</button>
       <button class="transaction-quick-action" type="button" id="transactionExportShortcut">${transactionIcon("save")} Export Data</button>
     </section>
@@ -8713,6 +8714,7 @@ function renderCashBalanceTab() {
   const to = state.filters.balanceTo || "";
   const balance = cashBalanceForRange(from, to);
   return `
+    ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
     <div class="expense-tools-card balance-tools">
       <div class="expense-card-head">
         <h3>Cash Reconciliation</h3>
@@ -8739,6 +8741,14 @@ function renderCashBalanceTab() {
     ${renderCashVerificationPanel(balance)}
     ${renderCashMovementTable()}
   `;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const time = Number(value);
+  const date = Number.isFinite(time) && String(value).length < 14 ? new Date(time) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function cashBalanceCard(label, amount, highlight = false) {
@@ -8772,12 +8782,13 @@ function renderCashVerificationPanel(balance) {
 function renderExpenseFilters() {
   return `
     <div class="filters colourful-filters expense-filters expense-search-row">
+      ${expenseFilterInput("expenseParticulars", "Search")}
       ${expenseFilterInput("expenseFrom", "From Date", "date")}
       ${expenseFilterInput("expenseTo", "To Date", "date")}
-      ${expenseFilterInput("expenseParticulars", "Search")}
       ${expenseFilterSelect("expenseMode", "Payment Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
-      ${expenseFilterSelect("expenseCategoryFilter", "Category", ["", "General", "Office", "Travel", "Client", "Utilities", "Compliance"])}
+      ${expenseFilterInput("expenseItemFilter", "Expense Item")}
       ${expenseFilterInput("expensePaidTo", "Paid To")}
+      ${expenseFilterInput("expenseEnteredBy", "Entered By")}
       <div class="field"><label>Apply</label><button class="secondary-button" id="expenseSearch">Apply Filter</button></div>
       <div class="field"><label>Clear</label><button class="secondary-button" id="expenseReset">Clear Filter</button></div>
       <div class="field"><label>Excel</label><button class="secondary-button" id="expenseExcel">Excel</button></div>
@@ -8790,13 +8801,12 @@ function renderExpenseFilters() {
 function renderCashFilters() {
   return `
     <div class="filters colourful-filters expense-filters">
+      ${expenseFilterInput("cashParticulars", "Search")}
       ${expenseFilterInput("cashFrom", "From Date", "date")}
       ${expenseFilterInput("cashTo", "To Date", "date")}
-      ${expenseFilterInput("cashParticulars", "Search")}
       ${expenseFilterSelect("cashMode", "Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
       ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", "Other Cash Collection", "Fee Collection", "Bank Collection", "Other Collection"])}
-      ${expenseFilterInput("cashReceivedFrom", "Received From")}
-      ${expenseFilterInput("cashVoucher", "V.No")}
+      ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
       <div class="field"><label>Apply</label><button class="secondary-button" id="cashSearch">Apply Filter</button></div>
       <div class="field"><label>Clear</label><button class="secondary-button" id="cashReset">Clear Filter</button></div>
       <div class="field"><label>Excel</label><button class="secondary-button" id="cashExcel">Excel</button></div>
@@ -8806,9 +8816,9 @@ function renderCashFilters() {
   `;
 }
 
-function expenseInput(id, label, value = "", type = "text", step = "") {
+function expenseInput(id, label, value = "", type = "text", step = "", className = "") {
   const amountClass = type === "number" ? " amount-input" : "";
-  return `<div class="field"><label>${label}</label><input id="${id}" class="${amountClass}" type="${type}" ${type === "date" ? `max="9999-12-31"` : ""} ${step ? `step="${step}"` : ""} value="${escapeHtml(value)}"></div>`;
+  return `<div class="field ${escapeHtml(className)}"><label>${label}</label><input id="${id}" class="${amountClass}" type="${type}" ${type === "date" ? `max="9999-12-31"` : ""} ${step ? `step="${step}"` : ""} value="${escapeHtml(value)}"></div>`;
 }
 
 function expenseTextarea(id, label, value = "") {
@@ -8930,6 +8940,9 @@ function bindExpensePage() {
   if (expenseForm) expenseForm.onsubmit = saveExpenseEntry;
   const openingForm = document.querySelector("#openingBalanceForm");
   if (openingForm) openingForm.onsubmit = saveOpeningBalance;
+  document.querySelector("#resetOpeningBalanceForm")?.addEventListener("click", () => {
+    document.querySelector("#openingBalanceForm")?.reset();
+  });
   const cashForm = document.querySelector("#cashCollectionForm");
   if (cashForm) cashForm.onsubmit = saveCashCollectionEntry;
   document.querySelector("#cancelExpenseEdit")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
@@ -9037,31 +9050,64 @@ async function saveExpenseEntry(event) {
   renderAll();
 }
 
-function saveOpeningBalance(event) {
+async function saveOpeningBalance(event) {
   event.preventDefault();
   if (state.currentRole !== "Admin") return toast("Only Admin can add opening balances.");
   const amount = Number(document.querySelector("#openingAmount")?.value || 0);
-  const particulars = document.querySelector("#openingParticulars")?.value.trim();
-  if (!particulars) return toast("Enter opening balance particulars.");
-  if (!amount) return toast("Enter opening balance amount.");
-  state.openingBalances = [
-    ...(state.openingBalances || []),
-    {
-      id: crypto.randomUUID(),
-      particulars,
-      date: document.querySelector("#openingDate")?.value || todayDate(),
-      amount,
-      createdAt: Date.now(),
-    },
-  ];
+  const date = document.querySelector("#openingDate")?.value || todayDate();
+  if (!date) return toast("Select opening balance date.");
+  if (Number.isNaN(amount)) return toast("Enter opening balance amount.");
+  const existing = (state.openingBalances || []).find((item) => item.date === date);
+  if (existing && !confirm("Opening balance already exists for this date. Update it?")) return;
+  const now = new Date().toISOString();
+  const record = {
+    ...(existing || {}),
+    id: existing?.id || crypto.randomUUID(),
+    particulars: "Opening Cash Balance",
+    date,
+    balance_date: date,
+    amount,
+    opening_balance: amount,
+    enteredBy: existing?.enteredBy || state.currentUser || "",
+    entered_by_user_name: existing?.entered_by_user_name || state.currentUser || "",
+    createdAt: existing?.createdAt || now,
+    created_at: existing?.created_at || now,
+    updatedAt: now,
+    updated_at: now,
+  };
+  if (isSupabaseMode()) {
+    try {
+      await saveOpeningBalanceToApi(record);
+      toast(existing ? "Opening balance updated and synced" : "Opening balance saved and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Opening balance save failed", { message: error.message });
+      return toast(`Opening balance save failed: ${error.message || "Please retry."}`);
+    }
+  }
+  state.openingBalances = existing
+    ? (state.openingBalances || []).map((item) => item.id === existing.id ? record : item)
+    : [record, ...(state.openingBalances || [])];
   saveState();
-  toast("Opening balance added");
+  toast(existing ? "Opening balance updated" : "Opening balance added");
   renderAll();
 }
 
-function deleteOpeningBalance(id) {
+async function deleteOpeningBalance(id) {
   if (state.currentRole !== "Admin") return toast("Only Admin can delete opening balances.");
   if (!confirm("Delete this opening balance?")) return;
+  if (isSupabaseMode()) {
+    try {
+      await deleteOpeningBalanceFromApi(id);
+      toast("Opening balance deleted and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Opening balance delete failed", { id, message: error.message });
+      return toast(`Opening balance delete failed: ${error.message || "Please retry."}`);
+    }
+  }
   state.openingBalances = (state.openingBalances || []).filter((item) => item.id !== id);
   saveState();
   renderAll();
@@ -9119,7 +9165,7 @@ async function saveCashCollectionEntry(event) {
     amount,
     mode: document.querySelector("#cashModeEntry").value,
     receivedFrom: properCaseName(document.querySelector("#newCashReceivedFrom")?.value.trim() || document.querySelector("#cashReceivedFrom").value.trim()),
-    remarks: document.querySelector("#cashRemarks").value.trim(),
+    remarks: document.querySelector("#cashRemarks")?.value.trim() || existing?.remarks || "",
     createdBy: document.querySelector("#cashCollectedBy")?.value.trim() || existing?.createdBy || state.currentUser || "",
     enteredBy: document.querySelector("#cashCollectedBy")?.value.trim() || existing?.enteredBy || state.currentUser || "",
     attachment,
@@ -9259,7 +9305,7 @@ function expenseSearchActive() {
 }
 
 function cashSearchActive() {
-  return ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashReceivedFrom", "cashVoucher"].some((key) => state.filters[key]);
+  return ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashCollectionTypeFilter", "cashCollectedByFilter"].some((key) => state.filters[key]);
 }
 
 function filteredExpenses() {
@@ -9267,9 +9313,11 @@ function filteredExpenses() {
     if (state.filters.expenseFrom && item.date < state.filters.expenseFrom) return false;
     if (state.filters.expenseTo && item.date > state.filters.expenseTo) return false;
     if (state.filters.expenseParticulars && !item.particulars.toLowerCase().includes(state.filters.expenseParticulars.toLowerCase())) return false;
+    if (state.filters.expenseItemFilter && !item.particulars.toLowerCase().includes(state.filters.expenseItemFilter.toLowerCase())) return false;
     if (state.filters.expenseMode && item.mode !== state.filters.expenseMode) return false;
     if (state.filters.expenseCategoryFilter && (item.category || "General") !== state.filters.expenseCategoryFilter) return false;
     if (state.filters.expensePaidTo && !item.paidTo.toLowerCase().includes(state.filters.expensePaidTo.toLowerCase())) return false;
+    if (state.filters.expenseEnteredBy && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.expenseEnteredBy.toLowerCase())) return false;
     return true;
   }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
 }
@@ -9281,8 +9329,7 @@ function filteredCashCollections() {
     if (state.filters.cashParticulars && !item.particulars.toLowerCase().includes(state.filters.cashParticulars.toLowerCase())) return false;
     if (state.filters.cashMode && item.mode !== state.filters.cashMode) return false;
     if (state.filters.cashCollectionTypeFilter && (item.collectionType || "Other Cash Collection") !== state.filters.cashCollectionTypeFilter) return false;
-    if (state.filters.cashReceivedFrom && !item.receivedFrom.toLowerCase().includes(state.filters.cashReceivedFrom.toLowerCase())) return false;
-    if (state.filters.cashVoucher && !item.voucherNo.toLowerCase().includes(state.filters.cashVoucher.toLowerCase())) return false;
+    if (state.filters.cashCollectedByFilter && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.cashCollectedByFilter.toLowerCase())) return false;
     return true;
   }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
 }
@@ -9290,7 +9337,7 @@ function filteredCashCollections() {
 function renderExpenseTable(rows) {
   if (!rows.length) return empty("No expense entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>SN</th><th>Date</th><th>Expense Item</th><th>Paid To</th><th>Payment Mode</th><th>Voucher Number</th><th class="amount-col">Amount</th><th>Entered By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.paidTo)}</td><td>${escapeHtml(item.mode)}</td><td>${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th class="wide-col">Expense Item</th><th class="wide-col">Paid To</th><th>Mode</th><th class="ref-col">Voucher No.</th><th class="amount-col">Amount</th><th>Entered By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="wide-cell">${escapeHtml(item.paidTo)}</td><td>${escapeHtml(item.mode)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function expenseAttachmentLink(item) {
@@ -9304,17 +9351,17 @@ function expenseAttachmentLink(item) {
 function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th>Particulars</th><th>Payment Mode</th><th>Reference Number</th><th class="amount-col">Amount</th><th>Entered By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.collectionType || "Other Cash Collection")}</td><td>${escapeHtml(item.receivedFrom)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.mode)}</td><td>${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.collectionType || "Other Cash Collection")}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function resetExpenseFilters() {
-  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expenseCategoryFilter", "expensePaidTo", "expenseVoucher"].forEach((key) => state.filters[key] = "");
+  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expenseCategoryFilter", "expenseItemFilter", "expensePaidTo", "expenseEnteredBy", "expenseVoucher"].forEach((key) => state.filters[key] = "");
   saveState();
   renderAll();
 }
 
 function resetCashFilters() {
-  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashCollectionTypeFilter", "cashReceivedFrom", "cashVoucher"].forEach((key) => state.filters[key] = "");
+  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashCollectionTypeFilter", "cashCollectedByFilter", "cashReceivedFrom", "cashVoucher"].forEach((key) => state.filters[key] = "");
   saveState();
   renderAll();
 }
@@ -9331,25 +9378,32 @@ function resetBalanceFilters() {
 
 function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
   const effectiveTo = to || from || todayDate();
-  const inRange = (date) => (!from || date >= from) && (!effectiveTo || date <= effectiveTo);
+  const openingEntry = applicableOpeningBalance(from, effectiveTo);
+  const openingDate = openingEntry?.date || "";
+  const effectiveFrom = from || openingDate || "";
+  const inRange = (date) => (!effectiveFrom || date >= effectiveFrom) && (!effectiveTo || date <= effectiveTo);
   const mode = state.filters.balanceMode || "";
   const modeOk = (itemMode) => !mode || itemMode === mode;
-  const beforeFrom = (date) => from && date && date < from;
-  const opening = (Number(state.openingCashBalance || 0) || 0)
-    + (state.openingBalances || []).filter((item) => !from ? (!effectiveTo || item.date <= effectiveTo) : item.date < from).reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    + visibleFiles().filter((file) => beforeFrom(file.feeReceivedDate || file.lastUpdatedDate || "") && file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash").reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0)
-    + (state.otherCashCollections || []).filter((item) => beforeFrom(item.date) && item.mode === "Cash").reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    - (state.expenses || []).filter((item) => beforeFrom(item.date) && item.mode === "Cash").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
   const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0);
   const otherCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return { opening, feeCollections, otherCollections, cashExpenses, closing: opening + feeCollections + otherCollections - cashExpenses };
 }
 
+function applicableOpeningBalance(from = "", to = todayDate()) {
+  const target = from || to || todayDate();
+  return [...(state.openingBalances || [])]
+    .filter((item) => item.date && item.date <= target)
+    .sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt || b.updated_at || b.createdAt || "").localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || "")))[0] || null;
+}
+
 function cashMovementRows() {
   const from = state.filters.balanceFrom || "";
   const to = state.filters.balanceTo || from || todayDate();
-  const inRange = (date) => (!from || date >= from) && (!to || date <= to);
+  const openingEntry = applicableOpeningBalance(from, to);
+  const effectiveFrom = from || openingEntry?.date || "";
+  const inRange = (date) => (!effectiveFrom || date >= effectiveFrom) && (!to || date <= to);
   const enteredByFilter = normalizeImportMatchText(state.filters.balanceEnteredBy || "");
   const typeFilter = state.filters.balanceType || "";
   const rows = [
@@ -9391,12 +9445,7 @@ function cashMovementRows() {
     if (enteredByFilter && !normalizeImportMatchText(row.enteredBy).includes(enteredByFilter)) return false;
     return true;
   }).sort((a, b) => a.date.localeCompare(b.date) || String(a.time || "").localeCompare(String(b.time || "")) || ((Date.parse(a.createdAt || "") || 0) - (Date.parse(b.createdAt || "") || 0)));
-  const openingBeforeFrom = (Number(state.openingCashBalance || 0) || 0)
-    + (state.openingBalances || []).filter((item) => !from || item.date < from).reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    + visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!from || (file.feeReceivedDate || file.lastUpdatedDate || "") < from)).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0)
-    + (state.otherCashCollections || []).filter((item) => item.mode === "Cash" && (!from || item.date < from)).reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    - (state.expenses || []).filter((item) => item.mode === "Cash" && (!from || item.date < from)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  let running = openingBeforeFrom;
+  let running = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
   return rows.map((row, index) => {
     running += row.cashIn - row.cashOut;
     return { ...row, sn: index + 1, runningBalance: running };

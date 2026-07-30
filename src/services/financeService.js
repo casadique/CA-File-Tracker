@@ -67,6 +67,37 @@ async function deleteCollection(id, userId, profile) {
   }, userId);
 }
 
+async function saveOpeningBalance(payload, userId, profile) {
+  return patchAppState((state) => {
+    const now = new Date();
+    const incoming = normalizeOpeningBalance(payload, now, profile);
+    const existing = (state.openingBalances || []).find((item) => item.id === incoming.id || item.date === incoming.date);
+    const record = {
+      ...(existing || {}),
+      ...incoming,
+      id: existing?.id || incoming.id || crypto.randomUUID(),
+      createdAt: existing?.createdAt || incoming.createdAt || now.toISOString(),
+      created_at: existing?.created_at || incoming.created_at || now.toISOString(),
+      enteredBy: existing?.enteredBy || incoming.enteredBy,
+      entered_by_user_name: existing?.entered_by_user_name || incoming.entered_by_user_name,
+      updatedAt: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+    state.openingBalances = upsertById(state.openingBalances || [], record).sort((a, b) => b.date.localeCompare(a.date));
+    appendAudit(state, existing ? "Opening balance updated" : "Opening balance saved", record, profile, now);
+    return state;
+  }, userId);
+}
+
+async function deleteOpeningBalance(id, userId, profile) {
+  return patchAppState((state) => {
+    const before = (state.openingBalances || []).find((item) => item.id === id);
+    state.openingBalances = (state.openingBalances || []).filter((item) => item.id !== id);
+    if (before) appendAudit(state, "Opening balance deleted", before, profile, new Date());
+    return state;
+  }, userId);
+}
+
 function normalizeExpense(payload = {}, now, profile = {}) {
   const amount = Number(payload.amount || 0);
   if (!amount || amount < 0) {
@@ -137,6 +168,34 @@ function normalizeCollection(payload = {}, now, profile = {}) {
   };
 }
 
+function normalizeOpeningBalance(payload = {}, now, profile = {}) {
+  const amount = Number(payload.amount ?? payload.opening_balance ?? 0);
+  if (Number.isNaN(amount)) {
+    const error = new Error("Please enter a valid opening balance amount.");
+    error.status = 400;
+    throw error;
+  }
+  const date = normalizeDate(payload.date || payload.balance_date);
+  if (!date) {
+    const error = new Error("Opening balance date is required.");
+    error.status = 400;
+    throw error;
+  }
+  return {
+    id: payload.id || "",
+    particulars: "Opening Cash Balance",
+    date,
+    balance_date: date,
+    amount,
+    opening_balance: amount,
+    enteredBy: profile.name || payload.enteredBy || "",
+    entered_by_user_name: profile.name || payload.entered_by_user_name || "",
+    entered_by_user_id: profile.id || profile.email || "",
+    updatedAt: now.toISOString(),
+    updated_at: now.toISOString(),
+  };
+}
+
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
@@ -182,4 +241,6 @@ module.exports = {
   deleteExpense,
   saveCollection,
   deleteCollection,
+  saveOpeningBalance,
+  deleteOpeningBalance,
 };
