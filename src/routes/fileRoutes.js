@@ -15,8 +15,8 @@ router.get("/", requireAuth, async (_req, res, next) => {
 
 router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
-    const state = await upsertFile(req.body.file || req.body, req.user.id);
-    res.json({ ok: true, files: state.files || [] });
+    const state = await upsertFile(req.body.file || req.body, req.user.id, req.profile);
+    res.json({ ok: true, files: state.files || [], fileNotifications: state.fileNotifications || [] });
   } catch (error) {
     next(error);
   }
@@ -24,8 +24,8 @@ router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "
 
 router.put("/:id", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
-    const state = await upsertFile({ ...(req.body.file || req.body), id: req.params.id }, req.user.id);
-    res.json({ ok: true, files: state.files || [] });
+    const state = await upsertFile({ ...(req.body.file || req.body), id: req.params.id }, req.user.id, req.profile);
+    res.json({ ok: true, files: state.files || [], fileNotifications: state.fileNotifications || [] });
   } catch (error) {
     next(error);
   }
@@ -47,8 +47,8 @@ router.post("/:id/return-correction", requireAuth, requireRole("Admin", "Manager
 
 router.delete("/:id", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const state = await deleteFile(req.params.id, req.user.id);
-    res.json({ ok: true, files: state.files || [] });
+    const state = await deleteFile(req.params.id, req.user.id, req.profile);
+    res.json({ ok: true, files: state.files || [], fileNotifications: state.fileNotifications || [] });
   } catch (error) {
     next(error);
   }

@@ -940,6 +940,7 @@ async function deleteFileFromApi(fileId) {
 async function syncFileRecordToApi(file) {
   const result = await saveFileToApi(file);
   if (result?.files) state.files = result.files;
+  if (result?.fileNotifications) state.fileNotifications = result.fileNotifications;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -2350,7 +2351,7 @@ function staffStats(name) {
   };
 }
 
-function notifications() {
+function allNotificationItems() {
   const files = visibleFiles();
   const items = [];
   const user = loggedInUser();
@@ -2358,45 +2359,70 @@ function notifications() {
     items.push({
       id: `file-change-${notice.id}`,
       type: notice.changeType || "File Update",
+      category: notificationCategory(notice.changeType || "File Update"),
       tone: notice.tone || "progress",
       title: notice.fileName || "File Update",
-      text: `${notice.changeText || "File updated"} by ${notice.changedBy || "Team"} on ${fmt(notice.date)} ${notice.time || ""}`,
+      text: `${notice.changeText || "File updated"} by ${notice.changedBy || "Team"}.`,
+      fileId: notice.fileId || "",
+      actor: notice.changedBy || "Team",
+      date: notice.date || "",
+      time: notice.time || "",
+      createdAt: notice.createdAt || Date.parse(notice.created_at || "") || 0,
     });
   });
   unreadChatMessages().forEach((message) => {
     items.push({
       id: `chat-${message.id}`,
       type: message.targetType === "personal" ? "Personal Chat" : "Group Chat",
+      category: "chat",
       tone: "progress",
       title: message.user || "Team Member",
       text: message.text || (message.attachments?.length ? `Attachment shared: ${message.attachments[0].name}` : ""),
       chatId: message.id,
+      actor: message.user || "Team Member",
+      date: message.date || "",
+      time: message.time || "",
+      createdAt: chatMessageTime(message),
     });
   });
   files.forEach((file) => {
     const days = daysUntil(file.dueDate);
     if ((sameStaffName(file.assignedStaff, state.currentUser) || sameStaffName(file.assignedStaff, user?.name) || sameStaffName(file.assignedStaffEmail, user?.email) || sameStaffName(file.assignedStaffId, user?.id)) && file.assignedStaff !== "Not Assigned") {
-      items.push({ id: `${file.id}-assigned-${file.assignedStaff}`, type: "Assigned file", tone: "progress", title: file.name, text: `This file is assigned to you. Due date: ${fmt(file.dueDate)}.` });
+      items.push({ id: `${file.id}-assigned-${file.assignedStaff}`, type: "Assigned file", category: "assignments", tone: "progress", title: file.name, text: `This file is assigned to you. Due date: ${fmt(file.dueDate)}.`, fileId: file.id, actor: file.assignedStaff || "", date: file.dueDate, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || file.dueDate || "") || 0 });
     }
     if ((sameStaffName(file.reAssignedStaff, state.currentUser) || sameStaffName(file.reAssignedStaff, user?.name) || sameStaffName(file.reAssignedStaffEmail, user?.email) || sameStaffName(file.reAssignedStaffId, user?.id)) && file.reAssignedDate) {
-      items.push({ id: `${file.id}-reassigned-${file.reAssignedDate}`, type: "Re-assigned file", tone: "approval", title: file.name, text: `This file was re-assigned to you on ${fmt(file.reAssignedDate)}.` });
+      items.push({ id: `${file.id}-reassigned-${file.reAssignedDate}`, type: "Re-assigned file", category: "assignments", tone: "approval", title: file.name, text: `This file was re-assigned to you on ${fmt(file.reAssignedDate)}.`, fileId: file.id, actor: file.reAssignedStaff || "", date: file.reAssignedDate, createdAt: Date.parse(file.reAssignedDate || "") || 0 });
     }
-    if (isOverdue(file)) items.push({ id: `${file.id}-overdue`, type: "Overdue", tone: "overdue", title: file.name, text: `${Math.abs(days)} day(s) overdue. Assigned to ${file.assignedStaff}.` });
-    else if (!file.filed && days <= 3) items.push({ id: `${file.id}-due`, type: "Nearing due", tone: "pending", title: file.name, text: `Due in ${days} day(s). Priority: ${file.priority}.` });
-    if (pendingApproval(file)) items.push({ id: `${file.id}-approval`, type: "Approval pending", tone: "approval", title: file.name, text: "Shared with client/partner but not approved yet." });
-    if (reportNotFiled(file)) items.push({ id: `${file.id}-workdone`, type: "Work done pending", tone: "report", title: file.name, text: "Work is done, completion is still pending." });
-    if (completedNotBilled(file)) items.push({ id: `${file.id}-billing`, type: "Billing pending", tone: "filed", title: file.name, text: "Filing completed, billing still pending." });
+    if (isOverdue(file)) items.push({ id: `${file.id}-overdue`, type: "Overdue", category: "files", tone: "overdue", title: file.name, text: `${Math.abs(days)} day(s) overdue. Assigned to ${file.assignedStaff}.`, fileId: file.id, actor: file.assignedStaff || "", date: file.dueDate, createdAt: Date.parse(file.dueDate || "") || 0 });
+    else if (!file.filed && days <= 3) items.push({ id: `${file.id}-due`, type: "Nearing due", category: "files", tone: "pending", title: file.name, text: `Due in ${days} day(s). Priority: ${file.priority}.`, fileId: file.id, date: file.dueDate, createdAt: Date.parse(file.dueDate || "") || 0 });
+    if (pendingApproval(file)) items.push({ id: `${file.id}-approval`, type: "Approval pending", category: "files", tone: "approval", title: file.name, text: "Shared with client/partner but not approved yet.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
+    if (reportNotFiled(file)) items.push({ id: `${file.id}-workdone`, type: "Work done pending", category: "files", tone: "report", title: file.name, text: "Work is done, completion is still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
+    if (completedNotBilled(file)) items.push({ id: `${file.id}-billing`, type: "Billing pending", category: "billing", tone: "filed", title: file.name, text: "Filing completed, billing still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
   });
-  return items.filter((item) => !state.readNotifications.includes(item.id));
+  return mergeById([], items)
+    .map((item) => ({ ...item, isRead: (state.readNotifications || []).includes(item.id) }))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+function notifications() {
+  return allNotificationItems().filter((item) => !item.isRead);
+}
+
+function notificationCategory(type = "") {
+  const text = String(type).toLowerCase();
+  if (text.includes("bill") || text.includes("fee") || text.includes("payment")) return "billing";
+  if (text.includes("correction") || text.includes("return")) return "corrections";
+  if (text.includes("allot") || text.includes("assign")) return "assignments";
+  if (text.includes("system")) return "system";
+  return "files";
 }
 
 function visibleFileNotifications(user = loggedInUser()) {
   if (!user) return [];
   return (state.fileNotifications || [])
-    .filter((notice) =>
-      sameUserIdentity(user, notice.targetUserId, notice.targetUserEmail, notice.targetUserName) ||
-      sameStaffName(notice.targetUserName, state.currentUser)
-    )
+    .filter((notice) => ["Admin", "Manager", "Staff Manager"].includes(state.currentRole)
+      || sameUserIdentity(user, notice.targetUserId, notice.targetUserEmail, notice.targetUserName)
+      || sameStaffName(notice.targetUserName, state.currentUser))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
@@ -2444,6 +2470,36 @@ function unreadChatMessages() {
 function chatButtonLabel() {
   const unread = unreadChatMessages().length;
   return `Team Chat${unread ? ` ${unread}` : ""}`;
+}
+
+function unreadChatCount() {
+  return unreadChatMessages().length;
+}
+
+function actionBadge(count) {
+  const total = Number(count) || 0;
+  if (total <= 0) return "";
+  return `<span class="top-action-badge">${total > 99 ? "99+" : total}</span>`;
+}
+
+function topActionIconButton(id, type, icon, label, count = 0) {
+  return `
+    <button class="top-icon-action top-icon-${type}" id="${id}" type="button" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
+      ${navIcon(icon)}
+      ${actionBadge(count)}
+    </button>
+  `;
+}
+
+function updateTopActionBadges() {
+  const chatButton = document.querySelector("#chatButton");
+  if (chatButton) {
+    chatButton.innerHTML = `${navIcon("chat")}${actionBadge(unreadChatCount())}`;
+  }
+  const notifyButton = document.querySelector("#notifyButton");
+  if (notifyButton) {
+    notifyButton.innerHTML = `${navIcon("bell")}${actionBadge(notifications().length)}`;
+  }
 }
 
 function repairCurrentSessionRole() {
@@ -2501,8 +2557,8 @@ function mount() {
             <p id="pageSubtitle"></p>
           </div>
           <div class="top-actions">
-            <button class="icon-button" id="chatButton">${chatButtonLabel()}</button>
-            <button class="icon-button" id="notifyButton">Notifications ${notifications().length}</button>
+            ${topActionIconButton("chatButton", "chat", "chat", "Team Chat", unreadChatCount())}
+            ${topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length)}
             ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download</button><button class="top-action-button top-action-import" id="importFileButton">Import</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
             ${rolePerm().export && activePage === "files" && state.filters.listView === "active" ? `<button class="top-action-button top-action-export" id="topExportActiveFiles">Export Active Files</button>` : ""}
             ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
@@ -3107,6 +3163,8 @@ function navIcon(name) {
     users: '<svg viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.7-6 3.8V20h12v-3.2C15 14.7 12.3 13 9 13Zm8.5-1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm.5 1.2c-.9 0-1.7.1-2.4.4 1.1.8 1.9 1.9 1.9 3.2V20H22v-3c0-2.1-1.8-3.8-4-3.8Z"/></svg>',
     chart: '<svg viewBox="0 0 24 24"><path d="M4 19h16v2H4V3h2v16Zm4-2h3V9H8v8Zm5 0h3V5h-3v12Zm5 0h3v-6h-3v6Z"/></svg>',
     database: '<svg viewBox="0 0 24 24"><path d="M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3Zm-8 5c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3V8Zm0 6c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3v-4Z"/></svg>',
+    chat: '<svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6A3.5 3.5 0 0 1 16.5 15H10l-5 4v-4.3A3.5 3.5 0 0 1 4 12.2V5.5Zm4 2.2v1.8h8V7.7H8Zm0 4h5.5V10H8v1.7Z"/></svg>',
+    bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.8 2.8 0 0 0 2.7-2h-5.4A2.8 2.8 0 0 0 12 22Zm7-6-1.7-2.1V9a5.4 5.4 0 0 0-4.3-5.3V2h-2v1.7A5.4 5.4 0 0 0 6.7 9v4.9L5 16v2h14v-2Z"/></svg>',
     backup: '<svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 1 7 7v1h2l-3 4-3-4h2v-1a5 5 0 0 0-8.9-3.1L6.7 5.5A7 7 0 0 1 12 3ZM6 13v1a5 5 0 0 0 8.9 3.1l1.4 1.4A7 7 0 0 1 5 14v-1H3l3-4 3 4H6Z"/></svg>',
     lock: '<svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2h2v11H5V10h2Zm2 0h6V8a3 3 0 0 0-6 0v2Zm4 7.7V14h-2v3.7h2Z"/></svg>',
     briefcase: '<svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h4v14H4V6h4l1-2Zm1.2 2h3.6l-.3-.6h-3l-.3.6ZM6 10v8h12v-8H6Z"/></svg>',
@@ -9585,24 +9643,24 @@ function dailyNewWorkRows(date = dailyReportDate()) {
 function dailyVisitorRows(date = dailyReportDate()) {
   return dailyVisitors(date).map((visitor, index) => ({
     SN: index + 1,
-    Name: visitor.visitorName,
-    "Purpose of Visit": visitor.purpose,
-    "Met Whom": visitor.metWhom,
+    "Visitor Name": visitor.visitorName || visitor.visitor_name || visitor.name || "",
+    "Mobile No": visitor.mobileNumber || visitor.mobile_number || "",
+    Company: visitor.company || visitor.company_or_organisation || "",
+    Purpose: visitor.purpose || "",
+    Time: visitor.visitTime || visitor.visit_time || "",
+    Met: visitor.metWhom || visitor.met_whom || "",
   }));
 }
 
 function dailyVisitorPdfRows(date = dailyReportDate()) {
   return dailyVisitors(date).map((visitor, index) => ({
     SN: index + 1,
-    "Visit Date": displayDate(normalizeImportDate(visitor.date || visitor.visit_date) || date),
-    "Visit Time": visitor.visitTime || visitor.visit_time || "",
     "Visitor Name": visitor.visitorName || visitor.visitor_name || visitor.name || "",
-    "Mobile Number": visitor.mobileNumber || visitor.mobile_number || "",
+    "Mobile No": visitor.mobileNumber || visitor.mobile_number || "",
     Company: visitor.company || visitor.company_or_organisation || "",
     Purpose: visitor.purpose || "",
-    "Met Whom": visitor.metWhom || visitor.met_whom || "",
-    "Entered By": visitor.enteredBy || visitor.entered_by_user_name || "",
-    Actions: visitor.action || visitor.status || visitor.remarks || visitor.followUp || "",
+    Time: visitor.visitTime || visitor.visit_time || "",
+    Met: visitor.metWhom || visitor.met_whom || "",
   }));
 }
 
@@ -9612,11 +9670,12 @@ function dailyExpenseRows(date = dailyReportDate()) {
     .sort((a, b) => String(a.particulars || "").localeCompare(String(b.particulars || "")))
     .map((expense, index) => ({
     SN: index + 1,
+    "Received from": expense.paidTo || expense.paid_to || "",
     Particulars: expense.particulars || "",
-    "Voucher No": expense.voucherNo || "",
-    "Paid to": expense.paidTo || "",
-    Amount: money(expense.amount),
+    "Ref No": expense.voucherNo || expense.voucher_number || "",
     Mode: expense.mode || "",
+    Amount: money(expense.amount),
+    "Collected By": expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
     }));
 }
 
@@ -9626,13 +9685,12 @@ function dailyExpensePdfRows(date = dailyReportDate()) {
     .sort((a, b) => String(a.particulars || a.expense_item || "").localeCompare(String(b.particulars || b.expense_item || "")))
     .map((expense, index) => ({
       SN: index + 1,
-      Date: displayDate(normalizeImportDate(expense.date || expense.expense_date) || date),
-      "Expense Item": expense.expense_item || expense.particulars || "",
-      "Paid To": expense.paidTo || expense.paid_to || "",
-      "Payment Mode": expense.mode || expense.payment_mode || "",
-      "Voucher No.": expense.voucherNo || expense.voucher_number || "",
+      "Received from": expense.paidTo || expense.paid_to || "",
+      Particulars: expense.expense_item || expense.particulars || "",
+      "Ref No": expense.voucherNo || expense.voucher_number || "",
+      Mode: expense.mode || expense.payment_mode || "",
       Amount: dailyPdfMoney(expense.amount),
-      "Entered By": expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
+      "Collected By": expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
     }));
 }
 
@@ -9647,9 +9705,11 @@ function dailyCollectionRows(date = dailyReportDate()) {
     .map((collection, index) => ({
       SN: index + 1,
       "Received from": collection.receivedFrom || collection.particulars || "",
-      "Receipt No": collection.voucherNo || "",
-      Amount: money(collection.amount),
+      Particulars: collection.particulars || "",
+      "Ref No": collection.voucherNo || "",
       Mode: collection.mode || "",
+      Amount: money(collection.amount),
+      "Collected By": collection.createdBy || collection.enteredBy || "",
     }));
 }
 
@@ -9690,9 +9750,9 @@ function renderDailyReportPage() {
       </div>
       ${renderDailySection("New Work Came", newWorkRows, ["SN", "Name", "Type of Service", "C/o", "Assigned To"], `Total New Work Received: ${newWorkRows.length}`, "No new work was received on the selected date.")}
       ${renderDailySection("Completed Files", completedRows, ["SN", "Name", "Type of Service", "C/o", "Work Done By", "Checked By"], `Total Completed Files: ${completedRows.length}`, "No files were completed on the selected date.")}
-      ${renderDailySection("Visitors List", visitorRows, ["SN", "Name", "Purpose of Visit", "Met Whom"], `Total Visitors: ${visitorRows.length}`, "No visitors were recorded on the selected date.")}
-      ${renderDailySection("Collections", collectionRows, ["SN", "Received from", "Receipt No", "Amount", "Mode"], `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No collections were recorded on the selected date.")}
-      ${renderDailySection("Expense Report", expenseRows, ["SN", "Particulars", "Voucher No", "Paid to", "Amount", "Mode"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
+      ${renderDailySection("Visitors List", visitorRows, ["SN", "Visitor Name", "Mobile No", "Company", "Purpose", "Time", "Met"], `Total Visitors: ${visitorRows.length}`, "No visitors were recorded on the selected date.")}
+      ${renderDailySection("Collections", collectionRows, ["SN", "Received from", "Particulars", "Ref No", "Mode", "Amount", "Collected By"], `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No collections were recorded on the selected date.")}
+      ${renderDailySection("Expense Report", expenseRows, ["SN", "Received from", "Particulars", "Ref No", "Mode", "Amount", "Collected By"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
     </div>
   `;
   bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
@@ -9896,28 +9956,24 @@ function dailyAutoFitPdfColumnStyles(headers, tableWidth) {
 function dailyVisitorPdfColumnStyles() {
   return {
     0: { cellWidth: 26, halign: "center" },
-    1: { cellWidth: 54 },
-    2: { cellWidth: 44 },
-    3: { cellWidth: 80 },
-    4: { cellWidth: 68 },
-    5: { cellWidth: 88 },
-    6: { cellWidth: 124 },
-    7: { cellWidth: 72 },
-    8: { cellWidth: 70 },
-    9: { cellWidth: 56 },
+    1: { cellWidth: 118 },
+    2: { cellWidth: 78 },
+    3: { cellWidth: 128 },
+    4: { cellWidth: 210 },
+    5: { cellWidth: 54 },
+    6: { cellWidth: 82 },
   };
 }
 
 function dailyExpensePdfColumnStyles() {
   return {
     0: { cellWidth: 30, halign: "center" },
-    1: { cellWidth: 58 },
-    2: { cellWidth: 150 },
-    3: { cellWidth: 130 },
+    1: { cellWidth: 118 },
+    2: { cellWidth: 210 },
+    3: { cellWidth: 68 },
     4: { cellWidth: 72 },
-    5: { cellWidth: 68 },
-    6: { cellWidth: 78, halign: "right" },
-    7: { cellWidth: 92 },
+    5: { cellWidth: 82, halign: "right" },
+    6: { cellWidth: 102 },
   };
 }
 
@@ -9926,9 +9982,9 @@ async function downloadDailyReportWorkbook(date, newWorkRows, completedRows, vis
   await downloadXlsxSheets(`daily-report-${date}`, [
     { name: "New Work Came", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Assigned To": "" }, ...newWorkRows, { SN: "", Name: `Total New Work Received: ${newWorkRows.length}`, "Type of Service": "", "C/o": "", "Assigned To": "" }] },
     { name: "Completed Files", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }, ...completedRows, { SN: "", Name: `Total Completed Files: ${completedRows.length}`, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }] },
-    { name: "Visitors List", rows: [{ SN: "", Name: title, "Purpose of Visit": "", "Met Whom": "" }, ...visitorRows, { SN: "", Name: `Total Visitors: ${visitorRows.length}`, "Purpose of Visit": "", "Met Whom": "" }] },
-    { name: "Collections", rows: [{ SN: "", "Received from": title, "Receipt No": "", Amount: "", Mode: "" }, ...collectionRows, { SN: "", "Received from": "Total Collections", "Receipt No": "", Amount: money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), Mode: "" }] },
-    { name: "Expense Report", rows: [{ SN: "", Particulars: title, "Voucher No": "", "Paid to": "", Amount: "", Mode: "" }, ...expenseRows, { SN: "", Particulars: "Total Expenses", "Voucher No": "", "Paid to": "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), Mode: "" }] },
+    { name: "Visitors List", rows: [{ SN: "", "Visitor Name": title, "Mobile No": "", Company: "", Purpose: "", Time: "", Met: "" }, ...visitorRows, { SN: "", "Visitor Name": `Total Visitors: ${visitorRows.length}`, "Mobile No": "", Company: "", Purpose: "", Time: "", Met: "" }] },
+    { name: "Collections", rows: [{ SN: "", "Received from": title, Particulars: "", "Ref No": "", Mode: "", Amount: "", "Collected By": "" }, ...collectionRows, { SN: "", "Received from": "Total Collections", Particulars: "", "Ref No": "", Mode: "", Amount: money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Collected By": "" }] },
+    { name: "Expense Report", rows: [{ SN: "", "Received from": title, Particulars: "", "Ref No": "", Mode: "", Amount: "", "Collected By": "" }, ...expenseRows, { SN: "", "Received from": "Total Expenses", Particulars: "", "Ref No": "", Mode: "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Collected By": "" }] },
   ]);
 }
 
@@ -10265,25 +10321,44 @@ function flattenFile(file) {
 
 function openNotifications() {
   const panel = document.querySelector("#notificationPanel");
-  const items = notifications();
+  const allItems = allNotificationItems();
+  const activeFilter = panel?.dataset.filter || "all";
+  const items = filterNotificationItems(allItems, activeFilter);
+  const unreadTotal = allItems.filter((item) => !item.isRead).length;
   panel.innerHTML = `
-    <div class="drawer-head">
-      <div><h3>Notification Panel</h3><p class="small-muted">${items.length} unread reminder(s)</p></div>
-      <button class="icon-button" id="closeNotifications">X</button>
-    </div>
-    <div class="drawer-body">
-      <div class="action-row">
-        <button class="secondary-button" id="markAllRead" ${items.length ? "" : "disabled"}>Mark all as read</button>
+    <div class="drawer-head modern-drawer-head">
+      <div>
+        <span class="drawer-eyebrow">Workspace</span>
+        <h3>Notifications</h3>
+        <p class="small-muted">${unreadTotal} unread update(s)</p>
       </div>
-      ${items.map((item) => alertCard(item, true)).join("") || empty("No unread notifications.")}
+      <div class="drawer-head-actions">
+        <button class="mini-button" id="markAllRead" ${unreadTotal ? "" : "disabled"}>Mark All as Read</button>
+        <button class="icon-button drawer-close" id="closeNotifications" title="Close">X</button>
+      </div>
+    </div>
+    <div class="drawer-body notification-drawer-body">
+      <div class="notification-tabs">
+        ${notificationFilterTab("all", "All", activeFilter)}
+        ${notificationFilterTab("unread", "Unread", activeFilter)}
+        ${notificationFilterTab("files", "Files", activeFilter)}
+        ${notificationFilterTab("corrections", "Corrections", activeFilter)}
+        ${notificationFilterTab("billing", "Billing", activeFilter)}
+        ${notificationFilterTab("assignments", "Assignments", activeFilter)}
+        ${notificationFilterTab("system", "System", activeFilter)}
+      </div>
+      <div class="notification-list">
+        ${renderNotificationGroups(items)}
+      </div>
     </div>
   `;
+  panel.dataset.filter = activeFilter;
   panel.classList.add("open");
   document.querySelector("#backdrop").classList.add("show");
   document.querySelector("#closeNotifications").onclick = closeOverlays;
   document.querySelector("#markAllRead").onclick = () => {
-    state.readNotifications = [...new Set([...state.readNotifications, ...items.map((item) => item.id)])];
-    const chatIds = items.filter((item) => item.chatId).map((item) => item.chatId);
+    state.readNotifications = [...new Set([...(state.readNotifications || []), ...allItems.map((item) => item.id)])];
+    const chatIds = allItems.filter((item) => item.chatId).map((item) => item.chatId);
     if (chatIds.length) {
       markChatMessagesRead(chatIds);
     }
@@ -10291,9 +10366,15 @@ function openNotifications() {
     mount();
     openNotifications();
   };
+  document.querySelectorAll("[data-notification-filter]").forEach((btn) => {
+    btn.onclick = () => {
+      panel.dataset.filter = btn.dataset.notificationFilter;
+      openNotifications();
+    };
+  });
   document.querySelectorAll("[data-mark-read]").forEach((btn) => {
     btn.onclick = () => {
-      state.readNotifications = [...new Set([...state.readNotifications, btn.dataset.markRead])];
+      state.readNotifications = [...new Set([...(state.readNotifications || []), btn.dataset.markRead])];
       if (btn.dataset.markRead.startsWith("chat-")) {
         markChatMessageRead(btn.dataset.markRead.replace("chat-", ""));
       }
@@ -10302,6 +10383,96 @@ function openNotifications() {
       openNotifications();
     };
   });
+  document.querySelectorAll("[data-open-notification-file]").forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.openNotificationFile;
+      const itemId = btn.dataset.notificationId;
+      if (itemId) state.readNotifications = [...new Set([...(state.readNotifications || []), itemId])];
+      const file = state.files.find((row) => row.id === id);
+      if (!file) {
+        saveState();
+        mount();
+        openNotifications();
+        return toast("Referenced file is unavailable.");
+      }
+      activePage = "files";
+      saveState();
+      mount();
+      openFileDrawer(id);
+    };
+  });
+}
+
+function notificationFilterTab(value, label, activeFilter) {
+  return `<button class="notification-tab ${activeFilter === value ? "active" : ""}" data-notification-filter="${value}" type="button">${label}</button>`;
+}
+
+function filterNotificationItems(items, activeFilter) {
+  if (activeFilter === "all") return items;
+  if (activeFilter === "unread") return items.filter((item) => !item.isRead);
+  return items.filter((item) => item.category === activeFilter);
+}
+
+function renderNotificationGroups(items) {
+  if (!items.length) return empty("No notifications yet.");
+  const groups = [
+    ["Today", items.filter((item) => notificationDayGroup(item) === "Today")],
+    ["Yesterday", items.filter((item) => notificationDayGroup(item) === "Yesterday")],
+    ["Earlier", items.filter((item) => notificationDayGroup(item) === "Earlier")],
+  ].filter(([, rows]) => rows.length);
+  return groups.map(([label, rows]) => `
+    <section class="notification-group">
+      <h4>${label}</h4>
+      ${rows.map(notificationCard).join("")}
+    </section>
+  `).join("");
+}
+
+function notificationDayGroup(item) {
+  const time = Number(item.createdAt || 0) || Date.parse(item.date || "") || 0;
+  if (!time) return "Earlier";
+  const today = new Date(indiaTodayDate());
+  const date = new Date(time);
+  const dateKey = date.toISOString().slice(0, 10);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dateKey === today.toISOString().slice(0, 10)) return "Today";
+  if (dateKey === yesterday.toISOString().slice(0, 10)) return "Yesterday";
+  return "Earlier";
+}
+
+function notificationCard(item) {
+  const timeText = item.createdAt ? new Date(item.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : [fmt(item.date), item.time].filter(Boolean).join(" ");
+  return `
+    <article class="notification-card ${item.isRead ? "is-read" : "is-unread"} tone-${escapeHtml(item.tone || "progress")}">
+      <div class="notification-icon">${notificationIcon(item.category)}</div>
+      <div class="notification-content">
+        <div class="notification-title-line">
+          <strong>${escapeHtml(item.title || "Notification")}</strong>
+          ${item.isRead ? "" : `<span class="unread-dot" title="Unread"></span>`}
+        </div>
+        <p>${escapeHtml(item.text || "")}</p>
+        <div class="notification-meta">
+          <span>${escapeHtml(item.type || "Update")}</span>
+          ${item.actor ? `<span>${escapeHtml(item.actor)}</span>` : ""}
+          ${timeText ? `<time>${escapeHtml(timeText)}</time>` : ""}
+        </div>
+      </div>
+      <div class="notification-actions">
+        ${item.fileId ? `<button class="mini-button" data-open-notification-file="${escapeHtml(item.fileId)}" data-notification-id="${escapeHtml(item.id)}">View File</button>` : ""}
+        ${item.isRead ? "" : `<button class="mini-button" data-mark-read="${escapeHtml(item.id)}">Read</button>`}
+      </div>
+    </article>
+  `;
+}
+
+function notificationIcon(category = "") {
+  if (category === "billing") return navIcon("rupee");
+  if (category === "corrections") return navIcon("pending");
+  if (category === "assignments") return navIcon("users");
+  if (category === "chat") return navIcon("chat");
+  if (category === "system") return navIcon("database");
+  return navIcon("file");
 }
 
 function openTeamChat(clearDraft = false) {
@@ -10320,49 +10491,89 @@ function openTeamChat(clearDraft = false) {
     markChatMessagesRead(unreadIds);
     saveTabSession();
   }
+  const activeConversation = chatConversationTitle(previousType, previousRecipient);
   panel.innerHTML = `
-    <div class="drawer-head">
-      <div><h3>Team Chat</h3><p class="small-muted">View all messages, or filter Group and Personal chats.</p></div>
-      <button class="icon-button" id="closeTeamChat">X</button>
-    </div>
-    <div class="drawer-body team-chat-body">
-      <div class="chat-messages" id="chatMessages">
-        ${messages.map(chatMessageCard).join("") || empty("No Messages Yet. Start the Conversation.")}
+    <div class="drawer-head modern-drawer-head">
+      <div>
+        <span class="drawer-eyebrow">Team Workspace</span>
+        <h3>Team Chat</h3>
+        <p class="small-muted">Realtime central chat with unread tracking.</p>
       </div>
-      <div class="chat-compose">
-        <div class="chat-target-row">
-          <div class="field">
-            <label>Chat Type</label>
-            <select id="chatTargetType">
-              <option value="all" ${previousType === "all" ? "selected" : ""}>All Chats</option>
-              <option value="group" ${previousType === "group" ? "selected" : ""}>Group Chat</option>
-              <option value="personal" ${previousType === "personal" ? "selected" : ""}>Personal Chat</option>
-            </select>
-          </div>
-          <div class="field ${previousType === "personal" ? "" : "hidden"}" id="chatRecipientField">
-            <label>Send To</label>
-            <select id="chatRecipient">
-              ${recipients
-                .map((user) => `<option value="${user.id}" ${previousRecipient === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.role)}</option>`)
-                .join("")}
-              ${rolePerm().invite ? `<option value="__add_new_staff">+ Add New Staff</option>` : ""}
-            </select>
+      <button class="icon-button drawer-close" id="closeTeamChat" title="Close">X</button>
+    </div>
+    <div class="drawer-body team-chat-body modern-chat-body">
+      <aside class="chat-sidebar">
+        <div class="chat-search-wrap">
+          <input id="chatSearch" type="search" placeholder="Search users or chats" aria-label="Search chats">
+        </div>
+        <div class="chat-conversation-list">
+          ${chatConversationSummaries(previousType, previousRecipient).map(chatConversationButton).join("") || empty("No conversations.")}
+        </div>
+      </aside>
+      <section class="chat-conversation-panel">
+        <div class="chat-conversation-head">
+          <div class="chat-avatar">${escapeHtml(activeConversation.initials)}</div>
+          <div>
+            <h4>${escapeHtml(activeConversation.title)}</h4>
+            <p>${escapeHtml(activeConversation.subtitle)}</p>
           </div>
         </div>
-        <div class="chat-attachment-row">
-          <label class="secondary-button chat-attach-button" for="chatAttachment">Attach PDF / Excel</label>
-          <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <div class="chat-messages" id="chatMessages">
+          ${renderChatMessages(messages)}
+        </div>
+        <div class="chat-compose">
+          <div class="chat-target-row">
+            <div class="field">
+              <label>Chat Type</label>
+              <select id="chatTargetType">
+                <option value="all" ${previousType === "all" ? "selected" : ""}>All Chats</option>
+                <option value="group" ${previousType === "group" ? "selected" : ""}>Group Chat</option>
+                <option value="personal" ${previousType === "personal" ? "selected" : ""}>Personal Chat</option>
+              </select>
+            </div>
+            <div class="field ${previousType === "personal" ? "" : "hidden"}" id="chatRecipientField">
+              <label>Send To</label>
+              <select id="chatRecipient">
+                ${recipients
+                  .map((user) => `<option value="${user.id}" ${previousRecipient === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.role)}</option>`)
+                  .join("")}
+                ${rolePerm().invite ? `<option value="__add_new_staff">+ Add New Staff</option>` : ""}
+              </select>
+            </div>
+          </div>
+          <div class="chat-composer-line">
+            <label class="chat-tool-button" for="chatAttachment" title="Attach PDF or Excel">${navIcon("backup")}</label>
+            <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <textarea id="chatText" placeholder="${previousType === "personal" ? "Type a personal message" : "Type a message to the team"}">${escapeHtml(previousText)}</textarea>
+            <button class="primary-button chat-send-button" id="sendChatMessage" title="Send message">${navIcon("chat")}<span>Send</span></button>
+          </div>
           <span class="small-muted" id="chatAttachmentName">No file selected</span>
         </div>
-        <textarea id="chatText" placeholder="${previousType === "personal" ? "Type a personal message" : "Type a message to the team"}">${escapeHtml(previousText)}</textarea>
-        <button class="primary-button" id="sendChatMessage">Send Message</button>
-      </div>
+      </section>
     </div>
   `;
   panel.classList.add("open");
   document.querySelector("#backdrop").classList.add("show");
   document.querySelector("#closeTeamChat").onclick = closeOverlays;
   document.querySelector("#sendChatMessage").onclick = sendChatMessage;
+  document.querySelectorAll("[data-chat-type]").forEach((btn) => {
+    btn.onclick = () => {
+      const typeSelect = document.querySelector("#chatTargetType");
+      const recipientSelect = document.querySelector("#chatRecipient");
+      if (typeSelect) typeSelect.value = btn.dataset.chatType || "all";
+      if (recipientSelect && btn.dataset.chatRecipient) recipientSelect.value = btn.dataset.chatRecipient;
+      openTeamChat(false);
+    };
+  });
+  const chatSearch = document.querySelector("#chatSearch");
+  if (chatSearch) {
+    chatSearch.oninput = () => {
+      const query = chatSearch.value.trim().toLowerCase();
+      document.querySelectorAll(".chat-conversation-item").forEach((item) => {
+        item.classList.toggle("hidden", query && !item.textContent.toLowerCase().includes(query));
+      });
+    };
+  }
   document.querySelector("#chatTargetType").onchange = (event) => {
     document.querySelector("#chatRecipientField").classList.toggle("hidden", event.target.value !== "personal");
     openTeamChat();
@@ -10392,10 +10603,7 @@ function openTeamChat(clearDraft = false) {
   };
   const list = document.querySelector("#chatMessages");
   if (list) list.scrollTop = list.scrollHeight;
-  const chatButton = document.querySelector("#chatButton");
-  if (chatButton) chatButton.textContent = chatButtonLabel();
-  const notifyButton = document.querySelector("#notifyButton");
-  if (notifyButton) notifyButton.textContent = `Notifications ${notifications().length}`;
+  updateTopActionBadges();
 }
 
 function addChatStaffFromPrompt() {
@@ -10419,6 +10627,90 @@ function addChatStaffFromPrompt() {
   if (typeSelect) typeSelect.value = "personal";
   if (recipientSelect) recipientSelect.value = result.user.id;
   document.querySelector("#chatRecipientField")?.classList.remove("hidden");
+}
+
+function chatConversationTitle(targetType = "all", recipientId = "") {
+  if (targetType === "personal") {
+    const user = state.users.find((item) => item.id === recipientId) || chatRecipientUsers()[0] || {};
+    return {
+      title: user.name || "Personal Chat",
+      subtitle: `${user.role || "Team member"}${user.email ? ` | ${user.email}` : ""}`,
+      initials: userInitials(user.name || user.email || "PC"),
+    };
+  }
+  if (targetType === "group") {
+    return { title: "Group Chat", subtitle: `${chatRecipientUsers().length + 1} team member(s)`, initials: "GC" };
+  }
+  return { title: "All Conversations", subtitle: "Group and personal messages", initials: "AC" };
+}
+
+function chatConversationSummaries(activeType = "all", activeRecipient = "") {
+  const recipients = chatRecipientUsers();
+  const groupMessages = visibleChatMessages().filter((message) => (message.targetType || "group") === "group");
+  const allMessages = visibleChatMessages();
+  return [
+    chatConversationSummary("all", "", "All Conversations", "Group and personal messages", allMessages, activeType === "all"),
+    chatConversationSummary("group", "", "Group Chat", `${recipients.length + 1} members`, groupMessages, activeType === "group"),
+    ...recipients.map((user) => {
+      const messages = visibleChatMessages().filter((message) => isChatWithUser(message, user, loggedInUser()));
+      return chatConversationSummary("personal", user.id, user.name, user.role || user.email || "Team member", messages, activeType === "personal" && activeRecipient === user.id);
+    }),
+  ];
+}
+
+function chatConversationSummary(type, recipientId, title, subtitle, messages, active) {
+  const latest = sortChatMessages(messages || []).at(-1);
+  const unread = (messages || []).filter((message) => !chatSenderIsCurrentUser(message) && !isChatMessageRead(message)).length;
+  return {
+    type,
+    recipientId,
+    title,
+    subtitle,
+    latestText: latest?.text || (latest?.attachments?.length ? `Attachment: ${latest.attachments[0].name}` : "No messages yet"),
+    latestTime: latest ? formatChatDateTime(latest) : "",
+    initials: userInitials(title),
+    unread,
+    active,
+  };
+}
+
+function chatConversationButton(item) {
+  return `
+    <button class="chat-conversation-item ${item.active ? "active" : ""}" data-chat-type="${escapeHtml(item.type)}" data-chat-recipient="${escapeHtml(item.recipientId || "")}" type="button">
+      <span class="chat-avatar">${escapeHtml(item.initials)}</span>
+      <span class="chat-conversation-copy">
+        <strong>${escapeHtml(item.title)}</strong>
+        <small>${escapeHtml(item.latestText)}</small>
+      </span>
+      <span class="chat-conversation-meta">
+        ${item.unread ? `<em>${item.unread > 99 ? "99+" : item.unread}</em>` : ""}
+        ${item.latestTime ? `<time>${escapeHtml(item.latestTime)}</time>` : ""}
+      </span>
+    </button>
+  `;
+}
+
+function renderChatMessages(messages = []) {
+  if (!messages.length) return empty("No messages yet. Start the conversation.");
+  let lastGroup = "";
+  return messages.map((message) => {
+    const group = chatDateSeparator(message);
+    const separator = group !== lastGroup ? `<div class="chat-date-separator">${escapeHtml(group)}</div>` : "";
+    lastGroup = group;
+    return `${separator}${chatMessageCard(message)}`;
+  }).join("");
+}
+
+function chatDateSeparator(message = {}) {
+  const time = chatMessageTime(message);
+  if (!time) return "Earlier";
+  const dateKey = new Date(time).toISOString().slice(0, 10);
+  const today = indiaTodayDate();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dateKey === today) return "Today";
+  if (dateKey === yesterday.toISOString().slice(0, 10)) return "Yesterday";
+  return displayDate(dateKey);
 }
 
 function chatMessageCard(message) {
