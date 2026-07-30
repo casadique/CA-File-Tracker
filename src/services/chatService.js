@@ -19,13 +19,20 @@ async function sendChatMessage(payload, authUserId, profile) {
       error.status = 400;
       throw error;
     }
-    if (targetType === "personal" && String(targetUser.id || "") === String(sender.id || userId)) {
+    if (targetType === "personal" && [sender.id, sender.authUserId, profile?.id, authUserId].map(String).includes(String(targetUser.id || ""))) {
       const error = new Error("Please select another team member.");
       error.status = 400;
       throw error;
     }
+    const clientMessageId = String(payload.clientMessageId || payload.client_message_id || "").trim();
+    if (clientMessageId) {
+      const existing = (state.chatMessages || []).find((row) => row.client_message_id === clientMessageId || row.clientMessageId === clientMessageId);
+      if (existing) return state;
+    }
     const message = {
       id: crypto.randomUUID(),
+      client_message_id: clientMessageId || crypto.randomUUID(),
+      clientMessageId: clientMessageId || "",
       sender_id: sender.id || profile?.id || authUserId,
       authSenderId: authUserId,
       userId: sender.id || profile?.id || authUserId,
@@ -50,9 +57,9 @@ async function sendChatMessage(payload, authUserId, profile) {
       read_at: null,
       readAt: null,
       created_at: now.toISOString(),
-      createdAt: now.getTime(),
+      createdAt: now.toISOString(),
       date: now.toISOString().slice(0, 10),
-      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      time: "",
     };
     state.chatMessages = [...(state.chatMessages || []), message]
       .sort((a, b) => chatTime(a) - chatTime(b))

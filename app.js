@@ -291,6 +291,7 @@ let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
+let chatSendInFlight = false;
 const accessRestoreEmails = new Set();
 let syncChannel = null;
 try {
@@ -331,6 +332,12 @@ setInterval(() => {
     syncSharedState(localStorage.getItem(STORAGE_KEY), true);
   }
 }, 3000);
+
+setInterval(() => {
+  if (state.session?.loggedIn && isSupabaseMode() && document.querySelector("#teamChatPanel")?.classList.contains("open")) {
+    refreshCentralState({ force: true, preserveDraft: true });
+  }
+}, 1500);
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -556,9 +563,9 @@ function normalizeState(appState) {
     paidTo: item.paidTo || "",
     remarks: item.remarks || "",
     attachmentName: item.attachmentName || "",
-    createdAt: Number(item.createdAt || 0) || Date.now(),
-    updatedAt: Number(item.updatedAt || 0) || Date.now(),
-  }));
+    createdAt: item.createdAt || item.created_at || Date.now(),
+    updatedAt: item.updatedAt || item.updated_at || Date.now(),
+  })).sort(financeNewestFirst);
   appState.otherCashCollections = (appState.otherCashCollections || []).map((item) => ({
     ...item,
     id: item.id || crypto.randomUUID(),
@@ -570,9 +577,9 @@ function normalizeState(appState) {
     receivedFrom: properCaseName(item.receivedFrom || ""),
     remarks: item.remarks || "",
     attachmentName: item.attachmentName || "",
-    createdAt: Number(item.createdAt || 0) || Date.now(),
-    updatedAt: Number(item.updatedAt || 0) || Date.now(),
-  }));
+    createdAt: item.createdAt || item.created_at || Date.now(),
+    updatedAt: item.updatedAt || item.updated_at || Date.now(),
+  })).sort(financeNewestFirst);
   const staffSourceNames = new Set((appState.users || []).map((user) => normalizePersonName(user.name)).filter(Boolean));
   appState.otherCashCollectionSources = sortList([
     "CA Sadique",
@@ -939,6 +946,41 @@ async function syncFileDeleteToApi(fileId) {
   return result;
 }
 
+async function saveExpenseToApi(expense) {
+  const result = await apiJson("/api/finance/expenses", {
+    method: "POST",
+    body: JSON.stringify({ expense }),
+  });
+  if (result?.expenses) state.expenses = result.expenses;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function deleteExpenseFromApi(id) {
+  const result = await apiJson(`/api/finance/expenses/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (result?.expenses) state.expenses = result.expenses;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function saveCashCollectionToApi(collection) {
+  const result = await apiJson("/api/finance/collections", {
+    method: "POST",
+    body: JSON.stringify({ collection }),
+  });
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  if (result?.otherCashCollectionSources) state.otherCashCollectionSources = result.otherCashCollectionSources;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function deleteCashCollectionFromApi(id) {
+  const result = await apiJson(`/api/finance/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function loadStateFromApi() {
   if (!apiToken()) return false;
   try {
@@ -965,6 +1007,9 @@ async function refreshCentralState(options = {}) {
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
     applyCentralState(payload.state, { rerender: true });
+    if (options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open")) {
+      openTeamChat(false);
+    }
     return true;
   } catch (error) {
     console.warn("Central refresh failed", error);
@@ -3540,12 +3585,57 @@ function chatMessageTime(message = {}) {
   return Number(message.createdAt || 0) || Date.parse(message.created_at || `${message.date || ""} ${message.time || ""}`) || 0;
 }
 
+function mergeChatMessages(existingRows = [], incomingRows = []) {
+  const rows = [];
+  const keyOf = (message = {}) => message.id || message.client_message_id || message.clientMessageId || crypto.randomUUID();
+  const clientKeyOf = (message = {}) => message.client_message_id || message.clientMessageId || "";
+  const upsert = (message) => {
+    const clientKey = clientKeyOf(message);
+    const index = rows.findIndex((row) =>
+      (clientKey && clientKeyOf(row) === clientKey)
+      || (message.id && row.id === message.id)
+    );
+    if (index >= 0) rows[index] = { ...rows[index], ...message, id: String(message.id || "").startsWith("local-") ? rows[index].id : (message.id || rows[index].id) };
+    else rows.push({ ...message, id: message.id || keyOf(message) });
+  };
+  [...existingRows, ...incomingRows].forEach((message) => {
+    if (!message) return;
+    upsert(message);
+  });
+  return sortChatMessages(rows).slice(-1000);
+}
+
+function formatChatDateTime(message = {}) {
+  const time = chatMessageTime(message);
+  if (!time) return `${fmt(message.date)} ${String(message.time || "").toUpperCase()}`.trim();
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(new Date(time)).reduce((map, part) => {
+    map[part.type] = part.value;
+    return map;
+  }, {});
+  return `${parts.day}-${parts.month}-${parts.year} ${parts.hour}:${parts.minute} ${String(parts.dayPeriod || "").toUpperCase()}`;
+}
+
 function sortCorrectionHistory(rows = []) {
   return [...rows].sort((a, b) => correctionTime(b) - correctionTime(a));
 }
 
 function correctionTime(row = {}) {
   return Date.parse(row.returnedAt || row.returned_at || row.createdAt || row.created_at || row.returnedDate || "") || 0;
+}
+
+function financeNewestFirst(a = {}, b = {}) {
+  const left = Date.parse(a.updated_at || a.updatedAt || a.created_at || a.createdAt || a.date || "") || 0;
+  const right = Date.parse(b.updated_at || b.updatedAt || b.created_at || b.createdAt || b.date || "") || 0;
+  if (right !== left) return right - left;
+  return String(b.id || "").localeCompare(String(a.id || ""));
 }
 
 function sortFilesForDisplay(files) {
@@ -3769,12 +3859,13 @@ function renderFileTable(files) {
             const status = statusOf(file);
             const checking = isCompletedView ? checkingStatusOf(file) : { label: "", className: "" };
             const dateValue = isCompletedView ? workCompletedDate(file) : file.dueDate;
+            const receiptInfo = receiptSummary(file);
             const completedCells = `
               <td>${fileSerialNumber(file, index)}</td>
               <td><span class="client-name">${file.name}</span><span class="subtext">${file.pan}</span></td>
               <td>${file.serviceType}</td>
               <td>${escapeHtml(file.careOf || "Direct")}</td>
-              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}</td>
+              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}${receiptInfo}</td>
               <td class="completed-staff-cell">${file.assignedStaff}</td>
               <td class="completed-doc-cell">${fmt(dateValue)}</td>
               <td class="completed-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
@@ -3788,7 +3879,7 @@ function renderFileTable(files) {
               <td>${fmt(file.workAllotmentDate || file.fileReceivedDate)}</td>
               <td>${escapeHtml(file.careOf || "Direct")}</td>
               <td><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${file.priority || "Medium"}</span></td>
-              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}</td>
+              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}${receiptInfo}</td>
               <td>${file.assignedStaff}</td>
               <td class="${isOverdue(file) ? "due-date-cell overdue-due-date" : "due-date-cell"}">${fmt(dateValue)}</td>
               <td><div class="action-row">${fileRowActions(file)}</div></td>`;
@@ -3902,11 +3993,11 @@ function bindFileActions() {
   document.querySelectorAll("[data-mark-billed]").forEach((btn) => {
     btn.onclick = () => {
       const file = state.files.find((item) => item.id === btn.dataset.markBilled);
-      updateFileBilling(btn.dataset.markBilled, { billingType: "Billable", billed: true, billedDate: normalizeImportDate(workCompletedDate(file)) || todayDate(), feeReceived: false, feeReceivedDate: "" }, "File moved to Fee Pending", "feePending");
+      updateFileBilling(btn.dataset.markBilled, { billingType: "Billable", billed: true, billedDate: normalizeImportDate(workCompletedDate(file)) || todayDate(), feeReceived: false, feeReceivedDate: "" }, "File marked as billed");
     };
   });
   document.querySelectorAll("[data-mark-received]").forEach((btn) => {
-    btn.onclick = () => updateFileBilling(btn.dataset.markReceived, { feeReceived: true, feeReceivedDate: todayDate() }, "Fee marked as received");
+    btn.onclick = () => openMarkReceivedModal(btn.dataset.markReceived);
   });
   document.querySelectorAll("[data-mark-not-received]").forEach((btn) => {
     btn.onclick = () => updateFileBilling(btn.dataset.markNotReceived, { feeReceived: false, feeReceivedDate: "" }, "Fee marked as not received", "feePending");
@@ -4104,6 +4195,83 @@ async function returnFileForCorrection(fileId) {
   renderAll();
 }
 
+function openMarkReceivedModal(fileId) {
+  const file = state.files.find((item) => item.id === fileId);
+  if (!file) return toast("File record not found.");
+  if (!rolePerm().assign) return toast("This role cannot update billing.");
+  closeMarkReceivedModal();
+  const amountValue = Number(file.amount_received || file.amountReceived || file.feeAmount || file.billAmount || file.amount || 0) || "";
+  const modal = document.createElement("div");
+  modal.id = "markReceivedModal";
+  modal.className = "simple-modal open";
+  modal.innerHTML = `
+    <div class="simple-modal-card">
+      <div class="drawer-head">
+        <div>
+          <h3>Mark Fee Received</h3>
+          <p class="small-muted">${escapeHtml(file.name || "File")} | ${escapeHtml(file.serviceType || "")}</p>
+        </div>
+        <button class="icon-button" id="closeReceivedModal">X</button>
+      </div>
+      <div class="drawer-body">
+        <div class="two-col">
+          ${checkingDetailField("Billing Status", file.billed ? "Billed" : "Not Billed")}
+          ${checkingDetailField("Billed Date", file.billedDate ? displayDate(file.billedDate) : "-")}
+        </div>
+        <div class="two-col">
+          ${formField("receivedAmount", "Amount Received", amountValue, "number", false)}
+          ${formField("receivedOn", "Received On", file.received_on || file.receivedOn || file.feeReceivedDate || todayDate(), "date", false)}
+        </div>
+      </div>
+      <div class="drawer-actions">
+        <button class="secondary-button" id="cancelReceivedModal">Cancel</button>
+        <button class="primary-button" id="saveReceivedModal">Save Receipt</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.querySelector("#backdrop")?.classList.add("show");
+  document.querySelector("#closeReceivedModal").onclick = closeMarkReceivedModal;
+  document.querySelector("#cancelReceivedModal").onclick = closeMarkReceivedModal;
+  document.querySelector("#saveReceivedModal").onclick = () => saveReceivedFromModal(fileId);
+}
+
+function closeMarkReceivedModal() {
+  document.querySelector("#markReceivedModal")?.remove();
+  if (!document.querySelector(".drawer.open") && !document.querySelector(".notification-panel.open")) {
+    document.querySelector("#backdrop")?.classList.remove("show");
+  }
+}
+
+async function saveReceivedFromModal(fileId) {
+  const amount = Number(document.querySelector("[name='receivedAmount']")?.value || 0);
+  const receivedOn = normalizeImportDate(document.querySelector("[name='receivedOn']")?.value || "");
+  if (!amount) return toast("Please enter amount received.");
+  if (!receivedOn) return toast("Received On date is required.");
+  const button = document.querySelector("#saveReceivedModal");
+  if (button) button.disabled = true;
+  const user = loggedInUser() || {};
+  const receivedAt = new Date().toISOString();
+  const ok = await updateFileBilling(fileId, {
+    feeReceived: true,
+    feeReceivedDate: receivedOn,
+    amount_received: amount,
+    amountReceived: amount,
+    received_on: receivedOn,
+    receivedOn,
+    received_by_user_id: user.id || state.session?.userId || "",
+    received_by_user_name: user.name || state.currentUser || "",
+    receivedByUserId: user.id || state.session?.userId || "",
+    receivedByUserName: user.name || state.currentUser || "",
+    received_at: receivedAt,
+    receivedAt,
+    payment_status: "Received",
+    paymentStatus: "Received",
+  }, "Fee receipt saved");
+  if (button) button.disabled = false;
+  if (ok) closeMarkReceivedModal();
+}
+
 async function updateFileBilling(fileId, updates, message, nextListView = "") {
   if (!rolePerm().assign) return toast("This role cannot update billing.");
   const index = state.files.findIndex((file) => file.id === fileId);
@@ -4124,11 +4292,13 @@ async function updateFileBilling(fileId, updates, message, nextListView = "") {
   try {
     await syncFileRecordToApi(updated);
   } catch {
-    return toast("Billing saved locally, but central sync failed. Please retry.");
+    toast("Billing saved locally, but central sync failed. Please retry.");
+    return false;
   }
   if (nextListView) state.filters.listView = nextListView;
   toast(`${message} and synced`);
   renderAll();
+  return true;
 }
 
 function billingChangeText(before, after) {
@@ -4137,6 +4307,13 @@ function billingChangeText(before, after) {
   if ((before.billedDate || "") !== (after.billedDate || "")) return `Billed date changed to ${fmt(after.billedDate) || "blank"}`;
   if (!before.feeReceived && after.feeReceived) return "Fee marked as Received";
   return "Billing details updated";
+}
+
+function receiptSummary(file = {}) {
+  if (!file.feeReceived) return "";
+  const amount = Number(file.amount_received || file.amountReceived || file.feeReceivedAmount || 0);
+  const receivedOn = file.received_on || file.receivedOn || file.feeReceivedDate || "";
+  return `<span class="subtext receipt-summary">Received${amount ? `: ${money(amount)}` : ""}${receivedOn ? ` on ${displayDate(receivedOn)}` : ""}</span>`;
 }
 
 function queueFileChangeNotification(file, changeText, changeType = "File Update") {
@@ -7916,7 +8093,7 @@ function renderExpenseEntryTab() {
         ${renderExpenseFilters()}
       </div>
     </section>
-    ${expenseSearchActive() ? renderExpenseTable(rows) : empty("Use the search filters to view expense entries.")}
+    ${renderExpenseTable(rows)}
   `;
 }
 
@@ -7969,7 +8146,7 @@ function renderCashCollectionsTab() {
         ${renderCashFilters()}
       </div>
     </section>
-    ${cashSearchActive() ? renderCashCollectionTable(rows) : empty("Use the search filters to view cash collection entries.")}
+    ${renderCashCollectionTable(rows)}
   `;
 }
 
@@ -8170,6 +8347,7 @@ function bindExpensePage() {
 
 async function saveExpenseEntry(event) {
   event.preventDefault();
+  const submitButton = event.submitter || document.querySelector("#expenseForm button[type='submit']");
   const amount = Number(document.querySelector("#expenseAmount")?.value || 0);
   if (!amount) return toast("Please enter expense amount.");
   const existing = editingExpense();
@@ -8190,6 +8368,22 @@ async function saveExpenseEntry(event) {
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
+  if (isSupabaseMode()) {
+    try {
+      if (submitButton) submitButton.disabled = true;
+      await saveExpenseToApi(record);
+      rememberExpenseItem(record.particulars);
+      state.filters.editExpenseId = "";
+      toast(existing ? "Expense updated and synced" : "Expense saved and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Expense save failed", { id: record.id, message: error.message });
+      return toast(`Expense save failed: ${error.message || "Please retry."}`);
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
+  }
   state.expenses = existing ? state.expenses.map((item) => item.id === existing.id ? record : item) : [record, ...(state.expenses || [])];
   rememberExpenseItem(record.particulars);
   state.filters.editExpenseId = "";
@@ -8253,6 +8447,7 @@ function readExpenseAttachment(file) {
 
 async function saveCashCollectionEntry(event) {
   event.preventDefault();
+  const submitButton = event.submitter || document.querySelector("#cashCollectionForm button[type='submit']");
   const amount = Number(document.querySelector("#cashAmount")?.value || 0);
   if (!amount) return toast("Please enter collection amount.");
   const existing = editingCashCollection();
@@ -8273,6 +8468,22 @@ async function saveCashCollectionEntry(event) {
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
+  if (isSupabaseMode()) {
+    try {
+      if (submitButton) submitButton.disabled = true;
+      await saveCashCollectionToApi(record);
+      rememberCashReceivedFrom(record.receivedFrom);
+      state.filters.editCashId = "";
+      toast(existing ? "Cash collection updated and synced" : "Cash collection saved and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Collection save failed", { id: record.id, message: error.message });
+      return toast(`Collection save failed: ${error.message || "Please retry."}`);
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
+  }
   rememberCashReceivedFrom(record.receivedFrom);
   state.otherCashCollections = existing ? state.otherCashCollections.map((item) => item.id === existing.id ? record : item) : [record, ...(state.otherCashCollections || [])];
   state.filters.editCashId = "";
@@ -8335,15 +8546,37 @@ function rememberCashReceivedFrom(value) {
   state.otherCashCollectionSources = sortList([...(state.otherCashCollectionSources || []), properCaseName(value)]);
 }
 
-function deleteExpense(id) {
+async function deleteExpense(id) {
   if (!confirm("Delete this expense entry?")) return;
+  if (isSupabaseMode()) {
+    try {
+      await deleteExpenseFromApi(id);
+      toast("Expense deleted and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Expense delete failed", { id, message: error.message });
+      return toast(`Expense delete failed: ${error.message || "Please retry."}`);
+    }
+  }
   state.expenses = (state.expenses || []).filter((item) => item.id !== id);
   saveState();
   renderAll();
 }
 
-function deleteCashCollection(id) {
+async function deleteCashCollection(id) {
   if (!confirm("Delete this cash collection entry?")) return;
+  if (isSupabaseMode()) {
+    try {
+      await deleteCashCollectionFromApi(id);
+      toast("Cash collection deleted and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Collection delete failed", { id, message: error.message });
+      return toast(`Collection delete failed: ${error.message || "Please retry."}`);
+    }
+  }
   state.otherCashCollections = (state.otherCashCollections || []).filter((item) => item.id !== id);
   saveState();
   renderAll();
@@ -9211,11 +9444,12 @@ function chatMessageCard(message) {
   const own = chatSenderIsCurrentUser(message);
   const targetLabel = (message.targetType || "group") === "personal" ? `Personal${message.targetUserName ? ` to ${message.targetUserName}` : ""}` : "Group";
   const attachments = message.attachments || [];
+  const statusLabel = properCaseName(message.status || "Sent");
   return `
     <div class="chat-message ${own ? "own" : ""}">
       <div class="chat-meta">
         <strong>${escapeHtml(message.user || "Team Member")}</strong>
-        <span>${escapeHtml(targetLabel)} | ${fmt(message.date)} ${escapeHtml(message.time || "")} | ${escapeHtml(message.status || "sent")}</span>
+        <span>${escapeHtml(targetLabel)} | ${escapeHtml(formatChatDateTime(message))} | ${escapeHtml(statusLabel)}</span>
       </div>
       ${message.text ? `<p>${escapeHtml(message.text || "")}</p>` : ""}
       ${attachments.map((file) => `
@@ -9229,8 +9463,10 @@ function chatMessageCard(message) {
 }
 
 async function sendChatMessage() {
+  if (chatSendInFlight) return;
   const input = document.querySelector("#chatText");
   const fileInput = document.querySelector("#chatAttachment");
+  const sendButton = document.querySelector("#sendChatMessage");
   const text = input?.value.trim();
   const uploadedFile = fileInput?.files?.[0] || null;
   if (!text && !uploadedFile) return toast("Please type a message or attach a file.");
@@ -9253,11 +9489,37 @@ async function sendChatMessage() {
     if (uploadedFile.size > 1500000) return toast("Please attach a file below 1.5 MB for this local version.");
     attachments = [await readChatAttachment(uploadedFile)];
   }
+  const clientMessageId = crypto.randomUUID();
+  const optimistic = {
+    id: `local-${clientMessageId}`,
+    client_message_id: clientMessageId,
+    clientMessageId: clientMessageId,
+    userId: sender.id || state.session?.userId || "",
+    user: sender.name || state.currentUser || "Team Member",
+    userEmail: sender.email || state.session?.userEmail || "",
+    role: sender.role || state.currentRole || "",
+    targetType,
+    targetUserId: targetUser?.id || "",
+    targetUserName: targetUser?.name || "",
+    targetUserEmail: targetUser?.email || "",
+    text,
+    attachments,
+    status: "sending",
+    created_at: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  };
+  state.chatMessages = mergeChatMessages(state.chatMessages || [], [optimistic]);
+  if (input) input.value = "";
+  if (fileInput) fileInput.value = "";
+  openTeamChat(true);
   if (isSupabaseMode()) {
     try {
+      chatSendInFlight = true;
+      if (sendButton) sendButton.disabled = true;
       const result = await apiJson("/api/chat", {
         method: "POST",
         body: JSON.stringify({
+          clientMessageId,
           targetType,
           targetUserId: targetUser?.id || "",
           targetUserName: targetUser?.name || "",
@@ -9266,25 +9528,30 @@ async function sendChatMessage() {
           attachments,
         }),
       });
-      state.chatMessages = sortChatMessages(result.chatMessages || state.chatMessages || []);
-      const sent = state.chatMessages[state.chatMessages.length - 1];
+      state.chatMessages = mergeChatMessages(state.chatMessages || [], result.chatMessages || []);
+      const sent = state.chatMessages.find((message) => message.client_message_id === clientMessageId || message.clientMessageId === clientMessageId)
+        || state.chatMessages[state.chatMessages.length - 1];
       if (sent?.id) markChatMessageRead(sent.id, sender);
       saveState({ skipMerge: true, skipRemote: true });
-      if (input) input.value = "";
-      if (fileInput) fileInput.value = "";
       toast("Message sent");
       openTeamChat(true);
       return;
     } catch (error) {
+      state.chatMessages = mergeChatMessages((state.chatMessages || []).filter((message) => message.id !== optimistic.id), [{ ...optimistic, status: "failed" }]);
+      openTeamChat(true);
       console.error("Failed message insert", { targetType, targetUserId: targetUser?.id || "", message: error.message });
       return toast(`Message failed to send: ${error.message || "Please retry."}`);
+    } finally {
+      chatSendInFlight = false;
+      if (sendButton) sendButton.disabled = false;
     }
   }
   const messageId = crypto.randomUUID();
-  state.chatMessages = sortChatMessages([
-    ...(state.chatMessages || []),
+  state.chatMessages = mergeChatMessages((state.chatMessages || []).filter((message) => message.id !== optimistic.id), [
     {
       id: messageId,
+      client_message_id: clientMessageId,
+      clientMessageId: clientMessageId,
       userId: sender.id || state.session?.userId || "",
       user: sender.name || state.currentUser || "Team Member",
       userEmail: sender.email || state.session?.userEmail || "",
@@ -9297,14 +9564,14 @@ async function sendChatMessage() {
       attachments,
       status: "sent",
       deliveredAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
       date: todayDate(),
-      time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      time: "",
     },
-  ]).slice(-300);
+  ]);
   markChatMessageRead(messageId, sender);
   saveState();
-  if (input) input.value = "";
-  if (fileInput) fileInput.value = "";
   openTeamChat(true);
 }
 
@@ -9341,6 +9608,7 @@ function closeOverlays() {
   document.querySelector("#notificationPanel")?.classList.remove("open");
   document.querySelector("#teamChatPanel")?.classList.remove("open");
   document.querySelector("#sidebar")?.classList.remove("open");
+  document.querySelector("#markReceivedModal")?.remove();
   document.querySelector("#backdrop")?.classList.remove("show");
 }
 

@@ -5544,6 +5544,37 @@ table td {
   font-weight: 750;
 }
 
+.receipt-summary {
+  display: block;
+  margin-top: 6px;
+  color: #047857;
+  font-weight: 750;
+}
+
+.simple-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.simple-modal.open {
+  display: flex;
+}
+
+.simple-modal-card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
+}
+
 @media (max-width: 880px) {
   .app-shell,
   .app-shell.sidebar-collapsed {

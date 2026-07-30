@@ -72,6 +72,8 @@ function normalizeServerState(state) {
   return {
     ...state,
     files: sortFilesNewestFirst(state.files || []),
+    expenses: sortFinanceRows(state.expenses || []),
+    otherCashCollections: sortFinanceRows(state.otherCashCollections || []),
     chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
     correctionHistory: sortCorrectionsNewestFirst(state.correctionHistory || []),
   };
@@ -106,6 +108,15 @@ function messageTime(message = {}) {
 
 function sortCorrectionsNewestFirst(rows) {
   return [...rows].sort((a, b) => dateOrNumber(b.returned_at || b.returnedAt || b.created_at || b.createdAt) - dateOrNumber(a.returned_at || a.returnedAt || a.created_at || a.createdAt));
+}
+
+function sortFinanceRows(rows) {
+  return [...rows].sort((a, b) => {
+    const left = dateOrNumber(a.updated_at || a.updatedAt || a.created_at || a.createdAt || a.date);
+    const right = dateOrNumber(b.updated_at || b.updatedAt || b.created_at || b.createdAt || b.date);
+    if (right !== left) return right - left;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  });
 }
 
 function dateOrNumber(value) {
