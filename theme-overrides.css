@@ -89,6 +89,48 @@
   justify-content: flex-end;
 }
 
+.notification-panel .notification-drawer-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px 20px 20px;
+  overflow: hidden;
+}
+
+.notification-panel .notification-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 2px 8px;
+  overflow-x: auto;
+  overflow-y: visible;
+  background: linear-gradient(180deg, #f8fbff 0%, rgba(248, 251, 255, 0.94) 100%);
+  scrollbar-width: thin;
+}
+
+.notification-panel .notification-tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 8px 13px;
+  white-space: nowrap;
+}
+
+.notification-panel .notification-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0 12px;
+}
+
 .notification-read-button {
   min-width: 58px;
 }

@@ -2773,7 +2773,6 @@ function mount() {
             ${topActionIconButton("chatButton", "chat", "chat", "Team Chat", unreadChatCount())}
             ${topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length)}
             ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download</button><button class="top-action-button top-action-import" id="importFileButton">Import</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
-            ${rolePerm().export && activePage === "files" && state.filters.listView === "active" ? `<button class="top-action-button top-action-export" id="topExportActiveFiles">Export Active Files</button>` : ""}
             ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
             <button class="top-action-button top-action-profile" id="topProfileButton" title="Profile"><span class="topbar-profile-avatar">${escapeHtml(userInitials(state.currentUser))}</span><span class="topbar-profile-name">${escapeHtml(state.currentUser || "Profile")}</span></button>
           </div>
@@ -2966,8 +2965,6 @@ function bindShell() {
     };
     importFileInput.onchange = handleImportFile;
   }
-  const topExportActiveFiles = document.querySelector("#topExportActiveFiles");
-  if (topExportActiveFiles) topExportActiveFiles.onclick = () => exportActiveFilesExcel(filteredFiles());
   const runLogout = () => {
     state.session = { loggedIn: false };
     setApiToken("");
