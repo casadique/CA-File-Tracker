@@ -6743,3 +6743,532 @@ body,
     justify-self: start;
   }
 }
+
+/* Modern professional finance theme for Transactions only */
+.expense-shell {
+  max-width: 1540px;
+  margin: 0 auto;
+  gap: 16px;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#expenses {
+  background: #f6f8fc;
+}
+
+.transactions-page-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
+}
+
+.transactions-page-head h3 {
+  color: #172554;
+  font-size: 26px;
+}
+
+.transactions-page-head p {
+  color: #64748b;
+}
+
+.transactions-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.transactions-head-actions .primary-button,
+.transactions-head-actions .secondary-button {
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 8px 13px;
+}
+
+.expense-overview-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 142px;
+  border-width: 1.5px;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.07), transparent 34%),
+    linear-gradient(145deg, #ffffff, #fbfdff);
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
+}
+
+.expense-overview-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+}
+
+.expense-overview-card.balance {
+  border-color: #93c5fd;
+}
+
+.expense-overview-card.collection {
+  border-color: #86efac;
+}
+
+.expense-overview-card.expense {
+  border-color: #fca5a5;
+}
+
+.expense-overview-card.fee {
+  border-color: #c4b5fd;
+}
+
+.expense-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  font-size: 20px;
+}
+
+.expense-overview-card.balance .expense-card-icon {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.expense-overview-card.collection .expense-card-icon {
+  background: #dcfce7;
+  color: #059669;
+}
+
+.expense-overview-card.expense .expense-card-icon {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.expense-overview-card.fee .expense-card-icon {
+  background: #ede9fe;
+  color: #7c3aed;
+}
+
+.expense-overview-card span {
+  color: #475569;
+  font-size: 13px;
+}
+
+.expense-overview-card strong {
+  color: #0f172a;
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.expense-overview-card .negative-amount {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: #fee2e2;
+}
+
+.transaction-sparkline {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-top: 10px;
+}
+
+.transaction-sparkline polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  opacity: 0.75;
+}
+
+.expense-overview-card.balance .transaction-sparkline { color: #2563eb; }
+.expense-overview-card.collection .transaction-sparkline { color: #059669; }
+.expense-overview-card.expense .transaction-sparkline { color: #dc2626; }
+.expense-overview-card.fee .transaction-sparkline { color: #7c3aed; }
+
+.expense-tabs {
+  width: 100%;
+  max-width: 760px;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.05);
+}
+
+.expense-tab-button,
+.expense-tab-button.tab-collections,
+.expense-tab-button.tab-expenses,
+.expense-tab-button.tab-balance {
+  position: relative;
+  background: transparent;
+  border: 0;
+  color: #334155;
+  box-shadow: none;
+}
+
+.expense-tab-button:hover {
+  background: #f8fafc;
+}
+
+.expense-tab-button.active-tab,
+.expense-tab-button.tab-collections.active-tab,
+.expense-tab-button.tab-expenses.active-tab,
+.expense-tab-button.tab-balance.active-tab {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+.expense-tab-button.active-tab::after {
+  position: absolute;
+  right: 16px;
+  bottom: 0;
+  left: 16px;
+  height: 3px;
+  border-radius: 999px;
+  background: #2563eb;
+  content: "";
+}
+
+.expense-tab-button.active-tab .tab-icon {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.transaction-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  gap: 16px;
+  align-items: start;
+}
+
+.transaction-main-column {
+  min-width: 0;
+}
+
+.expense-form,
+.expense-tools-card,
+.transaction-side-card {
+  border: 1px solid #dbe4f0;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+}
+
+.expense-form {
+  grid-template-columns: repeat(4, minmax(145px, 1fr));
+  gap: 14px;
+}
+
+.expense-card-head h3 {
+  color: #172554;
+  font-size: 18px;
+}
+
+.expense-card-head span {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.expense-form .field label,
+.expense-filters .field label,
+.opening-balance-form .field label {
+  margin-bottom: 6px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.expense-form input,
+.expense-form select,
+.expense-form textarea,
+.expense-filters input,
+.expense-filters select,
+.opening-balance-form input,
+.expense-item-combo input,
+.expense-item-combo select {
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.expense-form input:focus,
+.expense-form select:focus,
+.expense-form textarea:focus,
+.expense-filters input:focus,
+.expense-filters select:focus,
+.opening-balance-form input:focus,
+.expense-item-combo input:focus,
+.expense-item-combo select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.13);
+  outline: none;
+}
+
+.expense-entry-form .expense-item-field,
+.collection-form .expense-item-field,
+.collection-form .cash-received-from-field {
+  grid-column: span 2;
+}
+
+.expense-entry-form .expense-card-head,
+.collection-form .expense-card-head,
+.expense-entry-form .expense-remarks-field,
+.collection-form .expense-remarks-field,
+.expense-entry-form .expense-attachment-field,
+.collection-form .expense-attachment-field,
+.expense-entry-form .action-row,
+.collection-form .action-row {
+  grid-column: 1 / -1;
+}
+
+.expense-item-combo {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.cash-received-from-field .expense-item-combo {
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.75fr) auto;
+}
+
+.expense-remarks-field textarea {
+  min-height: 84px;
+  max-height: 110px;
+}
+
+.upload-drop {
+  min-height: 96px;
+  border: 1.5px dashed #9db7d6;
+  border-radius: 14px;
+  background: #f8fbff;
+}
+
+.upload-drop:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.upload-drop span {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.expense-form .action-row {
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.expense-form .primary-button {
+  background: #059669;
+  border-color: #059669;
+  color: #ffffff;
+  box-shadow: 0 10px 20px rgba(5, 150, 105, 0.22);
+}
+
+.expense-form .secondary-button {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.transaction-side-column {
+  display: grid;
+  gap: 14px;
+  position: sticky;
+  top: 96px;
+}
+
+.transaction-side-card {
+  padding: 15px;
+}
+
+.transaction-info-row,
+.transaction-quick-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.transaction-info-row span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.transaction-info-row strong {
+  color: #0f172a;
+  font-size: 13px;
+  text-align: right;
+}
+
+.transaction-info-row.collection strong { color: #059669; }
+.transaction-info-row.expense strong { color: #dc2626; }
+.transaction-info-row.fee strong { color: #7c3aed; }
+.transaction-info-row.balance strong { color: #2563eb; }
+
+.transaction-quick-action {
+  justify-content: flex-start;
+  color: #172554;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.transaction-quick-action:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.transaction-table-head {
+  margin-top: 2px;
+  padding: 14px 16px;
+  border: 1px solid #dbe4f0;
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
+  background: #ffffff;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.05);
+}
+
+.transaction-table-head + .table-wrap {
+  border: 1px solid #dbe4f0;
+  border-radius: 0 0 16px 16px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+}
+
+.transaction-table {
+  margin-top: 0;
+}
+
+.transaction-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  color: #172554;
+  font-size: 12px;
+}
+
+.transaction-table tbody tr:nth-child(even) {
+  background: #fbfdff;
+}
+
+.transaction-table tbody tr:hover {
+  background: #eff6ff;
+}
+
+.transaction-table .amount-cell {
+  color: #0f172a;
+  font-weight: 900;
+}
+
+.transaction-table .action-col .mini-button {
+  min-width: 0;
+  padding: 6px 9px;
+  border-radius: 9px;
+}
+
+.transaction-table .action-col .mini-button[data-view-expense],
+.transaction-table .action-col .mini-button[data-view-cash] {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #bfdbfe;
+}
+
+.transaction-table .action-col .mini-button[data-edit-expense],
+.transaction-table .action-col .mini-button[data-edit-cash] {
+  color: #4338ca;
+  background: #e0e7ff;
+  border-color: #c7d2fe;
+}
+
+.cash-balance-card {
+  border: 1px solid #dbe4f0;
+  border-left: 5px solid #2563eb;
+  border-radius: 14px;
+}
+
+.cash-balance-card:nth-child(2) {
+  border-left-color: #059669;
+}
+
+.cash-balance-card:nth-child(3) {
+  border-left-color: #dc2626;
+}
+
+.cash-balance-card.highlight {
+  background: #eff6ff;
+  border-left-color: #2563eb;
+}
+
+.cash-status.warn {
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+@media (max-width: 1180px) {
+  .transaction-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .transaction-side-column {
+    position: static;
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .expense-overview-grid {
+    grid-template-columns: repeat(2, minmax(190px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .transactions-page-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .transactions-head-actions {
+    justify-content: flex-start;
+  }
+
+  .expense-form,
+  .expense-entry-form,
+  .collection-form,
+  .expense-entry-form .expense-item-field,
+  .collection-form .expense-item-field,
+  .collection-form .cash-received-from-field,
+  .cash-received-from-field .expense-item-combo,
+  .transaction-side-column {
+    grid-template-columns: 1fr;
+  }
+
+  .expense-entry-form .expense-item-field,
+  .collection-form .expense-item-field,
+  .collection-form .cash-received-from-field {
+    grid-column: 1 / -1;
+  }
+
+  .expense-overview-grid,
+  .cash-balance-grid {
+    grid-template-columns: 1fr;
+  }
+}

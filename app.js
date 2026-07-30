@@ -8509,6 +8509,11 @@ function renderExpensesPage() {
           <h3>Transactions</h3>
           <p>Manage collections, expenses and cash reconciliation</p>
         </div>
+        <div class="transactions-head-actions">
+          <button class="secondary-button" type="button" data-expense-tab="collections">Add Collection</button>
+          <button class="secondary-button" type="button" data-expense-tab="expenses">Add Expense</button>
+          <button class="primary-button" type="button" data-expense-tab="balance">Reconcile Cash</button>
+        </div>
       </div>
       <div class="expense-overview-grid">
         ${expenseOverviewCard("Current Cash Balance", balance.closing, "balance", "Live cash position", "wallet")}
@@ -8534,8 +8539,21 @@ function expenseOverviewCard(label, amount, tone, helper = "", icon = "wallet") 
       <span>${label}</span>
       <strong class="${Number(amount || 0) < 0 ? "negative-amount" : ""}">${rupee(amount)}</strong>
       ${helper ? `<p>${helper}</p>` : ""}
+      ${transactionSparkline(tone)}
     </div>
   </div>`;
+}
+
+function transactionSparkline(tone = "balance") {
+  const values = {
+    balance: [6, 7, 8, 6, 9, 10, 9],
+    collection: [3, 5, 4, 7, 8, 7, 10],
+    expense: [5, 4, 6, 5, 7, 5, 6],
+    fee: [2, 4, 5, 5, 7, 8, 9],
+  }[tone] || [2, 4, 3, 6, 5, 7, 8];
+  const max = Math.max(...values);
+  const points = values.map((value, index) => `${index * 18},${28 - (value / max) * 22}`).join(" ");
+  return `<svg class="transaction-sparkline" viewBox="0 0 108 32" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}"></polyline></svg>`;
 }
 
 function expenseTabButton(key, label, selected, icon = "") {
@@ -8567,36 +8585,39 @@ function rupee(value) {
 function renderExpenseEntryTab() {
   const rows = filteredExpenses();
   return `
-    <section class="expense-stack">
-      <form id="expenseForm" class="expense-form expense-entry-form">
-        <div class="expense-card-head">
-          <h3>${state.filters.editExpenseId ? "Edit Expense" : "Add Expense"}</h3>
-          <p>Record and manage business expenses</p>
+    <div class="transaction-workspace">
+      <section class="expense-stack transaction-main-column">
+        <form id="expenseForm" class="expense-form expense-entry-form">
+          <div class="expense-card-head">
+            <h3>${state.filters.editExpenseId ? "Edit Expense" : "Add Expense"}</h3>
+            <p>Record and manage business expenses</p>
+          </div>
+          ${expenseDateField("expenseDate", "Expense Date", editingExpense()?.date || todayDate())}
+          ${expenseItemField(editingExpense()?.particulars || "")}
+          ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "")}
+          ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01")}
+          ${expenseSelect("expenseMode", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingExpense()?.mode || "Cash")}
+          ${expenseInput("expenseVoucherNo", "Voucher Number", editingExpense()?.voucherNo || "")}
+          ${expenseSelect("expenseCategory", "Expense Category", ["General", "Office", "Travel", "Client", "Utilities", "Compliance"], editingExpense()?.category || "General")}
+          ${expenseInput("expenseEnteredBy", "Entered By", editingExpense()?.createdBy || editingExpense()?.enteredBy || state.currentUser || "", "text")}
+          ${expenseTextarea("expenseRemarks", "Remarks", editingExpense()?.remarks || "")}
+          ${expenseAttachmentField(editingExpense())}
+          <div class="action-row">
+            <button class="secondary-button" type="button" id="resetExpenseForm">${state.filters.editExpenseId ? "Cancel" : "Reset"}</button>
+            <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editExpenseId ? "Update Expense" : "Save Expense"}</button>
+          </div>
+        </form>
+        ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
+        <div class="expense-tools-card">
+          <div class="expense-card-head">
+            <span>Search & Reports</span>
+            <h3>Expense Register</h3>
+          </div>
+          ${renderExpenseFilters()}
         </div>
-        ${expenseDateField("expenseDate", "Expense Date", editingExpense()?.date || todayDate())}
-        ${expenseItemField(editingExpense()?.particulars || "")}
-        ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "")}
-        ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01")}
-        ${expenseSelect("expenseMode", "Mode", ["Cash", "Bank", "UPI", "Cheque"], editingExpense()?.mode || "Cash")}
-        ${expenseInput("expenseVoucherNo", "Voucher No.", editingExpense()?.voucherNo || "")}
-        ${expenseSelect("expenseCategory", "Expense Category", ["General", "Office", "Travel", "Client", "Utilities", "Compliance"], editingExpense()?.category || "General")}
-        ${expenseInput("expenseEnteredBy", "Entered By", editingExpense()?.createdBy || editingExpense()?.enteredBy || state.currentUser || "", "text")}
-        ${expenseTextarea("expenseRemarks", "Remarks", editingExpense()?.remarks || "")}
-        ${expenseAttachmentField(editingExpense())}
-        <div class="action-row">
-          <button class="secondary-button" type="button" id="resetExpenseForm">${state.filters.editExpenseId ? "Cancel" : "Reset"}</button>
-          <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editExpenseId ? "Update Expense" : "Save Expense"}</button>
-        </div>
-      </form>
-      ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
-      <div class="expense-tools-card">
-        <div class="expense-card-head">
-          <span>Search & Reports</span>
-          <h3>Expense Register</h3>
-        </div>
-        ${renderExpenseFilters()}
-      </div>
-    </section>
+      </section>
+      ${renderTransactionSidePanel("expenses")}
+    </div>
     ${renderExpenseTable(rows)}
   `;
 }
@@ -8623,37 +8644,82 @@ function renderOpeningBalancePanel() {
 function renderCashCollectionsTab() {
   const rows = filteredCashCollections();
   return `
-    <section class="expense-stack">
-      <form id="cashCollectionForm" class="expense-form collection-form">
-        <div class="expense-card-head">
-          <h3>${state.filters.editCashId ? "Edit Collection" : "Add Collection"}</h3>
-          <p>Record cash, bank or other collections</p>
+    <div class="transaction-workspace">
+      <section class="expense-stack transaction-main-column">
+        <form id="cashCollectionForm" class="expense-form collection-form">
+          <div class="expense-card-head">
+            <h3>${state.filters.editCashId ? "Edit Collection" : "Add Collection"}</h3>
+            <p>Record cash, bank or other collections</p>
+          </div>
+          ${expenseDateField("cashDate", "Collection Date", editingCashCollection()?.date || todayDate())}
+          ${expenseSelect("cashCollectionType", "Collection Type", ["Other Cash Collection", "Fee Collection", "Bank Collection", "Other Collection"], editingCashCollection()?.collectionType || "Other Cash Collection")}
+          ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
+          ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01")}
+          ${expenseSelect("cashModeEntry", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
+          ${expenseInput("cashVoucherNo", "Reference Number", editingCashCollection()?.voucherNo || "")}
+          ${expenseInput("cashParticularsEntry", "Particulars", editingCashCollection()?.particulars || "")}
+          ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
+          ${expenseTextarea("cashRemarks", "Remarks", editingCashCollection()?.remarks || "")}
+          ${cashAttachmentField(editingCashCollection())}
+          <div class="action-row">
+            <button class="secondary-button" type="button" id="resetCashForm">${state.filters.editCashId ? "Cancel" : "Reset"}</button>
+            <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editCashId ? "Update Collection" : "Save Collection"}</button>
+          </div>
+        </form>
+        <div class="expense-tools-card">
+          <div class="expense-card-head">
+            <span>Search & Reports</span>
+            <h3>Client Collection Register</h3>
+          </div>
+          ${renderCashFilters()}
         </div>
-        ${expenseDateField("cashDate", "Collection Date", editingCashCollection()?.date || todayDate())}
-        ${expenseSelect("cashCollectionType", "Collection Type", ["Other Cash Collection", "Fee Collection", "Bank Collection", "Other Collection"], editingCashCollection()?.collectionType || "Other Cash Collection")}
-        ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
-        ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01")}
-        ${expenseSelect("cashModeEntry", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
-        ${expenseInput("cashVoucherNo", "Reference Number", editingCashCollection()?.voucherNo || "")}
-        ${expenseInput("cashParticularsEntry", "Particulars", editingCashCollection()?.particulars || "")}
-        ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
-        ${expenseTextarea("cashRemarks", "Remarks", editingCashCollection()?.remarks || "")}
-        ${cashAttachmentField(editingCashCollection())}
-        <div class="action-row">
-          <button class="secondary-button" type="button" id="resetCashForm">${state.filters.editCashId ? "Cancel" : "Reset"}</button>
-          <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editCashId ? "Update Collection" : "Save Collection"}</button>
-        </div>
-      </form>
-      <div class="expense-tools-card">
-        <div class="expense-card-head">
-          <span>Search & Reports</span>
-          <h3>Client Collection Register</h3>
-        </div>
-        ${renderCashFilters()}
-      </div>
-    </section>
+      </section>
+      ${renderTransactionSidePanel("collections")}
+    </div>
     ${renderCashCollectionTable(rows)}
   `;
+}
+
+function renderTransactionSidePanel(tab) {
+  const balance = cashBalanceForRange();
+  const today = indiaTodayDate();
+  const todaysCollections = (state.otherCashCollections || []).filter((item) => item.date === today);
+  const cashCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash");
+  const bankCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Bank");
+  const otherCollections = (state.otherCashCollections || []).filter((item) => !["Cash", "Bank"].includes(item.mode));
+  return `<aside class="transaction-side-column">
+    <section class="transaction-side-card">
+      <div class="expense-card-head">
+        <span>Today</span>
+        <h3>Collection Summary</h3>
+      </div>
+      ${transactionInfoRow("Today's Collections", todaysCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "collection")}
+      ${transactionInfoRow("Total Collections", balance.feeCollections + balance.otherCollections, "balance")}
+      ${transactionInfoRow("Cash Collections", cashCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "collection")}
+      ${transactionInfoRow("Bank Collections", bankCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "fee")}
+      ${transactionInfoRow("Other Collections", otherCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "balance")}
+      ${transactionInfoRow("Record Count", tab === "expenses" ? filteredExpenses().length : filteredCashCollections().length, "count", false)}
+    </section>
+    <section class="transaction-side-card">
+      <div class="expense-card-head">
+        <span>Quick Actions</span>
+        <h3>Operations</h3>
+      </div>
+      <button class="transaction-quick-action" type="button" data-expense-tab="collections">${transactionIcon("arrow-down")} Add Collection</button>
+      <button class="transaction-quick-action" type="button" data-expense-tab="expenses">${transactionIcon("arrow-up")} Add Expense</button>
+      <button class="transaction-quick-action" type="button" data-expense-tab="balance">${transactionIcon("wallet")} Cash Reconciliation</button>
+      <button class="transaction-quick-action" type="button" data-transaction-page="reports">${transactionIcon("receipt")} View Reports</button>
+      <button class="transaction-quick-action" type="button" id="transactionImportShortcut">${transactionIcon("file")} Import Data</button>
+      <button class="transaction-quick-action" type="button" id="transactionExportShortcut">${transactionIcon("save")} Export Data</button>
+    </section>
+  </aside>`;
+}
+
+function transactionInfoRow(label, value, tone, currency = true) {
+  return `<div class="transaction-info-row ${tone}">
+    <span>${escapeHtml(label)}</span>
+    <strong>${currency ? rupee(value) : Number(value || 0).toLocaleString("en-IN")}</strong>
+  </div>`;
 }
 
 function renderCashBalanceTab() {
@@ -8768,7 +8834,7 @@ function expenseAttachmentField(expense) {
   return `
     <div class="field expense-attachment-field">
       <label>Attachment</label>
-      <label class="upload-drop"><span>${transactionIcon("file")}</span><input id="expenseAttachment" type="file" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><strong>${name ? `Current: ${escapeHtml(name)}` : "Upload PDF or Excel"}</strong><small>Accepted: PDF, XLS, XLSX. Max practical size depends on browser memory.</small></label>
+      <label class="upload-drop"><span>${transactionIcon("file")}</span><input id="expenseAttachment" type="file" accept=".pdf,.jpg,.jpeg,.png,.xls,.xlsx,application/pdf,image/jpeg,image/png,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><strong>${name ? `Current: ${escapeHtml(name)}` : "Drag and drop a file here or click to browse"}</strong><small>PDF, JPG, PNG or Excel - Max 5 MB</small></label>
     </div>
   `;
 }
@@ -8778,7 +8844,7 @@ function cashAttachmentField(collection) {
   return `
     <div class="field expense-attachment-field">
       <label>Attachments</label>
-      <label class="upload-drop"><span>${transactionIcon("file")}</span><input id="cashAttachment" type="file" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><strong>${name ? `Current: ${escapeHtml(name)}` : "Upload PDF or Excel"}</strong><small>Accepted: PDF, XLS, XLSX. Max practical size depends on browser memory.</small></label>
+      <label class="upload-drop"><span>${transactionIcon("file")}</span><input id="cashAttachment" type="file" accept=".pdf,.jpg,.jpeg,.png,.xls,.xlsx,application/pdf,image/jpeg,image/png,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><strong>${name ? `Current: ${escapeHtml(name)}` : "Drag and drop a file here or click to browse"}</strong><small>PDF, JPG, PNG or Excel - Max 5 MB</small></label>
     </div>
   `;
 }
@@ -8793,7 +8859,7 @@ function expenseSelect(id, label, options, value = "") {
 
 function expenseItemField(value = "") {
   return `
-    <div class="field expense-item-field">
+    <div class="field expense-item-field cash-received-from-field">
       <label>Particulars / Expense Item</label>
       <div class="expense-item-combo">
         <select id="expenseParticularsEntry">${state.expenseItems.map((item) => `<option value="${escapeHtml(item)}" ${item === value ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select>
@@ -8891,6 +8957,20 @@ function bindExpensePage() {
   document.querySelectorAll("[data-select-expense-item]").forEach((btn) => btn.onclick = () => {
     const input = document.querySelector("#newExpenseItem");
     if (input) input.value = btn.dataset.selectExpenseItem || "";
+  });
+  document.querySelectorAll("[data-transaction-page]").forEach((btn) => {
+    btn.onclick = () => {
+      activePage = btn.dataset.transactionPage;
+      saveState();
+      renderAll();
+    };
+  });
+  document.querySelector("#transactionImportShortcut")?.addEventListener("click", () => document.querySelector("#importExcel")?.click());
+  document.querySelector("#transactionExportShortcut")?.addEventListener("click", () => {
+    const tab = state.filters.expenseTab || "collections";
+    if (tab === "expenses") return exportExpenseExcel();
+    if (tab === "balance") return exportBalanceExcel();
+    return exportCashExcel();
   });
   document.querySelector("#addCashReceivedFrom")?.addEventListener("click", addCashReceivedFromSource);
   document.querySelector("#expenseSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
@@ -9005,12 +9085,18 @@ function readExpenseAttachment(file) {
   if (!file) return Promise.resolve(null);
   const allowed = [
     "application/pdf",
+    "image/jpeg",
+    "image/png",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ];
-  const extensionAllowed = /\.(pdf|xls|xlsx)$/i.test(file.name);
+  const extensionAllowed = /\.(pdf|jpg|jpeg|png|xls|xlsx)$/i.test(file.name);
   if (!allowed.includes(file.type) && !extensionAllowed) {
-    toast("Attach PDF or Excel files only.");
+    toast("Attach PDF, JPG, PNG or Excel files only.");
+    return Promise.resolve(null);
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    toast("Attachment must be below 5 MB.");
     return Promise.resolve(null);
   }
   return new Promise((resolve) => {
