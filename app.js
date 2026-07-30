@@ -9591,6 +9591,21 @@ function dailyVisitorRows(date = dailyReportDate()) {
   }));
 }
 
+function dailyVisitorPdfRows(date = dailyReportDate()) {
+  return dailyVisitors(date).map((visitor, index) => ({
+    SN: index + 1,
+    "Visit Date": displayDate(normalizeImportDate(visitor.date || visitor.visit_date) || date),
+    "Visit Time": visitor.visitTime || visitor.visit_time || "",
+    "Visitor Name": visitor.visitorName || visitor.visitor_name || visitor.name || "",
+    "Mobile Number": visitor.mobileNumber || visitor.mobile_number || "",
+    Company: visitor.company || visitor.company_or_organisation || "",
+    Purpose: visitor.purpose || "",
+    "Met Whom": visitor.metWhom || visitor.met_whom || "",
+    "Entered By": visitor.enteredBy || visitor.entered_by_user_name || "",
+    Actions: visitor.action || visitor.status || visitor.remarks || visitor.followUp || "",
+  }));
+}
+
 function dailyExpenseRows(date = dailyReportDate()) {
   return (state.expenses || [])
     .filter((expense) => normalizeImportDate(expense.date) === date)
@@ -9603,6 +9618,26 @@ function dailyExpenseRows(date = dailyReportDate()) {
     Amount: money(expense.amount),
     Mode: expense.mode || "",
     }));
+}
+
+function dailyExpensePdfRows(date = dailyReportDate()) {
+  return (state.expenses || [])
+    .filter((expense) => normalizeImportDate(expense.date || expense.expense_date) === date)
+    .sort((a, b) => String(a.particulars || a.expense_item || "").localeCompare(String(b.particulars || b.expense_item || "")))
+    .map((expense, index) => ({
+      SN: index + 1,
+      Date: displayDate(normalizeImportDate(expense.date || expense.expense_date) || date),
+      "Expense Item": expense.expense_item || expense.particulars || "",
+      "Paid To": expense.paidTo || expense.paid_to || "",
+      "Payment Mode": expense.mode || expense.payment_mode || "",
+      "Voucher No.": expense.voucherNo || expense.voucher_number || "",
+      Amount: dailyPdfMoney(expense.amount),
+      "Entered By": expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
+    }));
+}
+
+function dailyPdfMoney(value) {
+  return `Rs. ${money(value)}`;
 }
 
 function dailyCollectionRows(date = dailyReportDate()) {
@@ -9705,12 +9740,27 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
     button.textContent = format === "Excel" ? "Preparing Excel..." : (format === "PDF" ? "Preparing PDF..." : "Preparing Print...");
   }
   const title = `Daily Report M&A - ${displayDate(date)}`;
+  const pdfTitle = `Daily Report - ${displayDate(date)}`;
   try {
     if (format === "Excel") {
       await downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
       addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
       saveState();
       toast("Daily Report Excel downloaded");
+      return;
+    }
+    const pdfSections = [
+      { title: "Completed Files", rows: completedRows, total: `Total Completed Files: ${completedRows.length}`, empty: "No files were completed on the selected date." },
+      { title: "New Work Came", rows: newWorkRows, total: `Total New Work Received: ${newWorkRows.length}`, empty: "No new work was received on the selected date." },
+      { title: "Visitors List", rows: dailyVisitorPdfRows(date), total: `Total Visitors: ${visitorRows.length}`, empty: "No visitor records for the selected date.", columnStyles: dailyVisitorPdfColumnStyles() },
+      { title: "Expense Report", rows: dailyExpensePdfRows(date), total: `Total Expenses: ${dailyPdfMoney((state.expenses || []).filter((expense) => normalizeImportDate(expense.date || expense.expense_date) === date).reduce((sum, expense) => sum + Number(expense.amount || 0), 0))}`, empty: "No expense records for the selected date.", columnStyles: dailyExpensePdfColumnStyles(), rightAlign: ["Amount"] },
+      { title: "Collections", rows: collectionRows, total: `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, empty: "No collections were recorded on the selected date." },
+    ];
+    if (format === "PDF") {
+      await downloadDailyReportPdf(date, pdfSections, pdfTitle);
+      addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
+      saveState();
+      toast("Daily Report PDF downloaded");
       return;
     }
     const sections = [
@@ -9720,13 +9770,6 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
       { title: "Collections", rows: collectionRows, total: `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, empty: "No collections were recorded on the selected date." },
       { title: "Expense Report", rows: expenseRows, total: `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, empty: "No expenses were recorded on the selected date." },
     ];
-    if (format === "PDF") {
-      await downloadPdfSections(`daily-report-${date}`, sections, ["Muhammad & Associates,", "Chartered Accountants,", title]);
-      addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
-      saveState();
-      toast("Daily Report PDF downloaded");
-      return;
-    }
     const opened = printStructuredReport({
       title,
       sections,
@@ -9746,6 +9789,136 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
       button.textContent = originalText;
     }
   }
+}
+
+async function downloadDailyReportPdf(date, sections, title) {
+  await loadPdfTools();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 28;
+  let y = 34;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(20);
+  doc.setTextColor(15, 23, 42);
+  doc.text("MUHAMMAD & ASSOCIATES", pageWidth / 2, y, { align: "center" });
+  y += 24;
+  doc.setFontSize(13);
+  doc.setTextColor(30, 64, 175);
+  doc.text(title, pageWidth / 2, y, { align: "center" });
+  y += 24;
+  sections.forEach((section, index) => {
+    if (index > 0 && y > 480) {
+      doc.addPage();
+      y = 34;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text(section.title || "", margin, y);
+    y += 8;
+    const rows = section.rows || [];
+    const headers = rows.length ? Object.keys(rows[0]) : ["Message"];
+    const body = rows.length
+      ? rows.map((row) => headers.map((header) => String(row[header] ?? "")))
+      : [[section.empty || "No records found."]];
+    const columnStyles = section.columnStyles || dailyAutoFitPdfColumnStyles(headers, pageWidth - (margin * 2));
+    doc.autoTable({
+      startY: y + 6,
+      head: [headers],
+      body,
+      margin: { left: margin, right: margin },
+      tableWidth: pageWidth - (margin * 2),
+      theme: "grid",
+      styles: {
+        font: "helvetica",
+        fontSize: 7.2,
+        cellPadding: 3.2,
+        overflow: "linebreak",
+        valign: "top",
+        lineColor: [203, 213, 225],
+        lineWidth: 0.45,
+        textColor: [15, 23, 42],
+      },
+      headStyles: {
+        fillColor: [219, 234, 254],
+        textColor: [30, 64, 175],
+        fontStyle: "bold",
+        halign: "left",
+      },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles,
+      didParseCell: (data) => {
+        const header = headers[data.column.index];
+        if (section.rightAlign?.includes(header)) data.cell.styles.halign = "right";
+        if (["SN", "Visit Date", "Visit Time", "Actions"].includes(header)) data.cell.styles.halign = header === "SN" ? "center" : "left";
+      },
+    });
+    y = doc.lastAutoTable.finalY + 14;
+    if (section.total) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(section.total, margin, y);
+      y += 18;
+    }
+  });
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Page ${page} of ${pageCount}`, pageWidth - margin, doc.internal.pageSize.getHeight() - 16, { align: "right" });
+  }
+  doc.save(`daily-report-${date}.pdf`);
+}
+
+function dailyAutoFitPdfColumnStyles(headers, tableWidth) {
+  if (!headers.length) return {};
+  const styles = {};
+  const snIndex = headers.indexOf("SN");
+  const fixedWidth = snIndex >= 0 ? 28 : 0;
+  const flexibleHeaders = headers.filter((_, index) => index !== snIndex);
+  const flexibleWidth = Math.max(46, (tableWidth - fixedWidth) / Math.max(1, flexibleHeaders.length));
+  headers.forEach((header, index) => {
+    if (header === "SN") {
+      styles[index] = { cellWidth: fixedWidth, halign: "center" };
+    } else if (/amount|total|fee/i.test(header)) {
+      styles[index] = { cellWidth: flexibleWidth, halign: "right" };
+    } else {
+      styles[index] = { cellWidth: flexibleWidth };
+    }
+  });
+  return styles;
+}
+
+function dailyVisitorPdfColumnStyles() {
+  return {
+    0: { cellWidth: 26, halign: "center" },
+    1: { cellWidth: 54 },
+    2: { cellWidth: 44 },
+    3: { cellWidth: 80 },
+    4: { cellWidth: 68 },
+    5: { cellWidth: 88 },
+    6: { cellWidth: 124 },
+    7: { cellWidth: 72 },
+    8: { cellWidth: 70 },
+    9: { cellWidth: 56 },
+  };
+}
+
+function dailyExpensePdfColumnStyles() {
+  return {
+    0: { cellWidth: 30, halign: "center" },
+    1: { cellWidth: 58 },
+    2: { cellWidth: 150 },
+    3: { cellWidth: 130 },
+    4: { cellWidth: 72 },
+    5: { cellWidth: 68 },
+    6: { cellWidth: 78, halign: "right" },
+    7: { cellWidth: 92 },
+  };
 }
 
 async function downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows) {
