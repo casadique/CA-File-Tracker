@@ -1,0 +1,52 @@
+DEPRECATED - CA File Tracker Hostinger Node.js Deployment
+
+Current recommended deployment target is Render.
+Use RENDER-DEPLOYMENT.md instead of this file.
+
+Old Hostinger notes below are kept only for reference.
+
+Application type:
+- Responsive single page web application
+- HTML5, CSS3 and Vanilla JavaScript frontend
+- Node.js 18+ and Express.js backend
+- Supabase PostgreSQL, Supabase Auth and Supabase Storage
+
+Hostinger settings:
+- Application startup file: server.js
+- Build command: npm run build
+- Start command: npm start (or entry/startup file: server.js if Hostinger does not show a start-command field)
+- Node.js version: 18 or higher
+- Deployment source: GitHub main branch
+- Root directory: ./
+
+Required Hostinger environment variables:
+- NODE_ENV=production
+- SUPABASE_URL
+- SUPABASE_ANON_KEY
+- SUPABASE_SERVICE_ROLE_KEY
+- SUPABASE_STORAGE_BUCKET=ca-file-tracker-attachments
+- CORS_ORIGIN=https://your-domain.com
+- ADMIN_RECOVERY_TOKEN only when emergency admin password recovery is needed
+
+Initial setup:
+1. Run database/schema.sql in Supabase SQL editor.
+2. Set the Hostinger environment variables.
+3. Deploy from GitHub main branch.
+4. Run npm run import:backup one time to migrate data/site-data.json into Supabase.
+5. Restart the Hostinger Node.js app.
+
+Post-deployment verification:
+1. Open https://cafiletracker.net/api/health and confirm envReady is true.
+2. Open the app in a fresh browser/incognito window and log in as Admin.
+3. The Verification page should show Supabase central database mode.
+4. Allot one test file to a staff user. The success message must say File record saved and synced.
+5. Log in as that staff user in another browser/incognito window. The allotted file should appear after login or within a few seconds.
+6. Mark a status in the staff login. Admin/Manager should see the update after a few seconds or after changing/focusing the tab.
+
+Important:
+- Do not store Supabase secrets in files.
+- Passwords are handled by Supabase Auth and must not be stored in app data.
+- Supabase is the central operational database. Browser storage is only a temporary cache/session fallback.
+- Do not upload node_modules, .env, old zip files, or duplicate old HTML files to GitHub.
+- The files/folders that must be in GitHub are: server.js, package.json, index.html, app.js, styles.css, prepared-import-data.js, src, data, database and tools.
+- Remove ADMIN_RECOVERY_TOKEN from Hostinger after Admin login is working.
