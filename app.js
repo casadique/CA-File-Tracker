@@ -2245,7 +2245,9 @@ function filteredFiles() {
     if (f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
     if (f.overdue === "Yes" && !isOverdue(file)) return false;
     if (f.pendingApproval === "Yes" && !pendingApproval(file)) return false;
-    const fileFilterDate = file.workAllotmentDate || file.fileReceivedDate || file.lastUpdatedDate || file.dueDate || "";
+    const fileFilterDate = usesCompletionSort(f.listView, f.dashboardKind)
+      ? fileActualCompletionDate(file)
+      : (file.fileReceivedDate || file.workAllotmentDate || file.lastUpdatedDate || file.dueDate || "");
     if (f.fileFrom && fileFilterDate < f.fileFrom) return false;
     if (f.fileTo && fileFilterDate > f.fileTo) return false;
     if (f.dashboardKind === "pending" && isCheckedCompleted(file)) return false;
@@ -3367,6 +3369,8 @@ function navIcon(name) {
     users: '<svg viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.7-6 3.8V20h12v-3.2C15 14.7 12.3 13 9 13Zm8.5-1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm.5 1.2c-.9 0-1.7.1-2.4.4 1.1.8 1.9 1.9 1.9 3.2V20H22v-3c0-2.1-1.8-3.8-4-3.8Z"/></svg>',
     chart: '<svg viewBox="0 0 24 24"><path d="M4 19h16v2H4V3h2v16Zm4-2h3V9H8v8Zm5 0h3V5h-3v12Zm5 0h3v-6h-3v6Z"/></svg>',
     database: '<svg viewBox="0 0 24 24"><path d="M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3Zm-8 5c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3V8Zm0 6c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3v-4Z"/></svg>',
+    filterOff: '<svg viewBox="0 0 24 24"><path d="M3.3 2 2 3.3l7.2 7.2V20l3.1-1.8L20.7 22l1.3-1.3L3.3 2ZM4 5h1.2l2 2H7.4L11 11.2v3.3L9 15.7V12L4 5Zm5.8 2-2-2H20l-6 7v1.2l-2-2V11l3.4-4H9.8Z"/></svg>',
+    spreadsheet: '<svg viewBox="0 0 24 24"><path d="M5 3h14v18H5V3Zm2 2v4h4V5H7Zm6 0v4h4V5h-4ZM7 11v3h4v-3H7Zm6 0v3h4v-3h-4ZM7 16v3h4v-3H7Zm6 0v3h4v-3h-4Z"/></svg>',
     pdf: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Zm7 1.8V8h3.2L13 4.8ZM8 12h2.4c1.4 0 2.3.8 2.3 2.1s-.9 2.1-2.3 2.1h-.8V18H8v-6Zm1.6 2.8h.7c.5 0 .8-.3.8-.7s-.3-.7-.8-.7h-.7v1.4Zm3.9-2.8h2c1.6 0 2.7 1.2 2.7 3s-1.1 3-2.7 3h-2v-6Zm1.6 4.6h.3c.7 0 1.2-.5 1.2-1.6s-.5-1.6-1.2-1.6h-.3v3.2Z"/></svg>',
     chat: '<svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6A3.5 3.5 0 0 1 16.5 15H10l-5 4v-4.3A3.5 3.5 0 0 1 4 12.2V5.5Zm4 2.2v1.8h8V7.7H8Zm0 4h5.5V10H8v1.7Z"/></svg>',
     bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.8 2.8 0 0 0 2.7-2h-5.4A2.8 2.8 0 0 0 12 22Zm7-6-1.7-2.1V9a5.4 5.4 0 0 0-4.3-5.3V2h-2v1.7A5.4 5.4 0 0 0 6.7 9v4.9L5 16v2h14v-2Z"/></svg>',
@@ -4022,10 +4026,10 @@ function renderFilesPage() {
         ${isStaffLogin() ? inputFilter("fileTo", "To", "", "date") : ""}
       </div>
       <div class="action-row" style="margin-bottom:14px">
-        <button class="secondary-button" id="clearFilters">Clear Filters</button>
+        <button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button>
         ${isStaffLogin() ? `<button class="secondary-button" id="clearStaffDates">Clear Dates</button>` : ""}
-        ${rolePerm().export ? `<button class="secondary-button" id="exportFiltered">Export Filtered Excel</button>` : ""}
-        ${rolePerm().export ? `<button class="secondary-button pdf-export-button" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
+        ${rolePerm().export ? `<button class="secondary-button file-action-button file-action-excel" id="exportFiltered">${navIcon("spreadsheet")}Export Filtered Excel</button>` : ""}
+        ${rolePerm().export ? `<button class="secondary-button file-action-button pdf-export-button file-action-pdf" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
       </div>
       <div id="fileResults">${renderFileTable(files)}</div>
     </div>
@@ -4171,14 +4175,14 @@ function staffPageFiles(listView) {
     if (listView === "active") return !isCheckedCompleted(file);
     if (listView === "completed") {
       if (!isCheckedCompleted(file)) return false;
-      const completedDate = workCompletedDate(file);
+      const completedDate = fileActualCompletionDate(file);
       if (state.filters.fileFrom && completedDate < state.filters.fileFrom) return false;
       if (state.filters.fileTo && completedDate > state.filters.fileTo) return false;
       return true;
     }
     if (listView === "notChecked") {
       if (!isNotCheckedFile(file)) return false;
-      const completedDate = workCompletedDate(file);
+      const completedDate = fileActualCompletionDate(file);
       if (state.filters.fileFrom && completedDate < state.filters.fileFrom) return false;
       if (state.filters.fileTo && completedDate > state.filters.fileTo) return false;
       return true;
@@ -4189,7 +4193,9 @@ function staffPageFiles(listView) {
     return true;
   });
   const filteredRows = ["", "active"].includes(listView) ? filterStaffActiveRows(rows) : rows;
-  return sortFilesNewestFirst(filteredRows);
+  return usesCompletionSort(listView, state.filters.dashboardKind)
+    ? sortFilesByCompletionNewestFirst(filteredRows)
+    : sortFilesForDisplay(filteredRows);
 }
 
 function filterStaffActiveRows(rows) {
@@ -4209,24 +4215,71 @@ function fileSerialSortValue(file) {
 }
 
 function fileDateSortValue(dateString) {
-  return Date.parse(normalizeImportDate(dateString) || "") || Number.MAX_SAFE_INTEGER;
+  return Date.parse(normalizeImportDate(dateString) || "") || 0;
 }
 
-function fileNewestSortTime(file = {}) {
-  const created = Number(file.createdAt || 0) || Date.parse(file.createdAt || file.created_at || "");
-  if (created) return created;
-  const received = Date.parse(normalizeImportDate(file.fileReceivedDate || file.receivedDate || "") || "");
-  if (received) return received;
-  const updated = Number(file.updatedAt || 0) || Date.parse(file.lastUpdatedDate || file.updated_at || "");
-  return updated || 0;
+function fileCreatedSortTime(file = {}) {
+  return Number(file.createdAt || 0)
+    || Date.parse(file.createdAt || file.created_at || "")
+    || Number(file.updatedAt || 0)
+    || Date.parse(file.updated_at || file.lastUpdatedDate || "")
+    || 0;
+}
+
+function fileUpdatedSortTime(file = {}) {
+  return Number(file.updatedAt || 0)
+    || Date.parse(file.updated_at || file.lastUpdatedDate || "")
+    || fileCreatedSortTime(file);
+}
+
+function fileActualCompletionDate(file = {}) {
+  return normalizeImportDate(file.completionDate || file.completedDate || file.workCompletedDate || file.work_completed_date || file.completed_at || file.completedAt || "") || "";
+}
+
+function fileCompletionSortTime(file = {}) {
+  return Date.parse(fileActualCompletionDate(file) || "") || 0;
 }
 
 function sortFilesNewestFirst(files = []) {
   return [...files].sort((a, b) => {
-    const newest = fileNewestSortTime(b) - fileNewestSortTime(a);
-    if (newest) return newest;
+    const received = fileDateSortValue(b.fileReceivedDate || b.receivedDate || b.file_received_date || b.received_on)
+      - fileDateSortValue(a.fileReceivedDate || a.receivedDate || a.file_received_date || a.received_on);
+    if (received) return received;
+    const created = fileCreatedSortTime(b) - fileCreatedSortTime(a);
+    if (created) return created;
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
+}
+
+function sortFilesOldestReceivedFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const left = fileDateSortValue(a.fileReceivedDate || a.receivedDate || a.file_received_date || a.received_on);
+    const right = fileDateSortValue(b.fileReceivedDate || b.receivedDate || b.file_received_date || b.received_on);
+    if (left && right && left !== right) return left - right;
+    if (left && !right) return -1;
+    if (!left && right) return 1;
+    const created = fileCreatedSortTime(a) - fileCreatedSortTime(b);
+    if (created) return created;
+    return String(a.id || "").localeCompare(String(b.id || ""));
+  });
+}
+
+function sortFilesByCompletionNewestFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const left = fileCompletionSortTime(a);
+    const right = fileCompletionSortTime(b);
+    if (right && left && right !== left) return right - left;
+    if (right && !left) return 1;
+    if (!right && left) return -1;
+    const updated = fileUpdatedSortTime(b) - fileUpdatedSortTime(a);
+    if (updated) return updated;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function usesCompletionSort(listView = state.filters.listView, dashboardKind = state.filters.dashboardKind) {
+  return ["completed", "notChecked", "billed", "nonBilled", "feePending", "feeReceived"].includes(listView)
+    || ["completed", "reportsPrepared", "shared"].includes(dashboardKind);
 }
 
 function sortChatMessages(messages = []) {
@@ -4291,9 +4344,10 @@ function financeNewestFirst(a = {}, b = {}) {
 }
 
 function sortFilesForDisplay(files) {
+  if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
   if (["", "active"].includes(state.filters.listView || "") && ["Admin", "Manager"].includes(state.currentRole)) {
-    if (state.filters.receivedSort !== "Oldest First") return sortFilesNewestFirst(files);
-    return [...files].sort((a, b) => fileDateSortValue(a.fileReceivedDate) - fileDateSortValue(b.fileReceivedDate));
+    if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
+    return sortFilesNewestFirst(files);
   }
   return sortFilesNewestFirst(files);
 }
@@ -4493,13 +4547,13 @@ function renderFileTable(files) {
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
-  const dateColumnLabel = isCompletedView ? "DOC" : "Due";
+  const dateColumnLabel = isCompletedView ? "DOC ↓" : "Due";
   const assignedColumnLabel = isCompletedView ? "Assigned to" : "Assigned Staff";
   const finalInfoColumnLabel = isCompletedView ? "C/o" : "Priority";
   const managerCheckingColumns = canManageChecking() && isCompletedView;
   const headerRow = isCompletedView
     ? `<th>SN</th><th>Client</th><th>Service</th><th>C/o</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>${finalInfoColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
-    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
+    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on ↓</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table${compactClass}">
@@ -4544,13 +4598,13 @@ function renderFileTable(files) {
 }
 
 function renderNotCheckedFileTable(files) {
-  const rows = [...files].sort((a, b) => (Date.parse(workCompletedDate(b)) || 0) - (Date.parse(workCompletedDate(a)) || 0));
+  const rows = sortFilesByCompletionNewestFirst(files);
   const managerCheckingColumns = canManageChecking();
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
         <thead><tr>
-          <th>SN</th><th>Name</th><th>Type of Service</th><th>File Inward Date</th><th>Work Completion Date</th><th>Done By</th><th>Checking Status</th>${managerCheckingColumns ? "<th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>
+          <th>SN</th><th>Name</th><th>Type of Service</th><th>File Inward Date</th><th>Work Completion Date ↓</th><th>Done By</th><th>Checking Status</th>${managerCheckingColumns ? "<th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>
         </tr></thead>
         <tbody>
           ${rows.map((file, index) => {
@@ -10942,9 +10996,10 @@ function fileListSectionTitle() {
 }
 
 function fileListPdfFileName(sectionTitle) {
-  const range = [state.filters.fileFrom, state.filters.fileTo].filter(Boolean).map((date) => displayDate(date).replace(/\s+/g, "-")).join("-to-");
-  const slug = String(sectionTitle || "file-list").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "file-list";
-  return [slug, range, todayDate()].filter(Boolean).join("-");
+  const range = [state.filters.fileFrom, state.filters.fileTo].filter(Boolean).map((date) => displayDate(date)).join("-to-");
+  const reportDate = displayDate(todayDate());
+  const name = [sectionTitle || "File List", range || reportDate].filter(Boolean).join("-");
+  return name.replace(/[^a-zA-Z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
 function fileExportDateTime() {
@@ -10999,6 +11054,10 @@ function filePdfDate(value) {
   return displayDate(normalizeImportDate(value) || value);
 }
 
+function filePdfCompletionDate(file) {
+  return filePdfDate(fileActualCompletionDate(file));
+}
+
 function filePdfAmount(value) {
   return money(Number(value || 0));
 }
@@ -11009,19 +11068,33 @@ function filePendingAmount(file) {
   return Math.max(billed - received, 0);
 }
 
+function fileCrNumber(file = {}) {
+  return filePdfText(file.crNo || file.crNumber || file.clientCode || file.pan);
+}
+
+function fileDpName(file = {}) {
+  return filePdfText(file.dp || file.dealingPerson || file.dealtBy || file.createdBy || file.receivedBy);
+}
+
+function fileSpName(file = {}) {
+  return filePdfText(file.sp || file.supervisor || file.salesPerson || file.allottedBy);
+}
+
 function fileListReportRows(files) {
   const section = state.filters.listView || state.filters.dashboardKind || "files";
   return (files || []).map((file, index) => {
     const base = {
       SN: index + 1,
       "Client Name": filePdfText(file.name),
-      "PAN / Regn": filePdfText(file.pan),
-      Service: filePdfText(file.serviceType),
+      "CR No.": fileCrNumber(file),
+      "Service Type": filePdfText(file.serviceType),
       "C/o": filePdfText(file.careOf, "Direct"),
       FY: filePdfText(file.fy, "NA"),
-      "Received On": filePdfDate(file.fileReceivedDate),
+      "Received Date": filePdfDate(file.fileReceivedDate),
       "Work Allotted": filePdfDate(file.workAllotmentDate || file.fileReceivedDate),
       "Assigned Staff": filePdfText(file.assignedStaff, "Not Assigned"),
+      DP: fileDpName(file),
+      SP: fileSpName(file),
       Status: statusOf(file).label,
       Priority: filePdfText(file.priority),
       "Due Date": filePdfDate(file.dueDate),
@@ -11031,9 +11104,9 @@ function fileListReportRows(files) {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
-        Service: base.Service,
+        "Service Type": base["Service Type"],
         "Assigned Staff": base["Assigned Staff"],
-        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Completion Date": filePdfCompletionDate(file),
         "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
         "Billing Status": isBilledFile(file) ? "Billed" : isNonBilledFile(file) ? "Non-Billed" : "Pending",
         Remarks: base.Remarks,
@@ -11043,12 +11116,12 @@ function fileListReportRows(files) {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
-        Service: base.Service,
+        "Service Type": base["Service Type"],
         "Assigned Staff": base["Assigned Staff"],
-        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Completion Date": filePdfCompletionDate(file),
+        "Submitted for Checking": filePdfDate(file.submittedForCheckingDate || file.submitted_at || fileActualCompletionDate(file)),
         "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
-        "Checked By": filePdfText(file.checkedBy),
-        "Checked Date": filePdfDate(file.checkedDate),
+        "Correction Status": filePdfText(file.correctionStatus || checkingStatusOf(file).label, "-"),
         "Correction Reason": filePdfText(file.correctionReason || file.checkingRemarks || file.remarks),
       };
     }
@@ -11056,22 +11129,22 @@ function fileListReportRows(files) {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
-        Service: base.Service,
-        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Service Type": base["Service Type"],
+        "Completion Date": filePdfCompletionDate(file),
         "Billed Date": filePdfDate(file.billedDate),
         "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
-        "Fee Received": file.feeReceived ? "Yes" : "No",
         "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
         "Received On": filePdfDate(file.feeReceivedDate),
+        "Payment Status": file.feeReceived ? "Received" : "Pending",
       };
     }
     if (section === "nonBilled") {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
-        Service: base.Service,
-        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Service Type": base["Service Type"],
         "Assigned Staff": base["Assigned Staff"],
+        "Completion Date": filePdfCompletionDate(file),
         "Billing Type": filePdfText(file.billingType, "Non-Billable"),
         Remarks: base.Remarks,
       };
@@ -11080,29 +11153,39 @@ function fileListReportRows(files) {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
-        Service: base.Service,
-        "Billed Date": filePdfDate(file.billedDate),
+        "Service Type": base["Service Type"],
+        "Assigned Staff": base["Assigned Staff"],
+        "Completion Date": filePdfCompletionDate(file),
         "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
         "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
         "Pending Amount": filePdfAmount(filePendingAmount(file)),
-        "Due Date": base["Due Date"],
+        "Payment Status": file.feeReceived ? "Received" : "Pending",
       };
     }
-    return base;
+    return {
+      SN: base.SN,
+      "Client Name": base["Client Name"],
+      "CR No.": base["CR No."],
+      "Service Type": base["Service Type"],
+      "Received Date": base["Received Date"],
+      "Assigned Staff": base["Assigned Staff"],
+      DP: base.DP,
+      SP: base.SP,
+      Status: base.Status,
+      Priority: base.Priority,
+      "Due Date": base["Due Date"],
+    };
   });
 }
 
 async function exportFilteredFilesPdf(files, button) {
   if (!rolePerm().export) return toast("This role cannot export data.");
   const sourceFiles = Array.isArray(files) ? files : sortFilesForDisplay(filteredFiles());
+  if (!sourceFiles.length) return toast("No records available for the selected filters.");
   const sectionTitle = fileListSectionTitle();
+  const reportTitle = `${sectionTitle} Report`.toUpperCase();
   const rows = fileListReportRows(sourceFiles);
-  const headers = Object.keys(rows[0] || {
-    SN: "",
-    "Client Name": "",
-    Service: "",
-    Status: "",
-  });
+  const headers = Object.keys(rows[0] || {});
   const previousHtml = button?.innerHTML;
   if (button) {
     button.disabled = true;
@@ -11122,28 +11205,45 @@ async function exportFilteredFilesPdf(files, button) {
     doc.text("Chartered Accountants", pageWidth / 2, 49, { align: "center" });
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
-    doc.text(sectionTitle, 40, 78);
+    doc.text(reportTitle, pageWidth / 2, 76, { align: "center" });
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    doc.text(`Generated: ${fileExportDateTime()} | Records: ${sourceFiles.length}`, 40, 94);
-    doc.text(`Filters: ${fileExportFilterSummary()}`, 40, 108, { maxWidth: pageWidth - 80 });
-    const body = rows.length ? rows : [{ [headers[0]]: "No records found." }];
+    doc.text(`Generated On: ${fileExportDateTime()} | Total Records: ${sourceFiles.length}`, 40, 96);
+    doc.text(`Applied Filters: ${fileExportFilterSummary()}`, 40, 110, { maxWidth: pageWidth - 80 });
     doc.autoTable({
       columns: headers.map((header) => ({ header, dataKey: header })),
-      body,
-      startY: 122,
-      styles: { fontSize: 7.2, cellPadding: 4, overflow: "linebreak", valign: "middle" },
-      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
+      body: rows,
+      startY: 124,
+      theme: "grid",
+      showHead: "everyPage",
+      styles: { fontSize: 7.2, cellPadding: 3, overflow: "linebreak", valign: "middle", lineWidth: 0.15, lineColor: [180, 195, 215] },
+      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: "bold", halign: "center", lineWidth: 0.2, lineColor: [148, 163, 184] },
       alternateRowStyles: { fillColor: [248, 251, 255] },
       margin: { left: 28, right: 28 },
       columnStyles: {
-        SN: { halign: "center", cellWidth: 28 },
-        "Billed Amount": { halign: "right", cellWidth: 70 },
-        "Received Amount": { halign: "right", cellWidth: 75 },
-        "Pending Amount": { halign: "right", cellWidth: 75 },
-        Priority: { cellWidth: 50 },
-        Status: { cellWidth: 68 },
-        "Due Date": { cellWidth: 58 },
+        SN: { halign: "center", cellWidth: 24 },
+        "Client Name": { cellWidth: 106 },
+        "CR No.": { cellWidth: 58 },
+        "Service Type": { cellWidth: 92 },
+        "Received Date": { halign: "center", cellWidth: 56 },
+        "Completion Date": { halign: "center", cellWidth: 60 },
+        "Submitted for Checking": { halign: "center", cellWidth: 68 },
+        "Billed Date": { halign: "center", cellWidth: 56 },
+        "Received On": { halign: "center", cellWidth: 56 },
+        "Due Date": { halign: "center", cellWidth: 54 },
+        "Assigned Staff": { cellWidth: 82 },
+        DP: { cellWidth: 52 },
+        SP: { cellWidth: 52 },
+        Status: { halign: "center", cellWidth: 64 },
+        "Checking Status": { halign: "center", cellWidth: 66 },
+        "Correction Status": { halign: "center", cellWidth: 70 },
+        Priority: { halign: "center", cellWidth: 46 },
+        "Payment Status": { halign: "center", cellWidth: 62 },
+        "Billed Amount": { halign: "right", cellWidth: 66 },
+        "Received Amount": { halign: "right", cellWidth: 70 },
+        "Pending Amount": { halign: "right", cellWidth: 70 },
+        Remarks: { cellWidth: 118 },
+        "Correction Reason": { cellWidth: 150 },
       },
     });
     const totalPages = doc.internal.getNumberOfPages();
@@ -11155,7 +11255,7 @@ async function exportFilteredFilesPdf(files, button) {
       doc.text("CA File Tracker", 28, pageHeight - 18);
     }
     doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
-    toast(rows.length ? "PDF file downloaded" : "No records found. Blank PDF downloaded.");
+    toast("PDF file downloaded");
   } catch (error) {
     console.error(error);
     toast("Unable to generate PDF. Please try again.");

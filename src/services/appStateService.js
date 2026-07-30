@@ -95,21 +95,22 @@ function sortStaffDetailsNewestFirst(rows) {
 
 function sortFilesNewestFirst(files) {
   return [...files].sort((a, b) => {
-    const left = fileSortTime(a);
-    const right = fileSortTime(b);
-    if (right !== left) return right - left;
+    const leftReceived = fileSortDate(a);
+    const rightReceived = fileSortDate(b);
+    if (rightReceived !== leftReceived) return rightReceived - leftReceived;
+    const leftCreated = fileCreatedTime(a);
+    const rightCreated = fileCreatedTime(b);
+    if (rightCreated !== leftCreated) return rightCreated - leftCreated;
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
 }
 
-function fileSortTime(file = {}) {
-  const created = dateOrNumber(file.created_at || file.createdAt);
-  if (created) return created;
-  const received = dateOrNumber(file.fileReceivedDate || file.receivedDate || file.received_on);
-  if (received) return received;
-  const updated = dateOrNumber(file.updated_at || file.updatedAt || file.lastUpdatedDate);
-  if (updated) return updated;
-  return 0;
+function fileSortDate(file = {}) {
+  return dateOrNumber(file.file_received_date || file.fileReceivedDate || file.receivedDate || file.received_on);
+}
+
+function fileCreatedTime(file = {}) {
+  return dateOrNumber(file.created_at || file.createdAt || file.updated_at || file.updatedAt || file.lastUpdatedDate);
 }
 
 function sortMessagesOldestFirst(messages) {
