@@ -2488,7 +2488,7 @@ function mount() {
             ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download Sample Excel</button><button class="top-action-button top-action-import" id="importFileButton">Import Excel Data</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
             ${rolePerm().export && activePage === "files" && state.filters.listView === "active" ? `<button class="top-action-button top-action-export" id="topExportActiveFiles">Export Active Files</button>` : ""}
             ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
-            <button class="top-action-button top-action-logout" id="logoutButton">Logout</button>
+            <button class="top-action-button top-action-profile" id="topProfileButton" title="Profile"><span class="topbar-profile-avatar">${escapeHtml(userInitials(state.currentUser))}</span><span class="topbar-profile-name">${escapeHtml(state.currentUser || "Profile")}</span></button>
           </div>
         </header>
         <section class="page" id="dashboard"></section>
@@ -2691,9 +2691,19 @@ function bindShell() {
     saveTabSession();
     mount();
   };
-  document.querySelector("#logoutButton").onclick = runLogout;
+  const logoutButton = document.querySelector("#logoutButton");
+  if (logoutButton) logoutButton.onclick = runLogout;
   const sidebarLogoutButton = document.querySelector("#sidebarLogoutButton");
   if (sidebarLogoutButton) sidebarLogoutButton.onclick = runLogout;
+  const topProfileButton = document.querySelector("#topProfileButton");
+  if (topProfileButton) {
+    topProfileButton.onclick = () => {
+      activePage = state.currentRole === "Admin" ? "users" : "dashboard";
+      toast(`${state.currentUser || "Profile"} - ${state.currentRole || "User"}`);
+      saveState();
+      renderAll();
+    };
+  }
   const sidebarCollapseButton = document.querySelector("#sidebarCollapseButton");
   if (sidebarCollapseButton) {
     sidebarCollapseButton.onclick = () => {
@@ -2804,6 +2814,8 @@ function renderAll() {
   renderNav();
   document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
   document.querySelector(`#${activePage}`).classList.add("active");
+  document.querySelector(".content")?.classList.toggle("dashboard-mode", activePage === "dashboard");
+  document.querySelector(".topbar")?.classList.toggle("dashboard-topbar", activePage === "dashboard");
   const titles = {
     dashboard: ["Dashboard", ""],
     files: ["File List", ""],
@@ -3146,29 +3158,12 @@ function renderModernDashboardShell(s) {
   const files = visibleFiles();
   const financials = dashboardFinancials();
   const today = indiaTodayDate();
-  const userName = loggedInUser()?.name || state.currentUser || "CA Sadique";
-  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date()));
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const todayVisitors = dashboardVisitorsToday();
   return `
     <section class="modern-dashboard">
-      <div class="dashboard-topbar-card">
-        <div class="dashboard-greeting">
-          <span class="dashboard-eyebrow">Office Overview</span>
-          <h2>${greeting}, ${escapeHtml(userName)}</h2>
-          <p>Here's what's happening in your office today.</p>
-        </div>
-        <div class="dashboard-top-actions">
-          <div class="dashboard-date-pill">${displayDate(today)}</div>
-          <button class="dashboard-filter-pill" id="dashboardTodayFilter">Today</button>
-          <label class="dashboard-search">
-            <span>${navIcon("database")}</span>
-            <input id="dashboardSearchInput" placeholder="Search client, file or PAN">
-          </label>
-          <button class="dashboard-icon-button" id="dashboardNotifications" title="Notifications">${navIcon("pending")}<b>${notifications().length}</b></button>
-          <button class="dashboard-icon-button" id="dashboardChat" title="Team Chat">${navIcon("users")}<b>${unreadChatMessages().length}</b></button>
-          <button class="dashboard-profile-button" id="dashboardProfile" title="Profile"><span>${escapeHtml(userName.slice(0, 1).toUpperCase())}</span><strong>${escapeHtml(userName)}</strong></button>
-        </div>
+      <div class="dashboard-compact-filterbar">
+        <span class="dashboard-date-pill">${displayDate(today)}</span>
+        <button class="dashboard-filter-pill" id="dashboardTodayFilter">Today</button>
       </div>
       <div class="dashboard-kpi-grid">
         ${dashboardKpiCard("Total Active Files", s.total, "All visible records", "active", "folder", "all", dashboardTrendValues("total"))}
@@ -3285,10 +3280,10 @@ function renderFilesByStatusCard(files) {
 
 function dashboardStatusRows(files = visibleFiles()) {
   return [
-    { label: "Received", count: files.filter((file) => stageIndex(file) === 0 && !isCheckedCompleted(file)).length, color: "#3b82f6" },
+    { label: "Received", count: files.filter((file) => stageIndex(file) === 0 && !isCheckedCompleted(file)).length, color: "#2563eb" },
     { label: "Work in Progress", count: files.filter((file) => stageIndex(file) > 0 && !isCheckedCompleted(file)).length, color: "#f59e0b" },
-    { label: "Completed", count: files.filter(isCheckedCompleted).length, color: "#059669" },
-    { label: "Not Checked", count: files.filter(isNotCheckedFile).length, color: "#0891b2" },
+    { label: "Completed", count: files.filter(isCheckedCompleted).length, color: "#3b82f6" },
+    { label: "Not Checked", count: files.filter(isNotCheckedFile).length, color: "#06b6d4" },
     { label: "Returned", count: files.filter((file) => file.stages?.["Correction Required"]).length, color: "#ef4444" },
   ];
 }
@@ -3335,7 +3330,7 @@ function lineTrendSvg(rows) {
     <polyline class="line-completed" points="${toPoints("completed")}"></polyline>
     ${rows.map((row, index) => `<text x="${24 + index * 39}" y="162">${row.date.slice(8)}</text>`).join("")}
   </svg>
-  <div class="chart-legend-inline"><span class="blue-dot"></span>Received <span class="green-dot"></span>Completed</div>`;
+  <div class="chart-legend-inline"><span class="blue-dot"></span>Received <span class="cyan-dot"></span>Completed</div>`;
 }
 
 function renderFeeCollectionOverviewCard(financials) {
@@ -3422,26 +3417,6 @@ function bindModernDashboard() {
     state.filters.from = indiaTodayDate();
     state.filters.to = indiaTodayDate();
     activePage = "files";
-    saveState();
-    renderAll();
-  });
-  document.querySelector("#dashboardSearchInput")?.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    state.filters.search = event.currentTarget.value.trim();
-    activePage = "files";
-    saveState();
-    renderAll();
-  });
-  document.querySelector("#dashboardNotifications")?.addEventListener("click", () => {
-    state.filters.notificationPanelOpen = "Yes";
-    renderAll();
-  });
-  document.querySelector("#dashboardChat")?.addEventListener("click", () => {
-    state.filters.chatOpen = "Yes";
-    renderAll();
-  });
-  document.querySelector(".dashboard-profile-button")?.addEventListener("click", () => {
-    activePage = "users";
     saveState();
     renderAll();
   });
