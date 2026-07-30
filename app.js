@@ -2895,22 +2895,7 @@ function renderDashboard() {
   ` : "";
   document.querySelector("#dashboard").innerHTML = `
     ${dataNotice}
-    <div class="grid metrics dashboard-main-metrics">
-        ${metric("Total Files", s.total, "Click to View All Records", "grad-blue", "all")}
-        ${metric("Not Started", s.notStarted, "Click to View Not Started", "grad-slate", "notStarted")}
-        ${metric("Work in Progress", s.workInProgress, "Click to View Work in Progress", "grad-purple", "wip")}
-        ${metric("Completed", s.completed, "Click to View Completed Files", "grad-green", "completed")}
-        ${metric("Fee Pending", s.feePending, "Click to View Fee Pending", "grad-pink", "feePending")}
-        ${metric("Pending Files", s.pending, "Click to View Not Filed", "grad-red", "pending")}
-        ${metric("Overdue Files", s.overdue, "Click for Immediate Follow-Up", "grad-red", "overdue")}
-        ${metric("Approval Pending", s.sharedNotApproved, "Click for approval pending", "grad-yellow", "approval")}
-        ${metric("Correction Required", s.correctionRequired, "Click to View Correction Files", "grad-yellow", "correction")}
-        ${metric("Re Allotted Files", s.reAllotted, "Click to View Re-Allotted Files", "grad-purple", "reallotted")}
-        ${metric("Reports Prepared", s.reportsPrepared, "Click to View Reports Ready", "grad-purple", "report")}
-        ${metric("Not Checked Files", s.notChecked, "Awaiting Manager Check", "grad-yellow", "notChecked")}
-        ${metric("Billed Files", s.billed, "Click to View Billed Records", "grad-darkgreen", "billed")}
-        ${metric("Unbilled Files", s.unbilled, "Click for Billing Follow-Up", "grad-pink", "unbilled")}
-    </div>
+    ${renderModernDashboardShell(s)}
     <section class="panel dashboard-staff-summary-panel">
       <button class="staff-summary-toggle" id="staffSummaryToggle" type="button">
         <span>Staff-Wise File Summary</span>
@@ -2934,6 +2919,7 @@ function renderDashboard() {
     </section>
   `;
   bindDashboardLinks();
+  bindModernDashboard();
   bindDashboardStaffSummary();
 }
 
@@ -3156,6 +3142,318 @@ function metric(label, value, note, className, filterKey = "") {
   return `<button class="metric-card ${className}" data-dashboard-filter="${filterKey}"><span>${label}</span><strong>${value}</strong><p>${note}</p></button>`;
 }
 
+function renderModernDashboardShell(s) {
+  const files = visibleFiles();
+  const financials = dashboardFinancials();
+  const today = indiaTodayDate();
+  const userName = loggedInUser()?.name || state.currentUser || "CA Sadique";
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date()));
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const todayVisitors = dashboardVisitorsToday();
+  return `
+    <section class="modern-dashboard">
+      <div class="dashboard-topbar-card">
+        <div class="dashboard-greeting">
+          <span class="dashboard-eyebrow">Office Overview</span>
+          <h2>${greeting}, ${escapeHtml(userName)}</h2>
+          <p>Here's what's happening in your office today.</p>
+        </div>
+        <div class="dashboard-top-actions">
+          <div class="dashboard-date-pill">${displayDate(today)}</div>
+          <button class="dashboard-filter-pill" id="dashboardTodayFilter">Today</button>
+          <label class="dashboard-search">
+            <span>${navIcon("database")}</span>
+            <input id="dashboardSearchInput" placeholder="Search client, file or PAN">
+          </label>
+          <button class="dashboard-icon-button" id="dashboardNotifications" title="Notifications">${navIcon("pending")}<b>${notifications().length}</b></button>
+          <button class="dashboard-icon-button" id="dashboardChat" title="Team Chat">${navIcon("users")}<b>${unreadChatMessages().length}</b></button>
+          <button class="dashboard-profile-button" id="dashboardProfile" title="Profile"><span>${escapeHtml(userName.slice(0, 1).toUpperCase())}</span><strong>${escapeHtml(userName)}</strong></button>
+        </div>
+      </div>
+      <div class="dashboard-kpi-grid">
+        ${dashboardKpiCard("Total Active Files", s.total, "All visible records", "active", "folder", "all", dashboardTrendValues("total"))}
+        ${dashboardKpiCard("Files Received", dashboardFilesReceivedToday(files), "Received today", "received", "file", "all", dashboardTrendValues("received"))}
+        ${dashboardKpiCard("Work in Progress", s.workInProgress, "Currently under work", "wip", "task", "wip", dashboardTrendValues("wip"))}
+        ${dashboardKpiCard("Completed Files", s.completed, "Marked completed", "completed", "check", "completed", dashboardTrendValues("completed"))}
+        ${dashboardKpiCard("Overdue Files", s.overdue, "Needs immediate follow-up", "overdue", "pending", "overdue", dashboardTrendValues("overdue"), true)}
+        ${dashboardKpiCard("Not Checked", s.notChecked, "Awaiting checking", "notchecked", "report", "notChecked", dashboardTrendValues("notChecked"), true)}
+        ${dashboardKpiCard("Total Billed", financials.totalBilled, "Billable amount", "billed", "invoice", "billed", dashboardTrendValues("billed"), false, true)}
+        ${dashboardKpiCard("Fee Received", financials.feeReceived, "Collected fees", "receivedfee", "rupee", "billed", dashboardTrendValues("feeReceived"), false, true)}
+        ${dashboardKpiCard("Fee Pending", financials.feePending, "Receivable amount", "feepending", "receipt", "feePending", dashboardTrendValues("feePending"), true, true)}
+        ${dashboardKpiCard("Collections Today", financials.collectionsToday, "Today's collections", "collectiontoday", "expense", "collections", dashboardTrendValues("collections"), false, true)}
+        ${dashboardKpiCard("Expenses Today", financials.expensesToday, "Today's expenses", "expensetoday", "receipt", "expenses", dashboardTrendValues("expenses"), true, true)}
+        ${dashboardKpiCard("Cash Balance", financials.cashBalance, "Closing cash position", "cash", "rupee", "balance", dashboardTrendValues("cash"), financials.cashBalance < 0, true)}
+      </div>
+      <div class="dashboard-chart-grid">
+        ${renderFilesByStatusCard(files)}
+        ${renderReceivedCompletedTrendCard(files)}
+        ${renderFeeCollectionOverviewCard(financials)}
+      </div>
+      <div class="dashboard-lower-grid">
+        ${renderRecentActivitiesCard()}
+        ${renderUpcomingDueDatesCard(files)}
+        ${renderVisitorsTodayCard(todayVisitors)}
+      </div>
+    </section>
+  `;
+}
+
+function dashboardKpiCard(title, value, note, tone, icon, filterKey, trendValues = [], adverse = false, currency = false) {
+  const numeric = Number(value || 0);
+  const trend = trendValues.length > 1 ? trendValues[trendValues.length - 1] - trendValues[0] : 0;
+  const trendClass = adverse ? (trend <= 0 ? "positive" : "negative") : (trend >= 0 ? "positive" : "negative");
+  const trendSymbol = trend >= 0 ? "up" : "down";
+  return `<button class="dashboard-kpi-card kpi-${tone}" data-dashboard-filter="${filterKey}">
+    <div class="dashboard-kpi-top">
+      <span class="dashboard-kpi-icon">${navIcon(icon)}</span>
+      <span class="dashboard-kpi-title">${escapeHtml(title)}</span>
+    </div>
+    <strong class="${numeric < 0 ? "negative-amount" : ""}">${currency ? rupee(numeric) : numeric.toLocaleString("en-IN")}</strong>
+    <div class="dashboard-kpi-meta">
+      <span class="kpi-trend ${trendClass}">${trendSymbol === "up" ? "&uarr;" : "&darr;"} ${Math.abs(trend).toLocaleString("en-IN")}</span>
+      <small>${escapeHtml(note)}</small>
+    </div>
+    ${miniTrendSvg(trendValues, tone)}
+  </button>`;
+}
+
+function dashboardFinancials() {
+  const files = visibleFiles();
+  const today = indiaTodayDate();
+  const totalBilled = files.filter(isBilledFile).reduce((sum, file) => sum + dashboardFileAmount(file, "billed"), 0);
+  const feeReceived = files.filter((file) => file.feeReceived).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
+  const feePending = Math.max(totalBilled - feeReceived, 0);
+  const collectionsToday = (state.otherCashCollections || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    + files.filter((file) => file.feeReceived && (file.feeReceivedDate || file.lastUpdatedDate) === today).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
+  const expensesToday = (state.expenses || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return { totalBilled, feeReceived, feePending, collectionsToday, expensesToday, cashBalance: cashBalanceForRange().closing };
+}
+
+function dashboardFileAmount(file, kind = "billed") {
+  const received = Number(file.amount_received || file.amountReceived || file.feeReceivedAmount || 0);
+  const billed = Number(file.feeAmount || file.billAmount || file.amount || file.billedAmount || received || 0);
+  return kind === "received" ? received : billed;
+}
+
+function dashboardFilesReceivedToday(files = visibleFiles()) {
+  const today = indiaTodayDate();
+  return files.filter((file) => (file.fileReceivedDate || file.createdAt || "").slice(0, 10) === today).length;
+}
+
+function dashboardTrendValues(kind) {
+  const today = new Date(`${indiaTodayDate()}T00:00:00+05:30`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (6 - index));
+    const iso = dateInput(date);
+    const files = visibleFiles();
+    if (kind === "received") return files.filter((file) => file.fileReceivedDate === iso).length;
+    if (kind === "completed") return files.filter((file) => workCompletedDate(file) === iso || file.lastUpdatedDate === iso && isCheckedCompleted(file)).length;
+    if (kind === "wip") return files.filter((file) => file.stages?.WIP && !isCheckedCompleted(file) && (file.workStartedDate || file.lastUpdatedDate || "") <= iso).length;
+    if (kind === "overdue") return files.filter((file) => file.dueDate && file.dueDate < iso && !isCheckedCompleted(file)).length;
+    if (kind === "notChecked") return files.filter(isNotCheckedFile).length;
+    if (kind === "billed") return files.filter((file) => file.billedDate === iso).length;
+    if (kind === "feeReceived") return files.filter((file) => file.feeReceivedDate === iso).length;
+    if (kind === "feePending") return files.filter(isFeePendingFile).length;
+    if (kind === "collections") return (state.otherCashCollections || []).filter((item) => item.date === iso).length;
+    if (kind === "expenses") return (state.expenses || []).filter((item) => item.date === iso).length;
+    if (kind === "cash") return cashBalanceForRange("", iso).closing;
+    return files.length;
+  });
+}
+
+function miniTrendSvg(values = [], tone = "active") {
+  const nums = values.length ? values.map((value) => Number(value || 0)) : [0, 0, 0, 0, 0, 0, 0];
+  const max = Math.max(...nums, 1);
+  const min = Math.min(...nums, 0);
+  const span = Math.max(max - min, 1);
+  const points = nums.map((value, index) => `${index * 18},${32 - ((value - min) / span) * 24}`).join(" ");
+  return `<svg class="dashboard-mini-trend trend-${tone}" viewBox="0 0 108 36" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" /></svg>`;
+}
+
+function renderFilesByStatusCard(files) {
+  const rows = dashboardStatusRows(files);
+  const total = Math.max(files.length, 1);
+  return `<section class="dashboard-data-card files-status-card">
+    <div class="dashboard-card-head"><div><h3>Files by Status</h3><p>${files.length} total file(s)</p></div><button class="mini-button" data-dashboard-filter="all">View All</button></div>
+    <div class="dashboard-donut-wrap">
+      ${statusDonutSvg(rows, files.length)}
+      <div class="status-legend">${rows.map((row) => `<div><span style="background:${row.color}"></span><strong>${row.label}</strong><em>${row.count}</em><small>${Math.round((row.count / total) * 100)}%</small></div>`).join("")}</div>
+    </div>
+  </section>`;
+}
+
+function dashboardStatusRows(files = visibleFiles()) {
+  return [
+    { label: "Received", count: files.filter((file) => stageIndex(file) === 0 && !isCheckedCompleted(file)).length, color: "#3b82f6" },
+    { label: "Work in Progress", count: files.filter((file) => stageIndex(file) > 0 && !isCheckedCompleted(file)).length, color: "#f59e0b" },
+    { label: "Completed", count: files.filter(isCheckedCompleted).length, color: "#059669" },
+    { label: "Not Checked", count: files.filter(isNotCheckedFile).length, color: "#0891b2" },
+    { label: "Returned", count: files.filter((file) => file.stages?.["Correction Required"]).length, color: "#ef4444" },
+  ];
+}
+
+function statusDonutSvg(rows, total) {
+  const circumference = 100;
+  let offset = 25;
+  const circles = rows.map((row) => {
+    const length = total ? (row.count / total) * circumference : 0;
+    const circle = `<circle r="15.915" cx="18" cy="18" fill="transparent" stroke="${row.color}" stroke-width="5" stroke-dasharray="${length} ${circumference - length}" stroke-dashoffset="${offset}" />`;
+    offset -= length;
+    return circle;
+  }).join("");
+  return `<div class="dashboard-donut"><svg viewBox="0 0 36 36">${circles}</svg><strong>${total}</strong><span>Total</span></div>`;
+}
+
+function renderReceivedCompletedTrendCard(files) {
+  const rows = dashboardLastSevenDates().map((date) => ({
+    date,
+    received: files.filter((file) => file.fileReceivedDate === date).length,
+    completed: files.filter((file) => workCompletedDate(file) === date || (file.lastUpdatedDate === date && isCheckedCompleted(file))).length,
+  }));
+  return `<section class="dashboard-data-card">
+    <div class="dashboard-card-head"><div><h3>Files Received vs Completed</h3><p>Last 7 days</p></div><select class="dashboard-period-select"><option>7 Days</option></select></div>
+    ${lineTrendSvg(rows)}
+  </section>`;
+}
+
+function dashboardLastSevenDates() {
+  const today = new Date(`${indiaTodayDate()}T00:00:00+05:30`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (6 - index));
+    return dateInput(date);
+  });
+}
+
+function lineTrendSvg(rows) {
+  const max = Math.max(...rows.flatMap((row) => [row.received, row.completed]), 1);
+  const toPoints = (key) => rows.map((row, index) => `${24 + index * 39},${142 - (row[key] / max) * 96}`).join(" ");
+  return `<svg class="dashboard-line-chart" viewBox="0 0 280 170" role="img" aria-label="Files received and completed trend">
+    <g class="grid-lines"><line x1="20" y1="46" x2="266" y2="46"/><line x1="20" y1="94" x2="266" y2="94"/><line x1="20" y1="142" x2="266" y2="142"/></g>
+    <polyline class="line-received" points="${toPoints("received")}"></polyline>
+    <polyline class="line-completed" points="${toPoints("completed")}"></polyline>
+    ${rows.map((row, index) => `<text x="${24 + index * 39}" y="162">${row.date.slice(8)}</text>`).join("")}
+  </svg>
+  <div class="chart-legend-inline"><span class="blue-dot"></span>Received <span class="green-dot"></span>Completed</div>`;
+}
+
+function renderFeeCollectionOverviewCard(financials) {
+  const percent = financials.totalBilled ? Math.min(100, Math.round((financials.feeReceived / financials.totalBilled) * 100)) : 0;
+  return `<section class="dashboard-data-card fee-overview-card">
+    <div class="dashboard-card-head"><div><h3>Fee Collection Overview</h3><p>Collection progress</p></div></div>
+    <div class="fee-gauge" style="--fee-percent:${percent}">
+      <div class="fee-gauge-arc"></div>
+      <strong>${percent}%</strong>
+      <span>Collected</span>
+    </div>
+    <div class="fee-breakdown">
+      <div><span>Total Billed</span><strong>${rupee(financials.totalBilled)}</strong></div>
+      <div><span>Total Received</span><strong>${rupee(financials.feeReceived)}</strong></div>
+      <div><span>Pending Amount</span><strong>${rupee(financials.feePending)}</strong></div>
+    </div>
+  </section>`;
+}
+
+function renderRecentActivitiesCard() {
+  const rows = dashboardRecentActivities().slice(0, 8);
+  return `<section class="dashboard-data-card dashboard-list-card">
+    <div class="dashboard-card-head"><div><h3>Recent Activities</h3><p>Newest first</p></div><button class="mini-button" id="dashboardViewActivities">View All</button></div>
+    <div class="dashboard-list-scroll">${rows.length ? rows.map((row) => `<div class="dashboard-activity-row"><span class="activity-dot ${row.tone}">${navIcon(row.icon)}</span><div><strong>${escapeHtml(row.title)}</strong><p>${escapeHtml(row.text)}</p></div><time>${escapeHtml(row.time)}</time></div>`).join("") : dashboardEmptyState("No recent activity")}</div>
+  </section>`;
+}
+
+function dashboardRecentActivities() {
+  const auditRows = (state.auditLog || []).map((item) => ({
+    title: item.action || "Activity",
+    text: `${item.user || state.currentUser || "Team"}${item.role ? ` - ${item.role}` : ""}`,
+    time: item.at ? new Date(item.at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "",
+    sort: Date.parse(item.at || "") || 0,
+    tone: "blue",
+    icon: "report",
+  }));
+  const chatRows = unreadChatMessages().slice(0, 5).map((item) => ({
+    title: "Chat notification",
+    text: `${item.user || "Team"}: ${item.text || "Attachment shared"}`,
+    time: item.createdAt ? new Date(item.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "",
+    sort: Date.parse(item.createdAt || "") || 0,
+    tone: "purple",
+    icon: "users",
+  }));
+  return [...auditRows, ...chatRows].sort((a, b) => b.sort - a.sort);
+}
+
+function renderUpcomingDueDatesCard(files) {
+  const rows = files
+    .filter((file) => !isCheckedCompleted(file) && file.dueDate)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    .slice(0, 8);
+  return `<section class="dashboard-data-card dashboard-list-card">
+    <div class="dashboard-card-head"><div><h3>Upcoming Due Dates</h3><p>Open files and tasks</p></div><button class="mini-button" data-dashboard-filter="overdue">View All</button></div>
+    <div class="dashboard-list-scroll">${rows.length ? rows.map((file) => `<div class="dashboard-due-row ${isOverdue(file) ? "is-overdue" : ""}"><div class="due-date-badge"><strong>${String(displayDate(file.dueDate)).slice(0, 2)}</strong><span>${String(displayDate(file.dueDate)).slice(3, 6)}</span></div><div><strong>${escapeHtml(file.name)}</strong><p>${escapeHtml(file.client || file.pan || file.serviceType || "")}</p></div><span class="priority-badge priority-${String(file.priority || "Normal").toLowerCase()}">${escapeHtml(file.priority || "Normal")}</span></div>`).join("") : dashboardEmptyState("No upcoming due dates")}</div>
+  </section>`;
+}
+
+function renderVisitorsTodayCard(visitors) {
+  return `<section class="dashboard-data-card dashboard-list-card">
+    <div class="dashboard-card-head"><div><h3>Visitors Today</h3><p>${visitors.length} visitor(s)</p></div><button class="mini-button" data-page="visitors">View All</button></div>
+    ${visitorHourlyTrendSvg(visitors)}
+    <div class="dashboard-list-scroll">${visitors.length ? visitors.slice(0, 7).map((visitor) => `<div class="dashboard-visitor-row"><span>${escapeHtml((visitor.visitorName || "V").slice(0, 1).toUpperCase())}</span><div><strong>${escapeHtml(visitor.visitorName || "")}</strong><p>${escapeHtml(visitor.visitTime || "")} - Met ${escapeHtml(visitor.metWhom || "")}</p></div></div>`).join("") : dashboardEmptyState("No visitors today")}</div>
+  </section>`;
+}
+
+function dashboardVisitorsToday() {
+  const today = indiaTodayDate();
+  return (state.visitors || []).filter((visitor) => visitor.date === today).sort(visitorNewestFirst);
+}
+
+function visitorHourlyTrendSvg(visitors) {
+  const buckets = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18].map((hour) => visitors.filter((visitor) => Number(String(visitor.visitTime || "").slice(0, 2)) === hour).length);
+  const max = Math.max(...buckets, 1);
+  return `<div class="visitor-bars">${buckets.map((count, index) => `<span title="${9 + index}:00" style="height:${Math.max(6, (count / max) * 36)}px"></span>`).join("")}</div>`;
+}
+
+function dashboardEmptyState(text) {
+  return `<div class="dashboard-empty-state">${escapeHtml(text)}</div>`;
+}
+
+function bindModernDashboard() {
+  document.querySelector("#dashboardTodayFilter")?.addEventListener("click", () => {
+    state.filters.from = indiaTodayDate();
+    state.filters.to = indiaTodayDate();
+    activePage = "files";
+    saveState();
+    renderAll();
+  });
+  document.querySelector("#dashboardSearchInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    state.filters.search = event.currentTarget.value.trim();
+    activePage = "files";
+    saveState();
+    renderAll();
+  });
+  document.querySelector("#dashboardNotifications")?.addEventListener("click", () => {
+    state.filters.notificationPanelOpen = "Yes";
+    renderAll();
+  });
+  document.querySelector("#dashboardChat")?.addEventListener("click", () => {
+    state.filters.chatOpen = "Yes";
+    renderAll();
+  });
+  document.querySelector(".dashboard-profile-button")?.addEventListener("click", () => {
+    activePage = "users";
+    saveState();
+    renderAll();
+  });
+  document.querySelectorAll(".modern-dashboard [data-page]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activePage = button.dataset.page;
+      saveState();
+      renderAll();
+    });
+  });
+}
+
 function dashboardStatusCards() {
   const files = visibleFiles();
   const count = (predicate) => files.filter(predicate).length;
@@ -3341,6 +3639,16 @@ function bindDashboardLinks() {
 
 function openFilesFromDashboard(kind) {
   if (isStaffLogin()) return openStaffFilesFromDashboard(kind);
+  if (["collections", "expenses", "balance"].includes(kind)) {
+    resetFilters();
+    activePage = "expenses";
+    if (kind === "collections") state.filters.expenseTab = "collections";
+    if (kind === "expenses") state.filters.expenseTab = "expenses";
+    if (kind === "balance") state.filters.expenseTab = "balance";
+    saveState();
+    renderAll();
+    return;
+  }
   resetFilters();
   if (kind === "active") state.filters.listView = "active";
   if (kind === "all") state.filters.listView = "";
