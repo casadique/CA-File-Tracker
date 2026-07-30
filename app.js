@@ -2456,10 +2456,11 @@ function mount() {
     <div class="app-shell ${isSidebarCollapsed() ? "sidebar-collapsed" : ""}">
       <aside class="sidebar ${isSidebarCollapsed() ? "collapsed" : ""}" id="sidebar">
         <div class="brand">
-          <div class="brand-mark" aria-hidden="true">${navIcon("briefcase")}</div>
+          <div class="brand-mark ca-logo-mark" aria-hidden="true"><span>CA</span><small>✓</small></div>
           <div class="brand-text-only">
             <h1><span>CA</span> <em>File Tracker</em></h1>
             <p class="brand-byline">Muhammad &amp; Associates</p>
+            <p class="brand-subline">Chartered Accountants</p>
           </div>
           <button class="sidebar-collapse-button" id="sidebarCollapseButton" type="button" title="Collapse navigation">${navIcon("chevron")}</button>
         </div>
@@ -2485,7 +2486,7 @@ function mount() {
           <div class="top-actions">
             <button class="icon-button" id="chatButton">${chatButtonLabel()}</button>
             <button class="icon-button" id="notifyButton">Notifications ${notifications().length}</button>
-            ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download Sample Excel</button><button class="top-action-button top-action-import" id="importFileButton">Import Excel Data</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
+            ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download</button><button class="top-action-button top-action-import" id="importFileButton">Import</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
             ${rolePerm().export && activePage === "files" && state.filters.listView === "active" ? `<button class="top-action-button top-action-export" id="topExportActiveFiles">Export Active Files</button>` : ""}
             ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
             <button class="top-action-button top-action-profile" id="topProfileButton" title="Profile"><span class="topbar-profile-avatar">${escapeHtml(userInitials(state.currentUser))}</span><span class="topbar-profile-name">${escapeHtml(state.currentUser || "Profile")}</span></button>
@@ -3158,12 +3159,22 @@ function renderModernDashboardShell(s) {
   const files = visibleFiles();
   const financials = dashboardFinancials();
   const today = indiaTodayDate();
+  const userName = loggedInUser()?.name || state.currentUser || "CA Sadique";
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date()));
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const todayVisitors = dashboardVisitorsToday();
   return `
     <section class="modern-dashboard">
-      <div class="dashboard-compact-filterbar">
-        <span class="dashboard-date-pill">${displayDate(today)}</span>
-        <button class="dashboard-filter-pill" id="dashboardTodayFilter">Today</button>
+      <div class="dashboard-topbar-card">
+        <div class="dashboard-greeting">
+          <span class="dashboard-eyebrow">Office Overview</span>
+          <h2>${greeting}, ${escapeHtml(userName)}</h2>
+          <p>Here's what's happening in your office today.</p>
+        </div>
+        <div class="dashboard-compact-filterbar">
+          <span class="dashboard-date-pill">${displayDate(today)}</span>
+          <button class="dashboard-filter-pill" id="dashboardTodayFilter">Today</button>
+        </div>
       </div>
       <div class="dashboard-kpi-grid">
         ${dashboardKpiCard("Total Active Files", s.total, "All visible records", "active", "folder", "all", dashboardTrendValues("total"))}
