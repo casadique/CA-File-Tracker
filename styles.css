@@ -5693,6 +5693,71 @@ textarea {
   height: 46px;
 }
 
+/* Transactions: scoped expense register column sizing */
+.expense-register-table .voucher-column,
+.expense-register-table .voucher-cell {
+  width: 90px;
+  min-width: 80px;
+  max-width: 110px;
+  white-space: nowrap;
+}
+
+.expense-register-table .voucher-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expense-register-table .amount-column,
+.expense-register-table .amount-cell.amount-column {
+  width: 110px;
+  min-width: 100px;
+  max-width: 125px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.expense-register-table .expense-item-column,
+.expense-register-table .expense-item-cell,
+.expense-register-table .paid-to-column,
+.expense-register-table .paid-to-cell {
+  min-width: 190px;
+}
+
+.admin-opening-balance {
+  border: 1px solid #bfdbfe;
+  border-left: 5px solid #2563eb;
+  background: linear-gradient(145deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.admin-opening-balance .expense-card-head span {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #bfdbfe;
+}
+
+.admin-opening-balance .opening-balance-form {
+  grid-template-columns: minmax(170px, 0.8fr) minmax(180px, 0.9fr) minmax(220px, 1fr);
+}
+
+.admin-opening-balance .opening-balance-list .amount-col,
+.admin-opening-balance .opening-balance-list .amount-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .expense-register-table .expense-item-column,
+  .expense-register-table .expense-item-cell,
+  .expense-register-table .paid-to-column,
+  .expense-register-table .paid-to-cell {
+    min-width: 160px;
+  }
+
+  .admin-opening-balance .opening-balance-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Filing Index inspired operations theme */
 :root,
 body.theme-professional,
