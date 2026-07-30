@@ -4,8 +4,6 @@ const SYNC_EVENT_KEY = `${STORAGE_KEY}-sync-event`;
 const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
 const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
-const BROWSER_SUPABASE_URL = "https://jzralbwcngqnmedjrzhh.supabase.co";
-const BROWSER_SUPABASE_ANON_KEY = "sb_publishable_WLoUZRZR90If19-r-nw6Vw_W-DUsBrD";
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
 const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
@@ -293,7 +291,6 @@ let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
-let browserSupabaseClient = null;
 const accessRestoreEmails = new Set();
 let syncChannel = null;
 try {
@@ -833,30 +830,7 @@ function setApiSession(session) {
 }
 
 function isSupabaseMode() {
-  return ["supabase", "supabase-browser"].includes(sessionStorage.getItem(API_MODE_KEY)) && Boolean(apiToken());
-}
-
-function isBrowserSupabaseMode() {
-  return sessionStorage.getItem(API_MODE_KEY) === "supabase-browser" && Boolean(apiToken());
-}
-
-function browserSupabase() {
-  if (!window.supabase?.createClient) throw new Error("Supabase browser library is not loaded.");
-  if (!browserSupabaseClient) {
-    browserSupabaseClient = window.supabase.createClient(BROWSER_SUPABASE_URL, BROWSER_SUPABASE_ANON_KEY, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
-  }
-  return browserSupabaseClient;
-}
-
-async function ensureBrowserSupabaseSession() {
-  const current = await browserSupabase().auth.getSession();
-  if (current?.data?.session?.access_token) {
-    setApiSession(current.data.session);
-    return;
-  }
-  throw new Error("Login session expired. Please log out and log in again.");
+  return sessionStorage.getItem(API_MODE_KEY) === "supabase" && Boolean(apiToken());
 }
 
 function allowLocalLoginFallback() {
@@ -865,171 +839,49 @@ function allowLocalLoginFallback() {
 }
 
 async function apiJson(path, options = {}) {
-  if (isBrowserSupabaseMode()) return browserSupabaseApiJson(path, options);
   return backendApiJson(path, options);
 }
 
 async function backendApiJson(path, options = {}) {
+  const { skipAuthRefresh = false, ...requestOptions } = options;
   const headers = {
     "Content-Type": "application/json",
-    ...(options.headers || {}),
+    ...(requestOptions.headers || {}),
   };
   const token = apiToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(path, {
-    ...options,
+    ...requestOptions,
     headers,
   });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/refresh" && !skipAuthRefresh) {
+    const refreshed = await refreshApiSession();
+    if (refreshed) return backendApiJson(path, { ...options, skipAuthRefresh: true });
+  }
   if (!response.ok) throw new Error(payload.error || "Server request failed.");
   return payload;
 }
 
-async function browserSupabaseApiJson(path, options = {}) {
-  await ensureBrowserSupabaseSession();
-  const method = String(options.method || "GET").toUpperCase();
-  const body = options.body ? JSON.parse(options.body) : {};
-
-  if (path === "/api/auth/me") return browserSupabaseMe();
-  if (path === "/api/state" && method === "GET") return browserLoadCentralState();
-  if (path === "/api/state" && method === "PUT") return browserSaveCentralState(body.state || {});
-  if (path === "/api/state/version" && method === "GET") return browserLoadCentralVersion();
-  if (path.startsWith("/api/files/") && method === "PUT") {
-    return browserUpsertCentralFile({ ...(body.file || body), id: decodeURIComponent(path.split("/").pop() || "") });
+async function refreshApiSession() {
+  const refreshToken = sessionStorage.getItem(API_REFRESH_TOKEN_KEY);
+  if (!refreshToken) return false;
+  try {
+    const payload = await backendApiJson("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refreshToken }),
+      skipAuthRefresh: true,
+    });
+    if (!payload.session?.access_token) return false;
+    setApiSession(payload.session);
+    sessionStorage.setItem(API_MODE_KEY, "supabase");
+    return true;
+  } catch (error) {
+    console.warn("Session refresh failed", error);
+    setApiSession(null);
+    sessionStorage.removeItem(API_MODE_KEY);
+    return false;
   }
-  if (path.startsWith("/api/files/") && method === "DELETE") {
-    return browserDeleteCentralFile(decodeURIComponent(path.split("/").pop() || ""));
-  }
-  throw new Error("This action needs the backend server. Browser-Supabase mode supports login, files and status sync.");
-}
-
-async function browserSupabaseMe() {
-  const { data, error } = await browserSupabase().auth.getUser();
-  if (error) throw error;
-  const profile = await browserProfileForAuthUser(data.user);
-  return { user: data.user, profile };
-}
-
-async function browserProfileForAuthUser(authUser) {
-  const email = normalizeEmail(authUser?.email);
-  const { data: byAuthId, error: authError } = await browserSupabase()
-    .from("app_users")
-    .select("*")
-    .eq("auth_user_id", authUser.id)
-    .maybeSingle();
-  if (authError) throw authError;
-  if (byAuthId) return byAuthId;
-
-  const { data: byEmail, error: emailError } = await browserSupabase()
-    .from("app_users")
-    .select("*")
-    .eq("email", email)
-    .maybeSingle();
-  if (emailError) throw emailError;
-  if (byEmail) return byEmail;
-
-  const central = await browserLoadCentralState();
-  const legacy = (central.state.users || []).find((user) => normalizeEmail(user.email) === email);
-  return {
-    id: authUser.id,
-    auth_user_id: authUser.id,
-    email,
-    name: legacy?.name || authUser.user_metadata?.name || email,
-    role: legacy?.role || authUser.user_metadata?.role || (email === "casadique@gmail.com" ? "Admin" : "Staff"),
-    is_active: legacy?.isActive !== false,
-  };
-}
-
-async function browserLoadCentralState() {
-  const rows = await browserSupabaseRest("app_state?id=eq.default&select=state,updated_at,updated_by");
-  const row = Array.isArray(rows) ? rows[0] : null;
-  return { state: row?.state || normalizeState({}), updatedAt: row?.updated_at || "", updatedBy: row?.updated_by || "" };
-}
-
-async function browserLoadCentralVersion() {
-  const rows = await browserSupabaseRest("app_state?id=eq.default&select=updated_at,updated_by");
-  const row = Array.isArray(rows) ? rows[0] : null;
-  return { ok: true, updatedAt: row?.updated_at || "", updatedBy: row?.updated_by || "" };
-}
-
-async function browserSaveCentralState(nextState) {
-  const current = await browserSupabase().auth.getSession();
-  const session = current?.data?.session;
-  if (!session?.access_token) throw new Error("Login session expired. Please log out and log in again.");
-  const rows = await browserSupabaseRest("app_state?on_conflict=id&select=state,updated_at", {
-    method: "POST",
-    headers: {
-      Prefer: "resolution=merge-duplicates,return=representation",
-    },
-    body: JSON.stringify({
-      id: "default",
-      state: sharedStateForStorage(normalizeState(nextState)),
-      updated_by: session.user?.id || null,
-      updated_at: new Date().toISOString(),
-    }),
-  });
-  const row = Array.isArray(rows) ? rows[0] : rows;
-  return { ok: true, state: row.state, updatedAt: row.updated_at };
-}
-
-async function browserSupabaseRest(path, options = {}) {
-  await ensureBrowserSupabaseSession();
-  const session = (await browserSupabase().auth.getSession())?.data?.session;
-  if (!session?.access_token) throw new Error("Login session expired. Please log out and log in again.");
-  const response = await fetch(`${BROWSER_SUPABASE_URL}/rest/v1/${path}`, {
-    method: options.method || "GET",
-    headers: {
-      apikey: BROWSER_SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    body: options.body,
-  });
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const message = payload?.message || payload?.error || payload?.hint || `Supabase REST ${response.status}`;
-    throw new Error(message);
-  }
-  return payload;
-}
-
-async function browserPatchCentralState(mutator) {
-  const payload = await browserLoadCentralState();
-  const next = await mutator(normalizeState(payload.state || {}));
-  return browserSaveCentralState(next || payload.state || {});
-}
-
-async function browserUpsertCentralFile(file) {
-  return browserPatchCentralState((centralState) => {
-    const now = Date.now();
-    const record = { ...file, id: file.id || crypto.randomUUID(), updatedAt: now };
-    const files = centralState.files || [];
-    const index = files.findIndex((item) => item.id === record.id);
-    if (index >= 0) files[index] = { ...files[index], ...record };
-    else files.push({ ...record, createdAt: now });
-    centralState.files = files;
-    return centralState;
-  }).then((result) => ({ ok: true, files: result.state.files || [], state: result.state, updatedAt: result.updatedAt }));
-}
-
-async function browserDeleteCentralFile(fileId) {
-  return browserPatchCentralState((centralState) => {
-    centralState.files = (centralState.files || []).filter((file) => file.id !== fileId);
-    centralState.deletedFileIds = [...new Set([...(centralState.deletedFileIds || []), fileId])];
-    return centralState;
-  }).then((result) => ({ ok: true, files: result.state.files || [], state: result.state, updatedAt: result.updatedAt }));
-}
-
-async function browserSupabaseLogin(email, password) {
-  const { data, error } = await browserSupabase().auth.signInWithPassword({ email, password });
-  if (error) throw error;
-  setApiSession(data.session);
-  sessionStorage.setItem(API_MODE_KEY, "supabase-browser");
-  const profile = await browserProfileForAuthUser(data.user);
-  if (!profile || profile.is_active === false) throw new Error("User access is inactive or not linked.");
-  return { user: data.user, profile, session: data.session };
 }
 
 async function saveStateToApi() {
@@ -1059,16 +911,6 @@ async function saveFileToApi(file) {
       body: JSON.stringify({ file }),
     });
   } catch (error) {
-    if (isBrowserSupabaseMode()) {
-      try {
-        return await backendApiJson(`/api/files/${encodeURIComponent(file.id)}`, {
-          method: "PUT",
-          body: JSON.stringify({ file }),
-        });
-      } catch (backendError) {
-        console.warn("Backend file save fallback failed", backendError);
-      }
-    }
     console.warn("Central file save failed", error);
     throw error;
   }
@@ -2643,20 +2485,8 @@ async function handleLogin() {
     sessionStorage.removeItem(API_REFRESH_TOKEN_KEY);
     sessionStorage.removeItem(API_MODE_KEY);
     if (!allowLocalLoginFallback()) {
-      try {
-        const login = await browserSupabaseLogin(email, password);
-        user = {
-          id: login.profile?.id || login.user?.id,
-          email: login.profile?.email || login.user?.email,
-          name: login.profile?.name || login.user?.email,
-          role: login.profile?.role || "Staff",
-          authUserId: login.user?.id,
-          source: "supabase-auth",
-        };
-      } catch (browserError) {
-        console.warn("Hosted Supabase login failed", error, browserError);
-        return toast(browserError.message || error.message || "Unable to login. Please check Supabase user access.");
-      }
+      console.warn("Hosted Supabase login failed", error);
+      return toast(error.message || "Unable to login. Please check Supabase user access.");
     } else {
       user = authenticateUser(email, password);
     }

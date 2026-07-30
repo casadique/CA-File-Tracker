@@ -30,6 +30,37 @@ router.post("/login", async (req, res, next) => {
   }
 });
 
+router.post("/refresh", async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) {
+      res.status(401).json({ error: "Refresh token required." });
+      return;
+    }
+
+    const supabase = createSupabaseClient();
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data?.session) {
+      res.status(401).json({ error: "Login expired. Please log in again." });
+      return;
+    }
+
+    const profile = await profileForAuthUser(data.user);
+    if (!profile || profile.is_active === false) {
+      res.status(403).json({ error: "User access is inactive or not linked. Ask Admin to activate this user." });
+      return;
+    }
+
+    res.json({
+      session: data.session,
+      user: data.user,
+      profile,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/recover-admin", async (req, res, next) => {
   try {
     if (!env.adminRecoveryToken) {
