@@ -3299,7 +3299,6 @@ function navGroupDefinitions() {
       navItem("dailyReport", "report", "Daily Report M&A"),
       navItem("visitors", "users", "Visitors"),
       navItem("staff", "chart", "Staff Performance"),
-      navItem("reports", "database", "Reports & Export"),
       ...(canUseVerificationPage() ? [navItem("verification", "check", "Verification")] : []),
     ] },
     { key: "admin", label: "Administration", collapsible: true, items: [
@@ -3368,6 +3367,7 @@ function navIcon(name) {
     users: '<svg viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.7-6 3.8V20h12v-3.2C15 14.7 12.3 13 9 13Zm8.5-1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm.5 1.2c-.9 0-1.7.1-2.4.4 1.1.8 1.9 1.9 1.9 3.2V20H22v-3c0-2.1-1.8-3.8-4-3.8Z"/></svg>',
     chart: '<svg viewBox="0 0 24 24"><path d="M4 19h16v2H4V3h2v16Zm4-2h3V9H8v8Zm5 0h3V5h-3v12Zm5 0h3v-6h-3v6Z"/></svg>',
     database: '<svg viewBox="0 0 24 24"><path d="M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3Zm-8 5c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3V8Zm0 6c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3v-4Z"/></svg>',
+    pdf: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Zm7 1.8V8h3.2L13 4.8ZM8 12h2.4c1.4 0 2.3.8 2.3 2.1s-.9 2.1-2.3 2.1h-.8V18H8v-6Zm1.6 2.8h.7c.5 0 .8-.3.8-.7s-.3-.7-.8-.7h-.7v1.4Zm3.9-2.8h2c1.6 0 2.7 1.2 2.7 3s-1.1 3-2.7 3h-2v-6Zm1.6 4.6h.3c.7 0 1.2-.5 1.2-1.6s-.5-1.6-1.2-1.6h-.3v3.2Z"/></svg>',
     chat: '<svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6A3.5 3.5 0 0 1 16.5 15H10l-5 4v-4.3A3.5 3.5 0 0 1 4 12.2V5.5Zm4 2.2v1.8h8V7.7H8Zm0 4h5.5V10H8v1.7Z"/></svg>',
     bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.8 2.8 0 0 0 2.7-2h-5.4A2.8 2.8 0 0 0 12 22Zm7-6-1.7-2.1V9a5.4 5.4 0 0 0-4.3-5.3V2h-2v1.7A5.4 5.4 0 0 0 6.7 9v4.9L5 16v2h14v-2Z"/></svg>',
     search: '<svg viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 0 1 5.1 10.5l4 4-1.4 1.4-4-4A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>',
@@ -4025,6 +4025,7 @@ function renderFilesPage() {
         <button class="secondary-button" id="clearFilters">Clear Filters</button>
         ${isStaffLogin() ? `<button class="secondary-button" id="clearStaffDates">Clear Dates</button>` : ""}
         ${rolePerm().export ? `<button class="secondary-button" id="exportFiltered">Export Filtered Excel</button>` : ""}
+        ${rolePerm().export ? `<button class="secondary-button pdf-export-button" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
       </div>
       <div id="fileResults">${renderFileTable(files)}</div>
     </div>
@@ -4046,6 +4047,8 @@ function renderFilesPage() {
   }
   const exportFiltered = document.querySelector("#exportFiltered");
   if (exportFiltered) exportFiltered.onclick = () => exportExcel("filtered-files", files);
+  const exportFilteredPdf = document.querySelector("#exportFilteredPdf");
+  if (exportFilteredPdf) exportFilteredPdf.onclick = () => exportFilteredFilesPdf(files, exportFilteredPdf);
   bindFileActions();
 }
 
@@ -10914,6 +10917,254 @@ function cleanReportRows(rows) {
 
 function isFileRecord(row) {
   return row && typeof row === "object" && ("name" in row || "serviceType" in row || "fileReceivedDate" in row || "assignedStaff" in row);
+}
+
+function fileListSectionTitle() {
+  const listViewTitles = {
+    active: "Active Files",
+    completed: "Completed Files",
+    notChecked: "Not Checked Files",
+    billed: "Billed Files",
+    nonBilled: "Non-Billed Files",
+    feePending: "Fee Pending Files",
+  };
+  const dashboardTitles = {
+    pending: "Pending Files",
+    shared: "Reports Shared",
+    reportsPrepared: "Reports Prepared",
+    completed: "Completed Files",
+    correctionRequired: "Correction Required Files",
+    reAllotted: "Re-Allotted Files",
+  };
+  if (state.filters.listView && listViewTitles[state.filters.listView]) return listViewTitles[state.filters.listView];
+  if (state.filters.dashboardKind && dashboardTitles[state.filters.dashboardKind]) return dashboardTitles[state.filters.dashboardKind];
+  return "File List";
+}
+
+function fileListPdfFileName(sectionTitle) {
+  const range = [state.filters.fileFrom, state.filters.fileTo].filter(Boolean).map((date) => displayDate(date).replace(/\s+/g, "-")).join("-to-");
+  const slug = String(sectionTitle || "file-list").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "file-list";
+  return [slug, range, todayDate()].filter(Boolean).join("-");
+}
+
+function fileExportDateTime() {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date()).replace(",", "");
+}
+
+function fileExportFilterSummary() {
+  const labels = {
+    search: "Search",
+    client: "Client",
+    careOfFilter: "C/o",
+    staff: "Staff",
+    service: "Service",
+    workflow: "Workflow",
+    status: "Status",
+    billing: "Billing",
+    checkingStatus: "Checking",
+    pan: "PAN / Regn",
+    due: "Due Date",
+    priority: "Priority",
+    overdue: "Overdue",
+    pendingApproval: "Approval Pending",
+    fileFrom: "From",
+    fileTo: "To",
+    receivedSort: "Received Sort",
+  };
+  const parts = Object.entries(labels)
+    .map(([key, label]) => {
+      const value = String(state.filters[key] || "").trim();
+      if (!value) return "";
+      const displayValue = key.toLowerCase().includes("date") || ["due", "fileFrom", "fileTo"].includes(key) ? displayDate(value) : value;
+      return `${label}: ${displayValue}`;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join(" | ") : "No filters applied";
+}
+
+function filePdfText(value, fallback = "") {
+  const text = String(value ?? fallback ?? "").trim();
+  return text || fallback;
+}
+
+function filePdfDate(value) {
+  return displayDate(normalizeImportDate(value) || value);
+}
+
+function filePdfAmount(value) {
+  return money(Number(value || 0));
+}
+
+function filePendingAmount(file) {
+  const billed = dashboardFileAmount(file, "billed");
+  const received = dashboardFileAmount(file, "received");
+  return Math.max(billed - received, 0);
+}
+
+function fileListReportRows(files) {
+  const section = state.filters.listView || state.filters.dashboardKind || "files";
+  return (files || []).map((file, index) => {
+    const base = {
+      SN: index + 1,
+      "Client Name": filePdfText(file.name),
+      "PAN / Regn": filePdfText(file.pan),
+      Service: filePdfText(file.serviceType),
+      "C/o": filePdfText(file.careOf, "Direct"),
+      FY: filePdfText(file.fy, "NA"),
+      "Received On": filePdfDate(file.fileReceivedDate),
+      "Work Allotted": filePdfDate(file.workAllotmentDate || file.fileReceivedDate),
+      "Assigned Staff": filePdfText(file.assignedStaff, "Not Assigned"),
+      Status: statusOf(file).label,
+      Priority: filePdfText(file.priority),
+      "Due Date": filePdfDate(file.dueDate),
+      Remarks: filePdfText(file.remarks),
+    };
+    if (section === "completed") {
+      return {
+        SN: base.SN,
+        "Client Name": base["Client Name"],
+        Service: base.Service,
+        "Assigned Staff": base["Assigned Staff"],
+        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
+        "Billing Status": isBilledFile(file) ? "Billed" : isNonBilledFile(file) ? "Non-Billed" : "Pending",
+        Remarks: base.Remarks,
+      };
+    }
+    if (section === "notChecked") {
+      return {
+        SN: base.SN,
+        "Client Name": base["Client Name"],
+        Service: base.Service,
+        "Assigned Staff": base["Assigned Staff"],
+        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
+        "Checked By": filePdfText(file.checkedBy),
+        "Checked Date": filePdfDate(file.checkedDate),
+        "Correction Reason": filePdfText(file.correctionReason || file.checkingRemarks || file.remarks),
+      };
+    }
+    if (section === "billed") {
+      return {
+        SN: base.SN,
+        "Client Name": base["Client Name"],
+        Service: base.Service,
+        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Billed Date": filePdfDate(file.billedDate),
+        "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
+        "Fee Received": file.feeReceived ? "Yes" : "No",
+        "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
+        "Received On": filePdfDate(file.feeReceivedDate),
+      };
+    }
+    if (section === "nonBilled") {
+      return {
+        SN: base.SN,
+        "Client Name": base["Client Name"],
+        Service: base.Service,
+        "Completed On": filePdfDate(workCompletedDate(file)),
+        "Assigned Staff": base["Assigned Staff"],
+        "Billing Type": filePdfText(file.billingType, "Non-Billable"),
+        Remarks: base.Remarks,
+      };
+    }
+    if (section === "feePending") {
+      return {
+        SN: base.SN,
+        "Client Name": base["Client Name"],
+        Service: base.Service,
+        "Billed Date": filePdfDate(file.billedDate),
+        "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
+        "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
+        "Pending Amount": filePdfAmount(filePendingAmount(file)),
+        "Due Date": base["Due Date"],
+      };
+    }
+    return base;
+  });
+}
+
+async function exportFilteredFilesPdf(files, button) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const sourceFiles = Array.isArray(files) ? files : sortFilesForDisplay(filteredFiles());
+  const sectionTitle = fileListSectionTitle();
+  const rows = fileListReportRows(sourceFiles);
+  const headers = Object.keys(rows[0] || {
+    SN: "",
+    "Client Name": "",
+    Service: "",
+    Status: "",
+  });
+  const previousHtml = button?.innerHTML;
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = `${navIcon("pdf")}Generating...`;
+  }
+  try {
+    await loadPdfTools();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text("Muhammad & Associates", pageWidth / 2, 34, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Chartered Accountants", pageWidth / 2, 49, { align: "center" });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text(sectionTitle, 40, 78);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`Generated: ${fileExportDateTime()} | Records: ${sourceFiles.length}`, 40, 94);
+    doc.text(`Filters: ${fileExportFilterSummary()}`, 40, 108, { maxWidth: pageWidth - 80 });
+    const body = rows.length ? rows : [{ [headers[0]]: "No records found." }];
+    doc.autoTable({
+      columns: headers.map((header) => ({ header, dataKey: header })),
+      body,
+      startY: 122,
+      styles: { fontSize: 7.2, cellPadding: 4, overflow: "linebreak", valign: "middle" },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [248, 251, 255] },
+      margin: { left: 28, right: 28 },
+      columnStyles: {
+        SN: { halign: "center", cellWidth: 28 },
+        "Billed Amount": { halign: "right", cellWidth: 70 },
+        "Received Amount": { halign: "right", cellWidth: 75 },
+        "Pending Amount": { halign: "right", cellWidth: 75 },
+        Priority: { cellWidth: 50 },
+        Status: { cellWidth: 68 },
+        "Due Date": { cellWidth: 58 },
+      },
+    });
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let page = 1; page <= totalPages; page += 1) {
+      doc.setPage(page);
+      doc.setFontSize(8);
+      doc.setTextColor(90);
+      doc.text(`Page ${page} of ${totalPages}`, pageWidth / 2, pageHeight - 18, { align: "center" });
+      doc.text("CA File Tracker", 28, pageHeight - 18);
+    }
+    doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+    toast(rows.length ? "PDF file downloaded" : "No records found. Blank PDF downloaded.");
+  } catch (error) {
+    console.error(error);
+    toast("Unable to generate PDF. Please try again.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = previousHtml;
+    }
+  }
 }
 
 async function exportExcel(name, rows) {
