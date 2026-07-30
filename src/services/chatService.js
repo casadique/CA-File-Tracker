@@ -7,6 +7,8 @@ async function sendChatMessage(payload, authUserId, profile) {
     const sender = resolveUser(state, { id: profile?.id, authUserId, email: profile?.email, name: profile?.name }) || {};
     const targetType = payload.targetType === "personal" ? "personal" : "group";
     const targetUser = targetType === "personal" ? resolveUser(state, { id: payload.targetUserId, email: payload.targetUserEmail, name: payload.targetUserName }) : null;
+    const groupId = targetType === "group" ? String(payload.groupId || payload.group_id || "team").trim() || "team" : "";
+    const groupName = targetType === "group" ? String(payload.groupName || payload.group_name || (groupId === "team" ? "Team Chat" : "Group Chat")).trim() : "";
     const text = String(payload.text || "").trim();
     const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
     if (!text && !attachments.length) {
@@ -43,9 +45,9 @@ async function sendChatMessage(payload, authUserId, profile) {
       targetUserId: targetType === "personal" ? targetUser.id || "" : "",
       targetUserName: targetType === "personal" ? targetUser.name || "" : "",
       targetUserEmail: targetType === "personal" ? targetUser.email || "" : "",
-      group_id: targetType === "group" ? "team" : "",
-      groupId: targetType === "group" ? "team" : "",
-      groupName: targetType === "group" ? "Team Chat" : "",
+      group_id: groupId,
+      groupId,
+      groupName,
       targetType,
       message: text,
       text,
@@ -70,9 +72,14 @@ async function sendChatMessage(payload, authUserId, profile) {
 
 function visibleChatMessages(state, profile, authUserId) {
   const user = resolveUser(state, { id: profile?.id, authUserId, email: profile?.email, name: profile?.name }) || {};
-  if (["Admin", "Manager"].includes(profile?.role)) return state.chatMessages || [];
+  if (["Admin", "Manager", "Staff Manager"].includes(profile?.role)) return state.chatMessages || [];
   return (state.chatMessages || []).filter((message) => {
-    if ((message.targetType || "group") === "group") return true;
+    if ((message.targetType || "group") === "group") {
+      const groupId = message.groupId || message.group_id || "team";
+      if (groupId === "team") return true;
+      const group = (state.chatGroups || []).find((item) => item.id === groupId);
+      return Boolean(group?.memberIds?.includes(user.id) || sameIdentity(user, message.userId, message.userEmail, message.user));
+    }
     return sameIdentity(user, message.userId, message.userEmail, message.user)
       || sameIdentity(user, message.targetUserId, message.targetUserEmail, message.targetUserName);
   });

@@ -292,6 +292,17 @@ let lastCentralRefreshAt = 0;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
 let chatSendInFlight = false;
+let chatSearchTimer = null;
+const chatUiState = {
+  targetType: "group",
+  recipientId: "team",
+  filter: "all",
+  search: "",
+  newChatOpen: false,
+  newChatMode: "private",
+  groupName: "",
+  groupMembers: [],
+};
 const accessRestoreEmails = new Set();
 let syncChannel = null;
 try {
@@ -350,6 +361,7 @@ function loadState() {
     invites: [],
     revokedAccess: [],
     chatMessages: [],
+    chatGroups: [],
     fileNotifications: [],
     visitors: [],
     expenses: [],
@@ -609,6 +621,12 @@ function normalizeState(appState) {
     targetUserEmail: item.targetUserEmail || "",
     targetUserName: item.targetUserName || "",
   }));
+  appState.chatGroups = (appState.chatGroups || []).map((group) => ({
+    ...group,
+    id: group.id || `group-${crypto.randomUUID()}`,
+    name: group.name || "Group Chat",
+    memberIds: Array.isArray(group.memberIds) ? group.memberIds : [],
+  }));
   appState.chatMessages = (appState.chatMessages || []).map((message) => {
     const sender = findUserByStaffIdentity(message.userId, mergedUsers)
       || findUserByStaffIdentity(message.userEmail, mergedUsers)
@@ -626,6 +644,8 @@ function normalizeState(appState) {
       targetUserId: message.targetUserId || target?.id || "",
       targetUserName: message.targetUserName || target?.name || "",
       targetUserEmail: message.targetUserEmail || target?.email || "",
+      groupId: message.groupId || message.group_id || "team",
+      groupName: message.groupName || message.group_name || "Team Chat",
     };
   });
   appState.session = appState.session || { loggedIn: false };
@@ -2432,7 +2452,11 @@ function canSeeChatMessage(message, user = loggedInUser()) {
     return sameUserIdentity(user, message.userId, message.userEmail, message.user)
       || sameUserIdentity(user, message.targetUserId, message.targetUserEmail, message.targetUserName);
   }
-  return true;
+  const groupId = message.groupId || message.group_id || "team";
+  if (groupId === "team") return true;
+  if (["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return true;
+  const group = (state.chatGroups || []).find((item) => item.id === groupId);
+  return Boolean(group?.memberIds?.includes(user?.id) || sameUserIdentity(user, message.userId, message.userEmail, message.user));
 }
 
 function visibleChatMessages() {
@@ -2456,7 +2480,11 @@ function chatConversationMessages(targetType = "all", recipientId = "") {
     return visibleChatMessages().filter((message) => isChatWithUser(message, otherUser, currentUser));
   }
   if (targetType === "all") return visibleChatMessages();
-  return visibleChatMessages().filter((message) => (message.targetType || "group") === "group");
+  return visibleChatMessages().filter((message) => {
+    if ((message.targetType || "group") !== "group") return false;
+    const groupId = message.groupId || message.group_id || "team";
+    return (recipientId || "team") === groupId;
+  });
 }
 
 function unreadChatMessages() {
@@ -3165,6 +3193,8 @@ function navIcon(name) {
     database: '<svg viewBox="0 0 24 24"><path d="M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3Zm-8 5c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3V8Zm0 6c1.5 1.3 4.4 2 8 2s6.5-.7 8-2v4c0 1.7-3.6 3-8 3s-8-1.3-8-3v-4Z"/></svg>',
     chat: '<svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6A3.5 3.5 0 0 1 16.5 15H10l-5 4v-4.3A3.5 3.5 0 0 1 4 12.2V5.5Zm4 2.2v1.8h8V7.7H8Zm0 4h5.5V10H8v1.7Z"/></svg>',
     bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.8 2.8 0 0 0 2.7-2h-5.4A2.8 2.8 0 0 0 12 22Zm7-6-1.7-2.1V9a5.4 5.4 0 0 0-4.3-5.3V2h-2v1.7A5.4 5.4 0 0 0 6.7 9v4.9L5 16v2h14v-2Z"/></svg>',
+    search: '<svg viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 0 1 5.1 10.5l4 4-1.4 1.4-4-4A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>',
+    back: '<svg viewBox="0 0 24 24"><path d="m10.8 5.4 1.4 1.4L9 10h10v2H9l3.2 3.2-1.4 1.4L5.2 11l5.6-5.6Z"/></svg>',
     backup: '<svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 1 7 7v1h2l-3 4-3-4h2v-1a5 5 0 0 0-8.9-3.1L6.7 5.5A7 7 0 0 1 12 3ZM6 13v1a5 5 0 0 0 8.9 3.1l1.4 1.4A7 7 0 0 1 5 14v-1H3l3-4 3 4H6Z"/></svg>',
     lock: '<svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2h2v11H5V10h2Zm2 0h6V8a3 3 0 0 0-6 0v2Zm4 7.7V14h-2v3.7h2Z"/></svg>',
     briefcase: '<svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h4v14H4V6h4l1-2Zm1.2 2h3.6l-.3-.6h-3l-.3.6ZM6 10v8h12v-8H6Z"/></svg>',
@@ -10362,6 +10392,7 @@ function openNotifications() {
     if (chatIds.length) {
       markChatMessagesRead(chatIds);
     }
+    panel.dataset.filter = "unread";
     saveState();
     mount();
     openNotifications();
@@ -10460,7 +10491,7 @@ function notificationCard(item) {
       </div>
       <div class="notification-actions">
         ${item.fileId ? `<button class="mini-button" data-open-notification-file="${escapeHtml(item.fileId)}" data-notification-id="${escapeHtml(item.id)}">View File</button>` : ""}
-        ${item.isRead ? "" : `<button class="mini-button" data-mark-read="${escapeHtml(item.id)}">Read</button>`}
+        <button class="mini-button notification-read-button" data-mark-read="${escapeHtml(item.id)}" ${item.isRead ? "disabled" : ""}>Read</button>
       </div>
     </article>
   `;
@@ -10478,132 +10509,390 @@ function notificationIcon(category = "") {
 function openTeamChat(clearDraft = false) {
   syncSharedState(localStorage.getItem(STORAGE_KEY), false);
   const panel = document.querySelector("#teamChatPanel");
+  if (!panel) return;
+  ensureActiveChatConversation();
   const previousText = clearDraft ? "" : (document.querySelector("#chatText")?.value || "");
-  const previousType = document.querySelector("#chatTargetType")?.value || "all";
-  const recipients = chatRecipientUsers();
-  const firstRecipient = recipients[0]?.id || "";
-  const previousRecipient = document.querySelector("#chatRecipient")?.value || firstRecipient;
-  const messages = chatConversationMessages(previousType, previousRecipient).slice(-100);
-  const unreadIds = messages
-    .filter((message) => !chatSenderIsCurrentUser(message) && !isChatMessageRead(message))
-    .map((message) => message.id);
-  if (unreadIds.length) {
-    markChatMessagesRead(unreadIds);
-    saveTabSession();
-  }
-  const activeConversation = chatConversationTitle(previousType, previousRecipient);
   panel.innerHTML = `
-    <div class="drawer-head modern-drawer-head">
+    <div class="drawer-head modern-drawer-head chat-shell-head">
       <div>
         <span class="drawer-eyebrow">Team Workspace</span>
         <h3>Team Chat</h3>
-        <p class="small-muted">Realtime central chat with unread tracking.</p>
+        <p class="small-muted">Private and group messages synced through the central database.</p>
       </div>
-      <button class="icon-button drawer-close" id="closeTeamChat" title="Close">X</button>
+      <button class="icon-button drawer-close" id="closeTeamChat" title="Close chat" aria-label="Close chat">X</button>
     </div>
     <div class="drawer-body team-chat-body modern-chat-body">
-      <aside class="chat-sidebar">
-        <div class="chat-search-wrap">
-          <input id="chatSearch" type="search" placeholder="Search users or chats" aria-label="Search chats">
+      <aside class="chat-sidebar" id="chatSidebar">
+        <div class="chat-sidebar-top">
+          <div class="chat-title-row">
+            <div>
+              <strong>Messages</strong>
+              <span>${chatConversationSummaries().length} conversation(s)</span>
+            </div>
+            <button class="chat-new-button" id="newChatButton" type="button" title="New chat">+ New</button>
+          </div>
+          <label class="chat-search-wrap">
+            ${navIcon("search")}
+            <input id="chatSearch" type="search" placeholder="Search users or chats" aria-label="Search users or chats" autocomplete="off" value="${escapeHtml(chatUiState.search)}">
+            <button class="chat-search-clear ${chatUiState.search ? "" : "hidden"}" id="clearChatSearch" type="button" aria-label="Clear chat search">x</button>
+          </label>
+          <div class="chat-filter-tabs" role="tablist" aria-label="Chat filters">
+            ${["all", "private", "groups", "unread"].map((filter) => `<button class="chat-filter-chip ${chatUiState.filter === filter ? "active" : ""}" data-chat-filter="${filter}" type="button">${properCaseName(filter)}</button>`).join("")}
+          </div>
+          ${renderNewChatPanel()}
         </div>
-        <div class="chat-conversation-list">
-          ${chatConversationSummaries(previousType, previousRecipient).map(chatConversationButton).join("") || empty("No conversations.")}
+        <div class="chat-conversation-list" id="chatConversationList">
+          ${renderChatConversationList()}
         </div>
       </aside>
-      <section class="chat-conversation-panel">
-        <div class="chat-conversation-head">
-          <div class="chat-avatar">${escapeHtml(activeConversation.initials)}</div>
-          <div>
-            <h4>${escapeHtml(activeConversation.title)}</h4>
-            <p>${escapeHtml(activeConversation.subtitle)}</p>
-          </div>
-        </div>
-        <div class="chat-messages" id="chatMessages">
-          ${renderChatMessages(messages)}
-        </div>
-        <div class="chat-compose">
-          <div class="chat-target-row">
-            <div class="field">
-              <label>Chat Type</label>
-              <select id="chatTargetType">
-                <option value="all" ${previousType === "all" ? "selected" : ""}>All Chats</option>
-                <option value="group" ${previousType === "group" ? "selected" : ""}>Group Chat</option>
-                <option value="personal" ${previousType === "personal" ? "selected" : ""}>Personal Chat</option>
-              </select>
-            </div>
-            <div class="field ${previousType === "personal" ? "" : "hidden"}" id="chatRecipientField">
-              <label>Send To</label>
-              <select id="chatRecipient">
-                ${recipients
-                  .map((user) => `<option value="${user.id}" ${previousRecipient === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.role)}</option>`)
-                  .join("")}
-                ${rolePerm().invite ? `<option value="__add_new_staff">+ Add New Staff</option>` : ""}
-              </select>
-            </div>
-          </div>
-          <div class="chat-composer-line">
-            <label class="chat-tool-button" for="chatAttachment" title="Attach PDF or Excel">${navIcon("backup")}</label>
-            <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-            <textarea id="chatText" placeholder="${previousType === "personal" ? "Type a personal message" : "Type a message to the team"}">${escapeHtml(previousText)}</textarea>
-            <button class="primary-button chat-send-button" id="sendChatMessage" title="Send message">${navIcon("chat")}<span>Send</span></button>
-          </div>
-          <span class="small-muted" id="chatAttachmentName">No file selected</span>
-        </div>
+      <section class="chat-conversation-panel" id="chatConversationPanel">
+        ${renderActiveConversationPanel(previousText)}
       </section>
     </div>
   `;
   panel.classList.add("open");
   document.querySelector("#backdrop").classList.add("show");
-  document.querySelector("#closeTeamChat").onclick = closeOverlays;
-  document.querySelector("#sendChatMessage").onclick = sendChatMessage;
-  document.querySelectorAll("[data-chat-type]").forEach((btn) => {
-    btn.onclick = () => {
-      const typeSelect = document.querySelector("#chatTargetType");
-      const recipientSelect = document.querySelector("#chatRecipient");
-      if (typeSelect) typeSelect.value = btn.dataset.chatType || "all";
-      if (recipientSelect && btn.dataset.chatRecipient) recipientSelect.value = btn.dataset.chatRecipient;
-      openTeamChat(false);
-    };
+  bindTeamChatEvents();
+  markActiveConversationRead();
+  scrollActiveChatToBottom();
+  updateTopActionBadges();
+}
+
+function bindTeamChatEvents() {
+  document.querySelector("#closeTeamChat")?.addEventListener("click", closeOverlays);
+  bindChatSidebarEvents();
+  bindChatComposerEvents();
+}
+
+function bindChatSidebarEvents() {
+  document.querySelector("#newChatButton")?.addEventListener("click", () => {
+    chatUiState.newChatOpen = !chatUiState.newChatOpen;
+    renderChatSidebarContent();
   });
-  const chatSearch = document.querySelector("#chatSearch");
-  if (chatSearch) {
-    chatSearch.oninput = () => {
-      const query = chatSearch.value.trim().toLowerCase();
-      document.querySelectorAll(".chat-conversation-item").forEach((item) => {
-        item.classList.toggle("hidden", query && !item.textContent.toLowerCase().includes(query));
-      });
-    };
-  }
-  document.querySelector("#chatTargetType").onchange = (event) => {
-    document.querySelector("#chatRecipientField").classList.toggle("hidden", event.target.value !== "personal");
-    openTeamChat();
-  };
-  const recipientSelect = document.querySelector("#chatRecipient");
-  if (recipientSelect) {
-    recipientSelect.onchange = () => {
-      if (recipientSelect.value === "__add_new_staff") {
-        addChatStaffFromPrompt();
-        return;
+  document.querySelectorAll("[data-chat-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chatUiState.filter = btn.dataset.chatFilter || "all";
+      renderChatSidebarContent();
+    });
+  });
+  const searchInput = document.querySelector("#chatSearch");
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      chatUiState.search = searchInput.value;
+      document.querySelector("#clearChatSearch")?.classList.toggle("hidden", !chatUiState.search);
+      clearTimeout(chatSearchTimer);
+      chatSearchTimer = setTimeout(renderChatConversationListOnly, 240);
+    });
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        chatUiState.search = "";
+        searchInput.value = "";
+        document.querySelector("#clearChatSearch")?.classList.add("hidden");
+        renderChatConversationListOnly();
       }
-      openTeamChat();
-    };
+    });
+  }
+  document.querySelector("#clearChatSearch")?.addEventListener("click", () => {
+    chatUiState.search = "";
+    if (searchInput) {
+      searchInput.value = "";
+      searchInput.focus();
+    }
+    document.querySelector("#clearChatSearch")?.classList.add("hidden");
+    renderChatConversationListOnly();
+  });
+  bindChatConversationClicks();
+  bindNewChatEvents();
+}
+
+function bindChatConversationClicks() {
+  document.querySelectorAll("[data-chat-type]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chatUiState.targetType = btn.dataset.chatType || "group";
+      chatUiState.recipientId = btn.dataset.chatRecipient || (chatUiState.targetType === "group" ? "team" : "");
+      document.querySelector("#teamChatPanel")?.classList.add("chat-mobile-open");
+      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+      renderChatConversationListOnly();
+      bindChatComposerEvents();
+      markActiveConversationRead();
+      scrollActiveChatToBottom();
+    });
+  });
+}
+
+function bindChatComposerEvents() {
+  document.querySelector("#sendChatMessage")?.addEventListener("click", sendChatMessage);
+  const textarea = document.querySelector("#chatText");
+  if (textarea) {
+    textarea.addEventListener("input", () => {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 132)}px`;
+      updateSendButtonState();
+    });
+    textarea.addEventListener("keydown", handleMessageKeyDown);
+    updateSendButtonState();
   }
   const attachmentInput = document.querySelector("#chatAttachment");
   if (attachmentInput) {
-    attachmentInput.onchange = () => {
-      const file = attachmentInput.files?.[0];
-      document.querySelector("#chatAttachmentName").textContent = file ? `${file.name} (${formatFileSize(file.size)})` : "No file selected";
-    };
+    attachmentInput.addEventListener("change", () => {
+      renderChatAttachmentPreview();
+      updateSendButtonState();
+    });
   }
-  document.querySelector("#chatText").onkeydown = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      sendChatMessage();
-    }
+  document.querySelector("#clearChatAttachment")?.addEventListener("click", () => {
+    const input = document.querySelector("#chatAttachment");
+    if (input) input.value = "";
+    renderChatAttachmentPreview();
+    updateSendButtonState();
+  });
+}
+
+function bindNewChatEvents() {
+  document.querySelectorAll("[data-new-chat-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chatUiState.newChatMode = btn.dataset.newChatMode || "private";
+      renderChatSidebarContent();
+    });
+  });
+  document.querySelectorAll("[data-start-private-chat]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chatUiState.targetType = "personal";
+      chatUiState.recipientId = btn.dataset.startPrivateChat || "";
+      document.querySelector("#teamChatPanel")?.classList.add("chat-mobile-open");
+      chatUiState.newChatOpen = false;
+      chatUiState.search = "";
+      renderChatSidebarContent();
+      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+      bindChatComposerEvents();
+      markActiveConversationRead();
+      scrollActiveChatToBottom();
+      document.querySelector("#chatText")?.focus();
+    });
+  });
+  document.querySelectorAll("[data-toggle-group-member]").forEach((box) => {
+    box.addEventListener("change", () => {
+      const id = box.dataset.toggleGroupMember || "";
+      chatUiState.groupMembers = box.checked
+        ? [...new Set([...chatUiState.groupMembers, id])]
+        : chatUiState.groupMembers.filter((item) => item !== id);
+      renderChatSidebarContent();
+    });
+  });
+  const groupNameInput = document.querySelector("#newGroupName");
+  if (groupNameInput) {
+    groupNameInput.addEventListener("input", () => {
+      chatUiState.groupName = groupNameInput.value;
+    });
+  }
+  document.querySelector("#createChatGroup")?.addEventListener("click", createChatGroup);
+}
+
+function renderChatSidebarContent() {
+  const sidebar = document.querySelector("#chatSidebar");
+  if (!sidebar) return openTeamChat(false);
+  const active = document.activeElement?.id;
+  sidebar.innerHTML = `
+    <div class="chat-sidebar-top">
+      <div class="chat-title-row">
+        <div>
+          <strong>Messages</strong>
+          <span>${chatConversationSummaries().length} conversation(s)</span>
+        </div>
+        <button class="chat-new-button" id="newChatButton" type="button" title="New chat">+ New</button>
+      </div>
+      <label class="chat-search-wrap">
+        ${navIcon("search")}
+        <input id="chatSearch" type="search" placeholder="Search users or chats" aria-label="Search users or chats" autocomplete="off" value="${escapeHtml(chatUiState.search)}">
+        <button class="chat-search-clear ${chatUiState.search ? "" : "hidden"}" id="clearChatSearch" type="button" aria-label="Clear chat search">x</button>
+      </label>
+      <div class="chat-filter-tabs" role="tablist" aria-label="Chat filters">
+        ${["all", "private", "groups", "unread"].map((filter) => `<button class="chat-filter-chip ${chatUiState.filter === filter ? "active" : ""}" data-chat-filter="${filter}" type="button">${properCaseName(filter)}</button>`).join("")}
+      </div>
+      ${renderNewChatPanel()}
+    </div>
+    <div class="chat-conversation-list" id="chatConversationList">
+      ${renderChatConversationList()}
+    </div>
+  `;
+  bindChatSidebarEvents();
+  if (active === "chatSearch") {
+    const input = document.querySelector("#chatSearch");
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+function renderChatConversationListOnly() {
+  const list = document.querySelector("#chatConversationList");
+  if (!list) return;
+  list.innerHTML = renderChatConversationList();
+  bindChatConversationClicks();
+}
+
+function renderChatConversationList() {
+  const rows = filterChatConversations(chatConversationSummaries(chatUiState.targetType, chatUiState.recipientId));
+  return rows.length ? rows.map(chatConversationButton).join("") : `<div class="chat-empty-state">No users or chats found.</div>`;
+}
+
+function filterChatConversations(items = []) {
+  const query = String(chatUiState.search || "").trim().toLowerCase();
+  return items.filter((item) => {
+    if (chatUiState.filter === "private" && item.type !== "personal") return false;
+    if (chatUiState.filter === "groups" && item.type !== "group") return false;
+    if (chatUiState.filter === "unread" && !item.unread) return false;
+    if (!query) return true;
+    return String(item.searchText || "").toLowerCase().includes(query);
+  });
+}
+
+function renderActiveConversationPanel(draftText = "") {
+  const activeConversation = chatConversationTitle(chatUiState.targetType, chatUiState.recipientId);
+  const messages = chatConversationMessages(chatUiState.targetType, chatUiState.recipientId).slice(-150);
+  return `
+    <div class="chat-conversation-head">
+      <button class="chat-mobile-back" type="button" onclick="document.querySelector('#teamChatPanel')?.classList.remove('chat-mobile-open')">${navIcon("back")}</button>
+      <div class="chat-avatar">${escapeHtml(activeConversation.initials)}</div>
+      <div class="chat-active-copy">
+        <h4>${escapeHtml(activeConversation.title)}</h4>
+        <p>${escapeHtml(activeConversation.subtitle)}</p>
+      </div>
+      <div class="chat-head-tools">
+        <button class="chat-head-icon" type="button" title="Search messages">${navIcon("search")}</button>
+        <button class="chat-head-icon" type="button" title="Conversation information">i</button>
+      </div>
+    </div>
+    <div class="chat-messages" id="chatMessages">
+      ${renderChatMessages(messages)}
+    </div>
+    <form class="chat-compose" id="chatComposeForm">
+      <div id="chatAttachmentPreview"></div>
+      <div class="chat-composer-line">
+        <label class="chat-tool-button" for="chatAttachment" title="Attach PDF or Excel" aria-label="Attach file">${navIcon("backup")}</label>
+        <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <textarea id="chatText" placeholder="${chatUiState.targetType === "personal" ? "Message this staff member..." : "Message the group..."}" rows="1">${escapeHtml(draftText)}</textarea>
+        <button class="chat-send-button" id="sendChatMessage" type="button" title="Send message" aria-label="Send message">${navIcon("chat")}</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderNewChatPanel() {
+  if (!chatUiState.newChatOpen) return "";
+  const users = chatRecipientUsers().filter((user) => {
+    const query = String(chatUiState.search || "").trim().toLowerCase();
+    if (!query) return true;
+    return chatUserSearchText(user).includes(query);
+  });
+  if (chatUiState.newChatMode === "group") {
+    return `
+      <div class="new-chat-panel">
+        <div class="new-chat-mode">
+          <button class="" data-new-chat-mode="private" type="button">Private</button>
+          <button class="active" data-new-chat-mode="group" type="button">Group</button>
+        </div>
+        <input id="newGroupName" value="${escapeHtml(chatUiState.groupName)}" placeholder="Group name" aria-label="Group name">
+        <div class="new-chat-user-list">
+          ${users.map((user) => `<label class="new-chat-user"><input type="checkbox" data-toggle-group-member="${escapeHtml(user.id)}" ${chatUiState.groupMembers.includes(user.id) ? "checked" : ""}><span class="chat-avatar">${escapeHtml(userInitials(chatDisplayName(user)))}</span><span><strong>${escapeHtml(chatDisplayName(user))}</strong><small>${escapeHtml(user.role || user.email || "Team member")}</small></span></label>`).join("") || `<div class="chat-empty-state">No staff found.</div>`}
+        </div>
+        <button class="primary-button create-group-button" id="createChatGroup" type="button">Create Group</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="new-chat-panel">
+      <div class="new-chat-mode">
+        <button class="active" data-new-chat-mode="private" type="button">Private</button>
+        <button data-new-chat-mode="group" type="button">Group</button>
+      </div>
+      <div class="new-chat-user-list">
+        ${users.map((user) => `<button class="new-chat-user" data-start-private-chat="${escapeHtml(user.id)}" type="button" title="${escapeHtml(chatDisplayName(user))}"><span class="chat-avatar">${escapeHtml(userInitials(chatDisplayName(user)))}</span><span><strong>${escapeHtml(chatDisplayName(user))}</strong><small>${escapeHtml(user.role || user.email || "Team member")}</small></span><em>Start</em></button>`).join("") || `<div class="chat-empty-state">No staff found.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function createChatGroup() {
+  if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return toast("Only authorised users can create groups.");
+  const name = String(chatUiState.groupName || "").trim();
+  if (!name) return toast("Enter a group name.");
+  if (!chatUiState.groupMembers.length) return toast("Select at least one member.");
+  const existing = (state.chatGroups || []).find((group) => String(group.name || "").trim().toLowerCase() === name.toLowerCase());
+  const group = existing || {
+    id: `group-${crypto.randomUUID()}`,
+    name,
+    memberIds: [...new Set(chatUiState.groupMembers)],
+    createdBy: state.currentUser,
+    createdAt: new Date().toISOString(),
   };
+  state.chatGroups = existing
+    ? (state.chatGroups || []).map((item) => item.id === existing.id ? { ...item, name, memberIds: [...new Set(chatUiState.groupMembers)], updatedAt: new Date().toISOString() } : item)
+    : [...(state.chatGroups || []), group];
+  chatUiState.targetType = "group";
+  chatUiState.recipientId = group.id;
+  document.querySelector("#teamChatPanel")?.classList.add("chat-mobile-open");
+  chatUiState.newChatOpen = false;
+  chatUiState.groupName = "";
+  chatUiState.groupMembers = [];
+  saveState();
+  renderChatSidebarContent();
+  document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+  bindChatComposerEvents();
+  scrollActiveChatToBottom();
+  toast(existing ? "Group updated" : "Group created");
+}
+
+function ensureActiveChatConversation() {
+  if (chatUiState.targetType === "personal" && !state.users.some((user) => user.id === chatUiState.recipientId)) {
+    chatUiState.targetType = "group";
+    chatUiState.recipientId = "team";
+  }
+  if (chatUiState.targetType === "group" && chatUiState.recipientId !== "team" && !(state.chatGroups || []).some((group) => group.id === chatUiState.recipientId)) {
+    chatUiState.recipientId = "team";
+  }
+}
+
+function markActiveConversationRead() {
+  const unreadIds = chatConversationMessages(chatUiState.targetType, chatUiState.recipientId)
+    .filter((message) => !chatSenderIsCurrentUser(message) && !isChatMessageRead(message))
+    .map((message) => message.id);
+  if (unreadIds.length) {
+    markChatMessagesRead(unreadIds);
+    saveTabSession();
+    renderChatConversationListOnly();
+  }
+}
+
+function scrollActiveChatToBottom() {
   const list = document.querySelector("#chatMessages");
   if (list) list.scrollTop = list.scrollHeight;
-  updateTopActionBadges();
+}
+
+function handleMessageKeyDown(event) {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    sendChatMessage();
+  }
+}
+
+function updateSendButtonState() {
+  const text = document.querySelector("#chatText")?.value.trim() || "";
+  const hasFile = Boolean(document.querySelector("#chatAttachment")?.files?.[0]);
+  const button = document.querySelector("#sendChatMessage");
+  if (button) button.disabled = chatSendInFlight || (!text && !hasFile);
+}
+
+function renderChatAttachmentPreview() {
+  const file = document.querySelector("#chatAttachment")?.files?.[0];
+  const preview = document.querySelector("#chatAttachmentPreview");
+  if (!preview) return;
+  preview.innerHTML = file ? `<div class="chat-attachment-preview"><span>${escapeHtml(file.name)} (${formatFileSize(file.size)})</span><button id="clearChatAttachment" type="button">Remove</button></div>` : "";
+  document.querySelector("#clearChatAttachment")?.addEventListener("click", () => {
+    const input = document.querySelector("#chatAttachment");
+    if (input) input.value = "";
+    renderChatAttachmentPreview();
+    updateSendButtonState();
+  });
 }
 
 function addChatStaffFromPrompt() {
@@ -10633,61 +10922,115 @@ function chatConversationTitle(targetType = "all", recipientId = "") {
   if (targetType === "personal") {
     const user = state.users.find((item) => item.id === recipientId) || chatRecipientUsers()[0] || {};
     return {
-      title: user.name || "Personal Chat",
-      subtitle: `${user.role || "Team member"}${user.email ? ` | ${user.email}` : ""}`,
-      initials: userInitials(user.name || user.email || "PC"),
+      title: chatDisplayName(user) || "Personal Chat",
+      subtitle: `${user.role || "Team member"}${user.email ? ` - ${user.email}` : ""}`,
+      initials: userInitials(chatDisplayName(user) || user.email || "PC"),
     };
   }
   if (targetType === "group") {
-    return { title: "Group Chat", subtitle: `${chatRecipientUsers().length + 1} team member(s)`, initials: "GC" };
+    const group = chatGroupById(recipientId);
+    const memberCount = group?.id === "team" ? chatRecipientUsers().length + 1 : (group?.memberIds || []).length + 1;
+    return { title: group?.name || "Team Chat", subtitle: `Group Chat - ${memberCount} member(s)`, initials: userInitials(group?.name || "GC") };
   }
   return { title: "All Conversations", subtitle: "Group and personal messages", initials: "AC" };
 }
 
 function chatConversationSummaries(activeType = "all", activeRecipient = "") {
   const recipients = chatRecipientUsers();
-  const groupMessages = visibleChatMessages().filter((message) => (message.targetType || "group") === "group");
+  const groups = chatGroups();
   const allMessages = visibleChatMessages();
-  return [
+  const rows = [
     chatConversationSummary("all", "", "All Conversations", "Group and personal messages", allMessages, activeType === "all"),
-    chatConversationSummary("group", "", "Group Chat", `${recipients.length + 1} members`, groupMessages, activeType === "group"),
+    ...groups.map((group) => {
+      const messages = visibleChatMessages().filter((message) => (message.targetType || "group") === "group" && (message.groupId || message.group_id || "team") === group.id);
+      const memberCount = group.id === "team" ? recipients.length + 1 : (group.memberIds || []).length + 1;
+      return chatConversationSummary("group", group.id, group.name, `${memberCount} members`, messages, activeType === "group" && (activeRecipient || "team") === group.id);
+    }),
     ...recipients.map((user) => {
       const messages = visibleChatMessages().filter((message) => isChatWithUser(message, user, loggedInUser()));
-      return chatConversationSummary("personal", user.id, user.name, user.role || user.email || "Team member", messages, activeType === "personal" && activeRecipient === user.id);
+      return chatConversationSummary("personal", user.id, chatDisplayName(user), user.role || user.email || "Team member", messages, activeType === "personal" && activeRecipient === user.id, user);
     }),
   ];
+  const pinned = rows.filter((row) => row.type === "all");
+  const sorted = rows
+    .filter((row) => row.type !== "all")
+    .sort((a, b) => (b.latestAt || 0) - (a.latestAt || 0) || String(a.title).localeCompare(String(b.title)));
+  return [...pinned, ...sorted];
 }
 
-function chatConversationSummary(type, recipientId, title, subtitle, messages, active) {
+function chatConversationSummary(type, recipientId, title, subtitle, messages, active, user = null) {
   const latest = sortChatMessages(messages || []).at(-1);
   const unread = (messages || []).filter((message) => !chatSenderIsCurrentUser(message) && !isChatMessageRead(message)).length;
+  const latestAt = latest ? chatMessageTime(latest) : 0;
   return {
     type,
     recipientId,
-    title,
+    title: title || "Unknown User",
     subtitle,
     latestText: latest?.text || (latest?.attachments?.length ? `Attachment: ${latest.attachments[0].name}` : "No messages yet"),
-    latestTime: latest ? formatChatDateTime(latest) : "",
+    latestTime: latest ? formatChatListTime(latest) : "",
+    latestAt,
     initials: userInitials(title),
     unread,
     active,
+    searchText: [title, subtitle, user?.email, type].filter(Boolean).join(" "),
   };
 }
 
 function chatConversationButton(item) {
   return `
-    <button class="chat-conversation-item ${item.active ? "active" : ""}" data-chat-type="${escapeHtml(item.type)}" data-chat-recipient="${escapeHtml(item.recipientId || "")}" type="button">
+    <button class="chat-conversation-item ${item.active ? "active" : ""} ${item.unread ? "unread" : ""}" data-chat-type="${escapeHtml(item.type)}" data-chat-recipient="${escapeHtml(item.recipientId || "")}" type="button" title="${escapeHtml(item.title)}">
       <span class="chat-avatar">${escapeHtml(item.initials)}</span>
       <span class="chat-conversation-copy">
-        <strong>${escapeHtml(item.title)}</strong>
+        <strong class="chat-user-name">${escapeHtml(item.title)}</strong>
         <small>${escapeHtml(item.latestText)}</small>
       </span>
       <span class="chat-conversation-meta">
-        ${item.unread ? `<em>${item.unread > 99 ? "99+" : item.unread}</em>` : ""}
         ${item.latestTime ? `<time>${escapeHtml(item.latestTime)}</time>` : ""}
+        ${item.unread ? `<em aria-label="${item.unread} unread message(s)">${item.unread > 99 ? "99+" : item.unread}</em>` : ""}
       </span>
     </button>
   `;
+}
+
+function chatGroups() {
+  const user = loggedInUser();
+  const customGroups = (state.chatGroups || []).filter((group) =>
+    ["Admin", "Manager", "Staff Manager"].includes(state.currentRole) ||
+    (group.memberIds || []).includes(user?.id)
+  );
+  return [
+    { id: "team", name: "Team Chat", memberIds: chatRecipientUsers().map((user) => user.id) },
+    ...customGroups,
+  ];
+}
+
+function chatGroupById(id = "team") {
+  return chatGroups().find((group) => group.id === (id || "team")) || chatGroups()[0];
+}
+
+function chatDisplayName(user = {}) {
+  const name = String(user.name || user.displayName || user.fullName || "").trim();
+  if (name) return name;
+  const email = String(user.email || "").trim();
+  if (email) return properCaseName(email.split("@")[0].replace(/[._-]+/g, " "));
+  return "Unknown User";
+}
+
+function chatUserSearchText(user = {}) {
+  return [chatDisplayName(user), user.name, user.email, user.role].filter(Boolean).join(" ").toLowerCase();
+}
+
+function formatChatListTime(message = {}) {
+  const time = chatMessageTime(message);
+  if (!time) return "";
+  const date = new Date(time);
+  const today = indiaTodayDate();
+  const key = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(date);
+  if (key === today) {
+    return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true }).format(date);
+  }
+  return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }).format(date);
 }
 
 function renderChatMessages(messages = []) {
@@ -10704,7 +11047,7 @@ function renderChatMessages(messages = []) {
 function chatDateSeparator(message = {}) {
   const time = chatMessageTime(message);
   if (!time) return "Earlier";
-  const dateKey = new Date(time).toISOString().slice(0, 10);
+  const dateKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(time));
   const today = indiaTodayDate();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -10715,14 +11058,13 @@ function chatDateSeparator(message = {}) {
 
 function chatMessageCard(message) {
   const own = chatSenderIsCurrentUser(message);
-  const targetLabel = (message.targetType || "group") === "personal" ? `Personal${message.targetUserName ? ` to ${message.targetUserName}` : ""}` : "Group";
   const attachments = message.attachments || [];
   const statusLabel = properCaseName(message.status || "Sent");
   return `
     <div class="chat-message ${own ? "own" : ""}">
       <div class="chat-meta">
-        <strong>${escapeHtml(message.user || "Team Member")}</strong>
-        <span>${escapeHtml(targetLabel)} | ${escapeHtml(formatChatDateTime(message))} | ${escapeHtml(statusLabel)}</span>
+        ${own ? "" : `<strong>${escapeHtml(message.user || "Team Member")}</strong>`}
+        <span>${escapeHtml(formatChatListTime(message))}${own ? ` · ${escapeHtml(statusLabel)}` : ""}</span>
       </div>
       ${message.text ? `<p>${escapeHtml(message.text || "")}</p>` : ""}
       ${attachments.map((file) => `
@@ -10742,25 +11084,40 @@ async function sendChatMessage() {
   const sendButton = document.querySelector("#sendChatMessage");
   const text = input?.value.trim();
   const uploadedFile = fileInput?.files?.[0] || null;
-  if (!text && !uploadedFile) return toast("Please type a message or attach a file.");
+  if (!text && !uploadedFile) return;
   syncSharedState(localStorage.getItem(STORAGE_KEY), false);
   const sender = loggedInUser() || {};
-  const selectedType = document.querySelector("#chatTargetType")?.value || "all";
-  const targetType = selectedType === "personal" ? "personal" : "group";
-  const selectedRecipientId = document.querySelector("#chatRecipient")?.value || "";
+  const targetType = chatUiState.targetType === "personal" ? "personal" : "group";
+  const selectedRecipientId = chatUiState.recipientId || "";
   const targetUser = targetType === "personal"
     ? state.users.find((user) => user.id === selectedRecipientId)
     : null;
-  if (targetType === "personal" && selectedRecipientId === "__add_new_staff") return addChatStaffFromPrompt();
   if (targetType === "personal" && !targetUser) return toast("Please select a team member.");
+  const activeGroup = targetType === "group" ? chatGroupById(selectedRecipientId || "team") : null;
+  chatSendInFlight = true;
+  if (sendButton) sendButton.disabled = true;
   let attachments = [];
   if (uploadedFile) {
     const allowedExtensions = [".pdf", ".xls", ".xlsx"];
     const lowerName = uploadedFile.name.toLowerCase();
     const allowed = allowedExtensions.some((ext) => lowerName.endsWith(ext));
-    if (!allowed) return toast("Please attach only PDF or Excel files.");
-    if (uploadedFile.size > 1500000) return toast("Please attach a file below 1.5 MB for this local version.");
-    attachments = [await readChatAttachment(uploadedFile)];
+    if (!allowed) {
+      chatSendInFlight = false;
+      updateSendButtonState();
+      return toast("Please attach only PDF or Excel files.");
+    }
+    if (uploadedFile.size > 1500000) {
+      chatSendInFlight = false;
+      updateSendButtonState();
+      return toast("Please attach a file below 1.5 MB for this local version.");
+    }
+    try {
+      attachments = [await readChatAttachment(uploadedFile)];
+    } catch (error) {
+      chatSendInFlight = false;
+      updateSendButtonState();
+      return toast(error.message || "Unable to read attachment.");
+    }
   }
   const clientMessageId = crypto.randomUUID();
   const optimistic = {
@@ -10775,6 +11132,8 @@ async function sendChatMessage() {
     targetUserId: targetUser?.id || "",
     targetUserName: targetUser?.name || "",
     targetUserEmail: targetUser?.email || "",
+    groupId: activeGroup?.id || "",
+    groupName: activeGroup?.name || "",
     text,
     attachments,
     status: "sending",
@@ -10784,11 +11143,11 @@ async function sendChatMessage() {
   state.chatMessages = mergeChatMessages(state.chatMessages || [], [optimistic]);
   if (input) input.value = "";
   if (fileInput) fileInput.value = "";
-  openTeamChat(true);
+  document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+  bindChatComposerEvents();
+  scrollActiveChatToBottom();
   if (isSupabaseMode()) {
     try {
-      chatSendInFlight = true;
-      if (sendButton) sendButton.disabled = true;
       const result = await apiJson("/api/chat", {
         method: "POST",
         body: JSON.stringify({
@@ -10797,6 +11156,8 @@ async function sendChatMessage() {
           targetUserId: targetUser?.id || "",
           targetUserName: targetUser?.name || "",
           targetUserEmail: targetUser?.email || "",
+          groupId: activeGroup?.id || "",
+          groupName: activeGroup?.name || "",
           text,
           attachments,
         }),
@@ -10807,16 +11168,23 @@ async function sendChatMessage() {
       if (sent?.id) markChatMessageRead(sent.id, sender);
       saveState({ skipMerge: true, skipRemote: true });
       toast("Message sent");
-      openTeamChat(true);
+      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+      renderChatConversationListOnly();
+      bindChatComposerEvents();
+      scrollActiveChatToBottom();
       return;
     } catch (error) {
       state.chatMessages = mergeChatMessages((state.chatMessages || []).filter((message) => message.id !== optimistic.id), [{ ...optimistic, status: "failed" }]);
-      openTeamChat(true);
+      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+      renderChatConversationListOnly();
+      bindChatComposerEvents();
+      scrollActiveChatToBottom();
       console.error("Failed message insert", { targetType, targetUserId: targetUser?.id || "", message: error.message });
       return toast(`Message failed to send: ${error.message || "Please retry."}`);
     } finally {
       chatSendInFlight = false;
       if (sendButton) sendButton.disabled = false;
+      updateSendButtonState();
     }
   }
   const messageId = crypto.randomUUID();
@@ -10833,6 +11201,8 @@ async function sendChatMessage() {
       targetUserId: targetUser?.id || "",
       targetUserName: targetUser?.name || "",
       targetUserEmail: targetUser?.email || "",
+      groupId: activeGroup?.id || "",
+      groupName: activeGroup?.name || "",
       text,
       attachments,
       status: "sent",
@@ -10845,7 +11215,12 @@ async function sendChatMessage() {
   ]);
   markChatMessageRead(messageId, sender);
   saveState();
-  openTeamChat(true);
+  chatSendInFlight = false;
+  updateSendButtonState();
+  document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+  renderChatConversationListOnly();
+  bindChatComposerEvents();
+  scrollActiveChatToBottom();
 }
 
 function readChatAttachment(file) {
