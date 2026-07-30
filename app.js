@@ -2983,9 +2983,12 @@ function bindShell() {
   const topProfileButton = document.querySelector("#topProfileButton");
   if (topProfileButton) {
     topProfileButton.onclick = () => {
+      closeOverlays();
+      if (state.currentRole !== "Admin") resetFilters();
       activePage = state.currentRole === "Admin" ? "users" : "dashboard";
       toast(`${state.currentUser || "Profile"} - ${state.currentRole || "User"}`);
       saveState();
+      saveTabSession();
       renderAll();
     };
   }
