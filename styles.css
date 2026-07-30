@@ -5516,6 +5516,34 @@ table td {
   background: var(--ops-teal);
 }
 
+.correction-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #fecaca;
+  border-left: 4px solid var(--ops-red);
+  border-radius: 12px;
+  background: #fff7f7;
+}
+
+.correction-history {
+  display: grid;
+  gap: 6px;
+  color: #7f1d1d;
+  font-size: 13px;
+}
+
+.correction-history strong {
+  color: #991b1b;
+}
+
+.correction-history p,
+.correction-reason-line {
+  margin: 0;
+  color: #991b1b;
+  font-weight: 750;
+}
+
 @media (max-width: 880px) {
   .app-shell,
   .app-shell.sidebar-collapsed {

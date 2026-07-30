@@ -330,7 +330,7 @@ setInterval(() => {
   } else if (state.session?.loggedIn) {
     syncSharedState(localStorage.getItem(STORAGE_KEY), true);
   }
-}, 5000);
+}, 3000);
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -544,6 +544,7 @@ function normalizeState(appState) {
   appState.readNotifications = appState.readNotifications || [];
   appState.readChatMessages = appState.readChatMessages || [];
   appState.auditLog = appState.auditLog || [];
+  appState.correctionHistory = appState.correctionHistory || [];
   appState.expenses = (appState.expenses || []).map((item) => ({
     ...item,
     id: item.id || crypto.randomUUID(),
@@ -738,7 +739,7 @@ function normalizeState(appState) {
     careOfFilter: "",
     workflow: "",
     due: "",
-    receivedSort: "Oldest First",
+    receivedSort: "Newest First",
     priority: "",
     status: "",
     billing: "",
@@ -766,6 +767,9 @@ function normalizeState(appState) {
       dailyReportDate: todayDate(),
     ...(appState.filters || {}),
   };
+  appState.files = sortFilesNewestFirst(appState.files || []);
+  appState.chatMessages = sortChatMessages(appState.chatMessages || []).slice(-1000);
+  appState.correctionHistory = sortCorrectionHistory(appState.correctionHistory || []);
   cleanDropdownMasterData(appState);
   return refreshFileStaffLinks(appState);
 }
@@ -3488,8 +3492,7 @@ function staffPageFiles(listView) {
     return true;
   });
   const filteredRows = ["", "active"].includes(listView) ? filterStaffActiveRows(rows) : rows;
-  if (listView === "active") return filteredRows.sort((a, b) => fileDateSortValue(a.workAllotmentDate || a.fileReceivedDate) - fileDateSortValue(b.workAllotmentDate || b.fileReceivedDate));
-  return filteredRows.sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
+  return sortFilesNewestFirst(filteredRows);
 }
 
 function filterStaffActiveRows(rows) {
@@ -3512,12 +3515,45 @@ function fileDateSortValue(dateString) {
   return Date.parse(normalizeImportDate(dateString) || "") || Number.MAX_SAFE_INTEGER;
 }
 
+function fileNewestSortTime(file = {}) {
+  const created = Number(file.createdAt || 0) || Date.parse(file.createdAt || file.created_at || "");
+  if (created) return created;
+  const received = Date.parse(normalizeImportDate(file.fileReceivedDate || file.receivedDate || "") || "");
+  if (received) return received;
+  const updated = Number(file.updatedAt || 0) || Date.parse(file.lastUpdatedDate || file.updated_at || "");
+  return updated || 0;
+}
+
+function sortFilesNewestFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const newest = fileNewestSortTime(b) - fileNewestSortTime(a);
+    if (newest) return newest;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function sortChatMessages(messages = []) {
+  return [...messages].sort((a, b) => chatMessageTime(a) - chatMessageTime(b));
+}
+
+function chatMessageTime(message = {}) {
+  return Number(message.createdAt || 0) || Date.parse(message.created_at || `${message.date || ""} ${message.time || ""}`) || 0;
+}
+
+function sortCorrectionHistory(rows = []) {
+  return [...rows].sort((a, b) => correctionTime(b) - correctionTime(a));
+}
+
+function correctionTime(row = {}) {
+  return Date.parse(row.returnedAt || row.returned_at || row.createdAt || row.created_at || row.returnedDate || "") || 0;
+}
+
 function sortFilesForDisplay(files) {
   if (["", "active"].includes(state.filters.listView || "") && ["Admin", "Manager"].includes(state.currentRole)) {
-    const direction = state.filters.receivedSort === "Newest First" ? -1 : 1;
-    return [...files].sort((a, b) => direction * (fileDateSortValue(a.fileReceivedDate) - fileDateSortValue(b.fileReceivedDate)));
+    if (state.filters.receivedSort !== "Oldest First") return sortFilesNewestFirst(files);
+    return [...files].sort((a, b) => fileDateSortValue(a.fileReceivedDate) - fileDateSortValue(b.fileReceivedDate));
   }
-  return files;
+  return sortFilesNewestFirst(files);
 }
 
 function workCompletedDate(file) {
@@ -3776,9 +3812,12 @@ function renderNotCheckedFileTable(files) {
         <tbody>
           ${rows.map((file, index) => {
             const checking = checkingStatusOf(file);
+            const correction = latestCorrectionForFile(file);
+            const correctionReason = correction?.correctionReason || correction?.correction_reason || file.correctionRemarks || "";
+            const correctionMeta = correctionReason ? `<span class="subtext correction-reason-line">Correction Reason: ${escapeHtml(correctionReason)}</span><span class="subtext">Returned By: ${escapeHtml(correction?.returnedBy || correction?.returned_by_name || file.returnedBy || "-")} | Returned On: ${escapeHtml(fmt(correction?.returnedAt || correction?.returned_at || file.returnedDate) || "-")}</span>` : "";
             return `<tr class="file-row file-row-${checking.className || "approval"}">
               <td>${index + 1}</td>
-              <td><span class="client-name">${escapeHtml(file.name)}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
+              <td><span class="client-name">${escapeHtml(file.name)}</span><span class="subtext">${escapeHtml(file.pan || "")}</span>${correctionMeta}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
               <td>${fmt(file.fileReceivedDate)}</td>
               <td>${fmt(workCompletedDate(file))}</td>
@@ -3979,7 +4018,46 @@ async function returnFileForCorrection(fileId) {
   if (!isCheckedCompleted(file)) return toast("Only completed files can be returned for correction.");
   const correctionRemarks = prompt("Correction remarks")?.trim();
   if (!correctionRemarks) return toast("Correction remarks are required.");
+  if (isSupabaseMode()) {
+    try {
+      const result = await apiJson(`/api/files/${encodeURIComponent(fileId)}/return-correction`, {
+        method: "POST",
+        body: JSON.stringify({ correctionReason: correctionRemarks }),
+      });
+      if (result.files) state.files = result.files;
+      if (result.correctionHistory) state.correctionHistory = result.correctionHistory;
+      if (result.fileNotifications) state.fileNotifications = result.fileNotifications;
+      saveState({ skipMerge: true, skipRemote: true });
+      toast("File returned for correction and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Failed correction update", { fileId, message: error.message });
+      return toast(`Correction sync failed: ${error.message || "Please retry."}`);
+    }
+  }
   const returnedDate = todayDate();
+  const returnedTo = findUserByStaffIdentity(file.assignedStaffId)
+    || findUserByStaffIdentity(file.assignedStaffEmail)
+    || findUserByStaffIdentity(file.assignedStaff)
+    || {};
+  const correction = {
+    id: crypto.randomUUID(),
+    fileId,
+    file_id: fileId,
+    correctionReason: correctionRemarks,
+    correction_reason: correctionRemarks,
+    returnedBy: state.currentUser || "",
+    returnedById: state.session?.userId || "",
+    returnedByEmail: state.session?.userEmail || "",
+    returnedTo: returnedTo.name || file.assignedStaff || "",
+    returnedToId: returnedTo.id || file.assignedStaffId || "",
+    returnedToEmail: returnedTo.email || file.assignedStaffEmail || "",
+    returnedAt: new Date().toISOString(),
+    returnedDate,
+    status: "Returned for Correction",
+    response: "",
+  };
   const stagesObj = { ...normalizeStages(file), ...(file.stages || {}) };
   stagesObj["Correction Required"] = true;
   stagesObj.Completed = false;
@@ -3992,12 +4070,20 @@ async function returnFileForCorrection(fileId) {
     checkedDate: "",
     checkingRemarks: "",
     correctionRemarks,
-    returnedBy: state.currentUser || "",
+    returnedBy: correction.returnedBy,
+    returnedById: correction.returnedById,
+    returnedByEmail: correction.returnedByEmail,
+    returnedTo: correction.returnedTo,
+    returnedToId: correction.returnedToId,
+    returnedToEmail: correction.returnedToEmail,
     returnedDate,
+    correctionStatus: correction.status,
+    correctionHistory: [...(file.correctionHistory || []), correction],
     lastUpdatedDate: returnedDate,
     updatedAt: Date.now(),
   };
   state.files[index] = updated;
+  state.correctionHistory = [...(state.correctionHistory || []), correction];
   queueFileChangeNotification(updated, `Returned for correction: ${correctionRemarks}`, "Returned for Correction");
   addAuditLog("File returned for correction", {
     fileId,
@@ -4196,6 +4282,7 @@ function openFileDrawer(id) {
           ${checkingDetailField("Checking Remarks", file.checkingRemarks || "-")}
         </div>
       `}
+      ${correctionInfoPanel(file)}
       <div class="field">
         <label>Remarks</label>
         <textarea name="remarks">${escapeHtml(file.remarks || "")}</textarea>
@@ -4329,6 +4416,56 @@ function formField(name, label, value, type = "text", required = true) {
 
 function checkingDetailField(label, value) {
   return `<div class="field readonly-field"><label>${label}</label><div class="readonly-value">${escapeHtml(value || "-")}</div></div>`;
+}
+
+function correctionInfoPanel(file = {}) {
+  const latest = latestCorrectionForFile(file);
+  if (!file.stages?.["Correction Required"] && !latest) return "";
+  const reason = latest?.correctionReason || latest?.correction_reason || file.correctionRemarks || "";
+  const returnedBy = latest?.returnedBy || latest?.returned_by_name || file.returnedBy || "";
+  const returnedOn = latest?.returnedAt || latest?.returned_at || file.returnedDate || "";
+  const history = correctionHistoryForFile(file);
+  return `
+    <div class="correction-panel">
+      <span class="badge overdue">Returned for Correction</span>
+      <div class="two-col">
+        ${checkingDetailField("Correction Reason", reason || "-")}
+        ${checkingDetailField("Returned By", returnedBy || "-")}
+        ${checkingDetailField("Returned On", returnedOn ? fmt(returnedOn) : "-")}
+        ${checkingDetailField("Correction Status", latest?.status || file.correctionStatus || "Returned for Correction")}
+      </div>
+      ${history.length > 1 ? `<div class="correction-history"><strong>Correction History</strong>${history.map((item) => `<p>${fmt(item.returnedAt || item.returned_at || item.returnedDate)} - ${escapeHtml(item.returnedBy || item.returned_by_name || "")}: ${escapeHtml(item.correctionReason || item.correction_reason || "")}</p>`).join("")}</div>` : ""}
+    </div>
+  `;
+}
+
+function correctionHistoryForFile(file = {}) {
+  return sortCorrectionHistory([
+    ...(state.correctionHistory || []).filter((row) => row.fileId === file.id || row.file_id === file.id),
+    ...(file.correctionHistory || []),
+  ]).filter((row, index, rows) => rows.findIndex((item) => (item.id || "") === (row.id || "")) === index);
+}
+
+function latestCorrectionForFile(file = {}) {
+  return correctionHistoryForFile(file)[0] || null;
+}
+
+function markLatestCorrectionResubmitted(file = {}) {
+  const history = correctionHistoryForFile(file);
+  if (!history.length) return file.correctionHistory || [];
+  const latestId = history[0].id;
+  const now = new Date().toISOString();
+  const updated = history.map((item) => (item.id === latestId ? {
+    ...item,
+    status: "Resubmitted for Checking",
+    response: item.response || "Correction completed and resubmitted for checking.",
+    resubmitted_at: now,
+    resubmittedAt: now,
+    updated_at: now,
+    updatedAt: now,
+  } : item));
+  state.correctionHistory = (state.correctionHistory || []).map((item) => (item.id === latestId ? updated.find((row) => row.id === latestId) : item));
+  return updated;
 }
 
 function selectField(name, label, options, value, disabled = false) {
@@ -4639,9 +4776,16 @@ async function saveFileFromDrawer() {
     createdAt: existingFile?.createdAt || new Date().toISOString(),
     editedBy: state.currentUser || "",
     editedAt: new Date().toISOString(),
-    correctionRemarks: justCompleted ? "" : (existingFile?.correctionRemarks || ""),
-    returnedBy: justCompleted ? "" : (existingFile?.returnedBy || ""),
-    returnedDate: justCompleted ? "" : (existingFile?.returnedDate || ""),
+    correctionRemarks: existingFile?.correctionRemarks || "",
+    returnedBy: existingFile?.returnedBy || "",
+    returnedById: existingFile?.returnedById || "",
+    returnedByEmail: existingFile?.returnedByEmail || "",
+    returnedTo: existingFile?.returnedTo || "",
+    returnedToId: existingFile?.returnedToId || "",
+    returnedToEmail: existingFile?.returnedToEmail || "",
+    returnedDate: existingFile?.returnedDate || "",
+    correctionStatus: justCompleted && wasReturned ? "Resubmitted for Checking" : (existingFile?.correctionStatus || ""),
+    correctionHistory: justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || []),
     remarks: data.get("remarks").trim(),
     attachments: JSON.parse(document.querySelector("#fileDrawer").dataset.attachments || "[]"),
     lastUpdatedDate: todayDate(),
@@ -9071,7 +9215,7 @@ function chatMessageCard(message) {
     <div class="chat-message ${own ? "own" : ""}">
       <div class="chat-meta">
         <strong>${escapeHtml(message.user || "Team Member")}</strong>
-        <span>${escapeHtml(targetLabel)} | ${fmt(message.date)} ${escapeHtml(message.time || "")}</span>
+        <span>${escapeHtml(targetLabel)} | ${fmt(message.date)} ${escapeHtml(message.time || "")} | ${escapeHtml(message.status || "sent")}</span>
       </div>
       ${message.text ? `<p>${escapeHtml(message.text || "")}</p>` : ""}
       ${attachments.map((file) => `
@@ -9109,8 +9253,35 @@ async function sendChatMessage() {
     if (uploadedFile.size > 1500000) return toast("Please attach a file below 1.5 MB for this local version.");
     attachments = [await readChatAttachment(uploadedFile)];
   }
+  if (isSupabaseMode()) {
+    try {
+      const result = await apiJson("/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          targetType,
+          targetUserId: targetUser?.id || "",
+          targetUserName: targetUser?.name || "",
+          targetUserEmail: targetUser?.email || "",
+          text,
+          attachments,
+        }),
+      });
+      state.chatMessages = sortChatMessages(result.chatMessages || state.chatMessages || []);
+      const sent = state.chatMessages[state.chatMessages.length - 1];
+      if (sent?.id) markChatMessageRead(sent.id, sender);
+      saveState({ skipMerge: true, skipRemote: true });
+      if (input) input.value = "";
+      if (fileInput) fileInput.value = "";
+      toast("Message sent");
+      openTeamChat(true);
+      return;
+    } catch (error) {
+      console.error("Failed message insert", { targetType, targetUserId: targetUser?.id || "", message: error.message });
+      return toast(`Message failed to send: ${error.message || "Please retry."}`);
+    }
+  }
   const messageId = crypto.randomUUID();
-  state.chatMessages = [
+  state.chatMessages = sortChatMessages([
     ...(state.chatMessages || []),
     {
       id: messageId,
@@ -9124,10 +9295,12 @@ async function sendChatMessage() {
       targetUserEmail: targetUser?.email || "",
       text,
       attachments,
+      status: "sent",
+      deliveredAt: new Date().toISOString(),
       date: todayDate(),
       time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
     },
-  ].slice(-300);
+  ]).slice(-300);
   markChatMessageRead(messageId, sender);
   saveState();
   if (input) input.value = "";

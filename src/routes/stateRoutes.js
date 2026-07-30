@@ -1,13 +1,18 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { getAppState, getAppStateRecord, saveAppState, backupPayload } = require("../services/appStateService");
+const { visibleChatMessages } = require("../services/chatService");
 
 const router = express.Router();
 
 router.get("/", requireAuth, async (req, res, next) => {
   try {
     const record = await getAppStateRecord();
-    res.json({ state: record.state, updatedAt: record.updatedAt, profile: req.profile });
+    res.json({
+      state: stateForProfile(record.state, req.profile, req.user.id),
+      updatedAt: record.updatedAt,
+      profile: req.profile,
+    });
   } catch (error) {
     next(error);
   }
@@ -75,3 +80,31 @@ router.post("/restore", requireAuth, requireRole("Admin"), async (req, res, next
 });
 
 module.exports = router;
+
+function stateForProfile(state, profile, userId) {
+  return {
+    ...state,
+    chatMessages: visibleChatMessages(state, profile, userId),
+    correctionHistory: visibleCorrectionHistory(state, profile, userId),
+  };
+}
+
+function visibleCorrectionHistory(state, profile, userId) {
+  if (["Admin", "Manager", "Staff Manager"].includes(profile?.role)) return state.correctionHistory || [];
+  const user = resolveUser(state, profile, userId);
+  return (state.correctionHistory || []).filter((row) =>
+    sameUser(user, row.returnedById || row.returned_by, row.returnedByEmail, row.returnedBy)
+    || sameUser(user, row.returnedToId || row.returned_to, row.returnedToEmail, row.returnedTo)
+  );
+}
+
+function resolveUser(state, profile, userId) {
+  return (state.users || []).find((user) => user.authUserId === userId || user.id === profile?.id || user.id === userId || user.email === profile?.email || user.name === profile?.name)
+    || { id: profile?.id || userId, authUserId: userId, email: profile?.email || "", name: profile?.name || "" };
+}
+
+function sameUser(user, id, email, name) {
+  return (id && [user.id, user.authUserId].includes(id))
+    || (email && String(email).toLowerCase() === String(user.email || "").toLowerCase())
+    || (name && String(name).trim().toLowerCase() === String(user.name || "").trim().toLowerCase());
+}
