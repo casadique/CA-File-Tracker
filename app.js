@@ -2635,6 +2635,14 @@ function isSidebarCollapsed() {
   return localStorage.getItem(`${STORAGE_KEY}-sidebar-collapsed`) === "Yes";
 }
 
+function resetSidebarLayoutForOperationsTheme() {
+  const themeVersionKey = `${STORAGE_KEY}-sidebar-theme-version`;
+  const currentVersion = "filing-index-operations-20260730";
+  if (localStorage.getItem(themeVersionKey) === currentVersion) return;
+  localStorage.removeItem(`${STORAGE_KEY}-sidebar-collapsed`);
+  localStorage.setItem(themeVersionKey, currentVersion);
+}
+
 function userInitials(name) {
   return String(name || "User").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || "").join("") || "U";
 }
@@ -9186,6 +9194,7 @@ function escapeHtml(value) {
 }
 
 async function bootApp() {
+  resetSidebarLayoutForOperationsTheme();
   const recoverySession = recoverySessionFromUrl();
   if (recoverySession) {
     renderPasswordRecovery(recoverySession);
