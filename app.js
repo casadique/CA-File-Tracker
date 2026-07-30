@@ -3995,8 +3995,20 @@ function resetFilters() {
   Object.keys(state.filters).forEach((key) => (state.filters[key] = ""));
 }
 
+function resetFiltersKeepingCurrentFileModule() {
+  const keep = {
+    listView: state.filters.listView || "",
+    dashboardKind: state.filters.dashboardKind || "",
+    fromDashboard: state.filters.fromDashboard || "",
+    receivedSort: state.filters.receivedSort || "Newest First",
+  };
+  resetFilters();
+  Object.assign(state.filters, keep);
+}
+
 function renderFilesPage() {
   if (isStaffLogin()) return renderStaffFilesPage();
+  if (!state.filters.receivedSort) state.filters.receivedSort = "Newest First";
   const files = sortFilesForDisplay(filteredFiles());
   document.querySelector("#files").innerHTML = `
     <div class="panel">
@@ -4036,7 +4048,7 @@ function renderFilesPage() {
   `;
   bindFilters();
   document.querySelector("#clearFilters").onclick = () => {
-    resetFilters();
+    resetFiltersKeepingCurrentFileModule();
     saveState();
     renderAll();
   };
@@ -4050,9 +4062,9 @@ function renderFilesPage() {
     };
   }
   const exportFiltered = document.querySelector("#exportFiltered");
-  if (exportFiltered) exportFiltered.onclick = () => exportExcel("filtered-files", files);
+  if (exportFiltered) exportFiltered.onclick = () => exportExcel("filtered-files", sortFilesForDisplay(filteredFiles()));
   const exportFilteredPdf = document.querySelector("#exportFilteredPdf");
-  if (exportFilteredPdf) exportFilteredPdf.onclick = () => exportFilteredFilesPdf(files, exportFilteredPdf);
+  if (exportFilteredPdf) exportFilteredPdf.onclick = () => exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportFilteredPdf);
   bindFileActions();
 }
 
@@ -4344,9 +4356,10 @@ function financeNewestFirst(a = {}, b = {}) {
 }
 
 function sortFilesForDisplay(files) {
+  if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
+  if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
   if (["", "active"].includes(state.filters.listView || "") && ["Admin", "Manager"].includes(state.currentRole)) {
-    if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
     return sortFilesNewestFirst(files);
   }
   return sortFilesNewestFirst(files);

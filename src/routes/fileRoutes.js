@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.get("/", requireAuth, async (_req, res, next) => {
   try {
-    res.json({ files: await listFiles(await getAppState()) });
+    res.json({ files: await listFiles(await getAppState(), _req.query || {}) });
   } catch (error) {
     next(error);
   }

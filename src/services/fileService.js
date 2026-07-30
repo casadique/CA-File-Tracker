@@ -1,8 +1,55 @@
 const crypto = require("crypto");
 const { patchAppState, sortFilesNewestFirst } = require("./appStateService");
 
-async function listFiles(state) {
-  return sortFilesNewestFirst(state.files || []);
+async function listFiles(state, options = {}) {
+  return sortFilesForRequest(state.files || [], options);
+}
+
+function sortFilesForRequest(files, options = {}) {
+  const sortField = String(options.sort || options.sortField || "").trim();
+  const direction = String(options.direction || options.sortDirection || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  if (sortField === "file_received_date") return sortFilesByDate(files, fileReceivedDateValue, direction, fileCreatedTime);
+  if (sortField === "completed_date") return sortFilesByDate(files, fileCompletionDateValue, direction, fileUpdatedTime);
+  return sortFilesNewestFirst(files);
+}
+
+function sortFilesByDate(files, dateGetter, direction = "desc", tieGetter = fileCreatedTime) {
+  return [...files].sort((a, b) => {
+    const leftDate = dateGetter(a);
+    const rightDate = dateGetter(b);
+    if (leftDate && rightDate && leftDate !== rightDate) return direction === "asc" ? leftDate - rightDate : rightDate - leftDate;
+    if (leftDate && !rightDate) return -1;
+    if (!leftDate && rightDate) return 1;
+    const leftTie = tieGetter(a);
+    const rightTie = tieGetter(b);
+    if (leftTie !== rightTie) return direction === "asc" ? leftTie - rightTie : rightTie - leftTie;
+    return direction === "asc"
+      ? String(a.id || "").localeCompare(String(b.id || ""))
+      : String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function fileReceivedDateValue(file = {}) {
+  return dateOrNumber(file.file_received_date || file.fileReceivedDate || file.receivedDate || file.received_on);
+}
+
+function fileCompletionDateValue(file = {}) {
+  return dateOrNumber(file.completed_date || file.completionDate || file.completedDate || file.workCompletedDate || file.work_completed_date || file.completed_at || file.completedAt);
+}
+
+function fileCreatedTime(file = {}) {
+  return dateOrNumber(file.created_at || file.createdAt || file.updated_at || file.updatedAt || file.lastUpdatedDate);
+}
+
+function fileUpdatedTime(file = {}) {
+  return dateOrNumber(file.updated_at || file.updatedAt || file.completed_at || file.completedAt || file.created_at || file.createdAt);
+}
+
+function dateOrNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value) return 0;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 async function upsertFile(file, userId, profile = {}) {
@@ -296,4 +343,4 @@ async function deleteFile(fileId, userId, profile = {}) {
   }, userId);
 }
 
-module.exports = { listFiles, upsertFile, returnFileForCorrection, deleteFile };
+module.exports = { listFiles, upsertFile, returnFileForCorrection, deleteFile, sortFilesForRequest };
