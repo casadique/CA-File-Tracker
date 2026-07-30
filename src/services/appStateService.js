@@ -60,6 +60,7 @@ function emptyState() {
     openingBalances: [],
     chatMessages: [],
     chatGroups: [],
+    staffDetails: [],
     fileNotifications: [],
     auditLog: [],
     services: [],
@@ -78,8 +79,18 @@ function normalizeServerState(state) {
     otherCashCollections: sortFinanceRows(state.otherCashCollections || []),
     chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
     chatGroups: Array.isArray(state.chatGroups) ? state.chatGroups : [],
+    staffDetails: sortStaffDetailsNewestFirst(state.staffDetails || []),
     correctionHistory: sortCorrectionsNewestFirst(state.correctionHistory || []),
   };
+}
+
+function sortStaffDetailsNewestFirst(rows) {
+  return [...rows].sort((a, b) => {
+    const left = dateOrNumber(a.updated_at || a.updatedAt || a.created_at || a.createdAt || a.dateOfJoining || a.date_of_joining);
+    const right = dateOrNumber(b.updated_at || b.updatedAt || b.created_at || b.createdAt || b.dateOfJoining || b.date_of_joining);
+    if (right !== left) return right - left;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  });
 }
 
 function sortFilesNewestFirst(files) {

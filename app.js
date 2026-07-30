@@ -362,6 +362,7 @@ function loadState() {
     revokedAccess: [],
     chatMessages: [],
     chatGroups: [],
+    staffDetails: [],
     fileNotifications: [],
     visitors: [],
     expenses: [],
@@ -627,6 +628,7 @@ function normalizeState(appState) {
     name: group.name || "Group Chat",
     memberIds: Array.isArray(group.memberIds) ? group.memberIds : [],
   }));
+  appState.staffDetails = normalizeStaffDetails(appState.staffDetails || [], mergedUsers);
   appState.chatMessages = (appState.chatMessages || []).map((message) => {
     const sender = findUserByStaffIdentity(message.userId, mergedUsers)
       || findUserByStaffIdentity(message.userEmail, mergedUsers)
@@ -1150,6 +1152,7 @@ function mergeLatestSharedStateBeforeSave() {
       (state.visitors || []).filter((visitor) => !deletedVisitors.has(visitor.id)),
     );
     state.chatMessages = mergeById(latest.chatMessages || [], state.chatMessages || []).slice(-300);
+    state.staffDetails = mergeStaffDetailsByLatestChange(latest.staffDetails || [], state.staffDetails || []);
     state.fileNotifications = mergeById(latest.fileNotifications || [], state.fileNotifications || []).slice(-500);
     state.auditLog = mergeById(latest.auditLog || [], state.auditLog || []).slice(-1000);
     state.revokedAccess = mergeRevokedAccess(latest.revokedAccess || [], state.revokedAccess || []);
@@ -1287,6 +1290,143 @@ function mergeVisitorsByLatestChange(existingVisitors, currentVisitors) {
     if (!old || visitorChangeTime(visitor) >= visitorChangeTime(old)) map.set(visitor.id, visitor);
   });
   return [...map.values()].sort((a, b) => visitorSortTime(b) - visitorSortTime(a));
+}
+
+function staffDetailChangeTime(row = {}) {
+  return Number(row.updatedAt || row.createdAt || 0) || Date.parse(row.updated_at || row.created_at || row.dateOfJoining || "") || 0;
+}
+
+function normalizeStaffDetails(rows = [], users = state.users || []) {
+  const seen = new Map();
+  rows.forEach((row) => {
+    if (!row) return;
+    const linkedUser = row.linkedUserId ? users.find((user) => sameStaffName(user.id, row.linkedUserId) || sameStaffName(user.authUserId, row.linkedUserId)) : null;
+    const normalized = {
+      id: row.id || `staff-${crypto.randomUUID()}`,
+      linkedUserId: row.linkedUserId || row.linked_user_id || "",
+      staffCode: String(row.staffCode || row.staff_code || row.employeeId || "").trim(),
+      staffName: properCaseName(row.staffName || row.staff_name || row.name || linkedUser?.name || ""),
+      dateOfJoining: normalizeImportDate(row.dateOfJoining || row.date_of_joining || row.doj) || "",
+      dateOfBirth: normalizeImportDate(row.dateOfBirth || row.date_of_birth || row.dob) || "",
+      email: normalizeEmail(row.email || linkedUser?.email || ""),
+      mobile: String(row.mobile || row.mobileNumber || row.mobile_number || "").trim(),
+      position: String(row.position || row.role || linkedUser?.role || "").trim(),
+      department: String(row.department || "").trim(),
+      reportingManagerId: row.reportingManagerId || row.reporting_manager_id || "",
+      branch: String(row.branch || row.office || "").trim(),
+      employmentType: row.employmentType || row.employment_type || "",
+      employmentStatus: row.employmentStatus || row.employment_status || "Active",
+      gender: row.gender || "",
+      address: row.address || "",
+      emergencyContactName: row.emergencyContactName || row.emergency_contact_name || "",
+      emergencyContactNumber: row.emergencyContactNumber || row.emergency_contact_number || "",
+      profilePhotoUrl: row.profilePhotoUrl || row.profile_photo_url || "",
+      remarks: row.remarks || "",
+      createdByUserId: row.createdByUserId || row.created_by_user_id || "",
+      createdByUserName: row.createdByUserName || row.created_by_user_name || "",
+      createdAt: Number(row.createdAt || 0) || Date.parse(row.created_at || "") || Date.now(),
+      updatedByUserName: row.updatedByUserName || row.updated_by_user_name || "",
+      updatedAt: Number(row.updatedAt || 0) || Date.parse(row.updated_at || "") || Date.now(),
+      deactivatedAt: row.deactivatedAt || row.deactivated_at || "",
+    };
+    if (!normalized.staffName) return;
+    const key = normalized.id || normalized.linkedUserId || normalized.email || normalized.staffName.toLowerCase();
+    const old = seen.get(key);
+    if (!old || staffDetailChangeTime(normalized) >= staffDetailChangeTime(old)) seen.set(key, normalized);
+  });
+  return [...seen.values()].sort((a, b) => staffDetailChangeTime(b) - staffDetailChangeTime(a));
+}
+
+function mergeStaffDetailsByLatestChange(existingRows, currentRows) {
+  return normalizeStaffDetails([...(existingRows || []), ...(currentRows || [])], state.users || []);
+}
+
+function canUseStaffDetails() {
+  return ["Admin", "Manager", "Staff Manager", "Staff"].includes(state.currentRole);
+}
+
+function canManageStaffDetails() {
+  return state.currentRole === "Admin" || rolePerm().roles;
+}
+
+function staffDetailsVisibleRows() {
+  const rows = normalizeStaffDetails(state.staffDetails || []);
+  if (["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return rows;
+  const user = loggedInUser();
+  return rows.filter((row) => row.linkedUserId === user?.id || normalizeEmail(row.email) === normalizeEmail(user?.email) || sameStaffName(row.staffName, user?.name));
+}
+
+function activeStaffDetails() {
+  return staffDetailsVisibleRows().filter((row) => !["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus));
+}
+
+function staffDateParts(dateString) {
+  const normalized = normalizeImportDate(dateString);
+  if (!normalized) return null;
+  const [year, month, day] = normalized.split("-").map(Number);
+  return { year, month, day };
+}
+
+function isLeapYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function staffEventDateForYear(dateString, year) {
+  const parts = staffDateParts(dateString);
+  if (!parts) return "";
+  const month = parts.month;
+  let day = parts.day;
+  if (month === 2 && day === 29 && !isLeapYear(year)) day = 28;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function currentIndiaYearMonth() {
+  const [year, month] = indiaTodayDate().split("-").map(Number);
+  return { year, month };
+}
+
+function staffBirthdaysThisMonth() {
+  const today = indiaTodayDate();
+  const { year, month } = currentIndiaYearMonth();
+  return activeStaffDetails()
+    .map((row) => ({ ...row, eventDate: staffEventDateForYear(row.dateOfBirth, year) }))
+    .filter((row) => row.eventDate && Number(row.eventDate.slice(5, 7)) === month)
+    .sort((a, b) => staffCelebrationSort(a.eventDate, b.eventDate, today));
+}
+
+function staffAnniversariesThisMonth() {
+  const today = indiaTodayDate();
+  const { year, month } = currentIndiaYearMonth();
+  return activeStaffDetails()
+    .map((row) => {
+      const eventDate = staffEventDateForYear(row.dateOfJoining, year);
+      return { ...row, eventDate, completedYears: staffCompletedYears(row.dateOfJoining, eventDate) };
+    })
+    .filter((row) => row.eventDate && Number(row.eventDate.slice(5, 7)) === month && row.dateOfJoining <= today && row.completedYears >= 1)
+    .sort((a, b) => staffCelebrationSort(a.eventDate, b.eventDate, today));
+}
+
+function staffCelebrationSort(a, b, today = indiaTodayDate()) {
+  const aPast = a < today ? 1 : 0;
+  const bPast = b < today ? 1 : 0;
+  if (aPast !== bPast) return aPast - bPast;
+  return a.localeCompare(b);
+}
+
+function staffCompletedYears(doj, eventDate = indiaTodayDate()) {
+  const join = staffDateParts(doj);
+  const event = staffDateParts(eventDate);
+  if (!join || !event) return 0;
+  let years = event.year - join.year;
+  const anniversary = staffEventDateForYear(doj, event.year);
+  if (eventDate < anniversary) years -= 1;
+  return Math.max(years, 0);
+}
+
+function staffShortDate(dateString) {
+  const normalized = normalizeImportDate(dateString);
+  if (!normalized) return "";
+  return new Date(`${normalized}T00:00:00+05:30`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" });
 }
 
 function sharedStateForStorage(appState) {
@@ -1562,7 +1702,7 @@ function applyTabSession(appState) {
 
 function restoreActivePage() {
   const local = tabSession();
-  const allowedPages = ["dashboard", "files", "staff", "users", "invites", "visitors", "dailyReport", "expenses", "reports", "verification", "backup"];
+  const allowedPages = ["dashboard", "files", "staff", "staffDetails", "users", "invites", "visitors", "dailyReport", "expenses", "reports", "verification", "backup"];
   if (allowedPages.includes(local.activePage)) activePage = local.activePage;
 }
 
@@ -2405,6 +2545,35 @@ function allNotificationItems() {
       createdAt: chatMessageTime(message),
     });
   });
+  if (["Admin", "Manager"].includes(state.currentRole)) {
+    const { year } = currentIndiaYearMonth();
+    staffBirthdaysThisMonth().forEach((row) => {
+      items.push({
+        id: `staff-birthday-${row.id}-${year}`,
+        type: "Upcoming Birthday",
+        category: "system",
+        tone: "approval",
+        title: row.staffName,
+        text: `${row.staffName}'s birthday is on ${staffShortDate(row.eventDate)}.`,
+        actor: "Staff Details",
+        date: row.eventDate,
+        createdAt: Date.parse(`${row.eventDate}T00:00:00+05:30`) || Date.now(),
+      });
+    });
+    staffAnniversariesThisMonth().forEach((row) => {
+      items.push({
+        id: `staff-anniversary-${row.id}-${year}`,
+        type: "Work Anniversary",
+        category: "system",
+        tone: "progress",
+        title: row.staffName,
+        text: `${row.staffName} completes ${row.completedYears} ${row.completedYears === 1 ? "year" : "years"} on ${staffShortDate(row.eventDate)}.`,
+        actor: "Staff Details",
+        date: row.eventDate,
+        createdAt: Date.parse(`${row.eventDate}T00:00:00+05:30`) || Date.now(),
+      });
+    });
+  }
   files.forEach((file) => {
     const days = daysUntil(file.dueDate);
     if ((sameStaffName(file.assignedStaff, state.currentUser) || sameStaffName(file.assignedStaff, user?.name) || sameStaffName(file.assignedStaffEmail, user?.email) || sameStaffName(file.assignedStaffId, user?.id)) && file.assignedStaff !== "Not Assigned") {
@@ -2596,6 +2765,7 @@ function mount() {
         <section class="page" id="dashboard"></section>
         <section class="page" id="files"></section>
         <section class="page" id="staff"></section>
+        <section class="page" id="staffDetails"></section>
         <section class="page" id="users"></section>
         <section class="page" id="invites"></section>
         <section class="page" id="visitors"></section>
@@ -2908,7 +3078,8 @@ function renderAll() {
   if (activePage === "backup" && !canUseBackupPage()) activePage = "dashboard";
   if (activePage === "verification" && !canUseVerificationPage()) activePage = "dashboard";
   if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
-  if (isStaffLogin() && !["dashboard", "files"].includes(activePage)) activePage = "dashboard";
+  if (activePage === "staffDetails" && !canUseStaffDetails()) activePage = "dashboard";
+  if (isStaffLogin() && !["dashboard", "files", "staffDetails"].includes(activePage)) activePage = "dashboard";
   if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "nonBilled", "billed", "feePending"].includes(state.filters.listView) && !state.filters.fromDashboard) {
     state.filters.listView = "active";
   }
@@ -2922,6 +3093,7 @@ function renderAll() {
     dashboard: ["Dashboard", ""],
     files: ["File List", ""],
     staff: ["Staff Performance", ""],
+    staffDetails: ["Staff Details", "Manage employee information, birthdays and work anniversaries"],
     users: ["User Management", ""],
     invites: ["Team Invitation", ""],
     visitors: ["Visitors", "Visitor register and office meeting log"],
@@ -2960,6 +3132,7 @@ function renderActivePage() {
     dashboard: renderDashboard,
     files: renderFilesPage,
     staff: renderStaffPage,
+    staffDetails: renderStaffDetailsPage,
     users: renderUsersPage,
     visitors: renderVisitorsPage,
     dailyReport: renderDailyReportPage,
@@ -3131,6 +3304,7 @@ function navGroupDefinitions() {
     ] },
     { key: "admin", label: "Administration", collapsible: true, items: [
       navItem("expenses", "expense", "Transactions"),
+      navItem("staffDetails", "idcard", "Staff Details"),
       ...(canUseBackupPage() ? [navItem("backup", "backup", "Backup")] : []),
       navItem("users", "lock", "User Management", "", true),
     ] },
@@ -3187,6 +3361,9 @@ function navIcon(name) {
     invoice: '<svg viewBox="0 0 24 24"><path d="M5 3h14v18l-3-2-3 2-3-2-3 2-2-1.4V3Zm4 5h6V6H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>',
     rupee: '<svg viewBox="0 0 24 24"><path d="M7 4h11v2h-4.2c.5.5.9 1.2 1 2H18v2h-3.3c-.4 2.3-2.3 3.8-5.1 4l5.5 6h-3L6.4 13.7V12h2.8c1.7 0 2.8-.7 3.2-2H7V8h5.2C11.8 6.8 10.7 6 9 6H7V4Z"/></svg>',
     expense: '<svg viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm2 2v10h12V7H6Zm2 2h5v2H8V9Zm0 4h8v2H8v-2Zm8-4h1v2h-1V9Z"/></svg>',
+    idcard: '<svg viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 4v10h16V8H4Zm3 2h5v6H7v-6Zm7 1h4v2h-4v-2Zm0 4h3v1.5h-3V15Z"/></svg>',
+    gift: '<svg viewBox="0 0 24 24"><path d="M20 7h-2.2A3 3 0 0 0 12 5.8 3 3 0 0 0 6.2 7H4v5h1v9h14v-9h1V7Zm-7-1a1 1 0 1 1 1 1h-1V6Zm-3 0v1H9a1 1 0 1 1 1-1Zm-4 5V9h5v2H6Zm1 8v-6h4v6H7Zm6 0v-6h4v6h-4Zm5-8h-5V9h5v2Z"/></svg>',
+    award: '<svg viewBox="0 0 24 24"><path d="M12 2a6 6 0 0 1 3.6 10.8L17 22l-5-2-5 2 1.4-9.2A6 6 0 0 1 12 2Zm0 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm-1 10.9-.7 4.2 1.7-.7 1.7.7-.7-4.2a6.5 6.5 0 0 1-2 0Z"/></svg>',
     report: '<svg viewBox="0 0 24 24"><path d="M5 3h14v18H5V3Zm3 14h8v-2H8v2Zm0-4h8v-2H8v2Zm0-4h5V7H8v2Z"/></svg>',
     users: '<svg viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.7-6 3.8V20h12v-3.2C15 14.7 12.3 13 9 13Zm8.5-1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm.5 1.2c-.9 0-1.7.1-2.4.4 1.1.8 1.9 1.9 1.9 3.2V20H22v-3c0-2.1-1.8-3.8-4-3.8Z"/></svg>',
     chart: '<svg viewBox="0 0 24 24"><path d="M4 19h16v2H4V3h2v16Zm4-2h3V9H8v8Zm5 0h3V5h-3v12Zm5 0h3v-6h-3v6Z"/></svg>',
@@ -3267,7 +3444,6 @@ function renderModernDashboardShell(s) {
   const userName = loggedInUser()?.name || state.currentUser || "CA Sadique";
   const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date()));
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const todayVisitors = dashboardVisitorsToday();
   return `
     <section class="modern-dashboard">
       <div class="dashboard-topbar-card">
@@ -3303,7 +3479,7 @@ function renderModernDashboardShell(s) {
       <div class="dashboard-lower-grid">
         ${renderRecentActivitiesCard()}
         ${renderUpcomingDueDatesCard(files)}
-        ${renderVisitorsTodayCard(todayVisitors)}
+        ${renderStaffCelebrationsCard()}
       </div>
     </section>
   `;
@@ -3513,6 +3689,44 @@ function renderVisitorsTodayCard(visitors) {
   </section>`;
 }
 
+function renderStaffCelebrationsCard() {
+  const birthdays = staffBirthdaysThisMonth();
+  const anniversaries = staffAnniversariesThisMonth();
+  return `<section class="dashboard-data-card dashboard-list-card staff-celebration-card">
+    <div class="dashboard-card-head">
+      <div><h3>Staff Celebrations This Month</h3><p>Birthdays and work anniversaries</p></div>
+      <button class="mini-button" data-staff-details-filter="all">View All</button>
+    </div>
+    <div class="staff-celebration-grid">
+      ${renderCelebrationSection("Birthdays This Month", birthdays, "gift", "birthday")}
+      ${renderCelebrationSection("Work Anniversaries This Month", anniversaries, "award", "anniversary")}
+    </div>
+  </section>`;
+}
+
+function renderCelebrationSection(title, rows, icon, type) {
+  const emptyText = type === "birthday" ? "No staff birthdays this month." : "No work anniversaries this month.";
+  return `<div class="celebration-section celebration-${type}">
+    <div class="celebration-section-head">
+      <span>${navIcon(icon)}</span>
+      <strong>${escapeHtml(title)}</strong>
+      <button class="mini-button" data-staff-details-filter="${type}">View All</button>
+    </div>
+    <div class="celebration-list">
+      ${rows.length ? rows.slice(0, 5).map((row) => {
+        const celebrated = row.eventDate < indiaTodayDate();
+        const detail = type === "birthday"
+          ? `${staffShortDate(row.eventDate)}${celebrated ? " · Celebrated" : ""}`
+          : `${staffShortDate(row.eventDate)} · ${row.completedYears} ${row.completedYears === 1 ? "Year" : "Years"}${celebrated ? " · Celebrated" : ""}`;
+        return `<div class="celebration-row">
+          <span class="celebration-avatar">${escapeHtml(userInitials(row.staffName))}</span>
+          <div><strong>${escapeHtml(row.staffName)}</strong><p>${escapeHtml(detail)}</p></div>
+        </div>`;
+      }).join("") : dashboardEmptyState(emptyText)}
+    </div>
+  </div>`;
+}
+
 function dashboardVisitorsToday() {
   const today = indiaTodayDate();
   return (state.visitors || []).filter((visitor) => visitor.date === today).sort(visitorNewestFirst);
@@ -3533,6 +3747,16 @@ function bindModernDashboard() {
     button.addEventListener("click", () => {
       activePage = button.dataset.page;
       saveState();
+      renderAll();
+    });
+  });
+  document.querySelectorAll("[data-staff-details-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const filter = button.dataset.staffDetailsFilter || "";
+      activePage = "staffDetails";
+      state.filters.staffBirthdayMonth = filter === "birthday" ? String(currentIndiaYearMonth().month).padStart(2, "0") : "";
+      state.filters.staffJoiningMonth = filter === "anniversary" ? String(currentIndiaYearMonth().month).padStart(2, "0") : "";
+      saveViewState();
       renderAll();
     });
   });
@@ -5616,6 +5840,388 @@ function renderStaffManagerPermissionSummary() {
       <p class="small-muted">Staff Managers do not receive Admin-only access, user deletion, backup/restore, or full system settings permissions.</p>
     </div>
   `;
+}
+
+function renderStaffDetailsPage() {
+  const page = document.querySelector("#staffDetails");
+  if (!page) return;
+  if (!canUseStaffDetails()) {
+    page.innerHTML = `<div class="permission-note">Staff Details is not available for this login.</div>`;
+    return;
+  }
+  state.staffDetails = normalizeStaffDetails(state.staffDetails || []);
+  const rows = filteredStaffDetails();
+  const activeRows = activeStaffDetails();
+  const birthdays = staffBirthdaysThisMonth();
+  const anniversaries = staffAnniversariesThisMonth();
+  const newJoiners = activeRows.filter((row) => staffDateParts(row.dateOfJoining)?.month === currentIndiaYearMonth().month && staffDateParts(row.dateOfJoining)?.year === currentIndiaYearMonth().year);
+  page.innerHTML = `
+    <div class="staff-details-shell">
+      <section class="staff-details-hero">
+        <div>
+          <span class="dashboard-eyebrow">Employee Directory</span>
+          <h3>Staff Details</h3>
+          <p>Manage employee information, birthdays and work anniversaries.</p>
+        </div>
+        <div class="staff-details-actions">
+          <button class="secondary-button" id="staffDetailsExcel" ${rolePerm().export ? "" : "disabled"}>Excel</button>
+          <button class="secondary-button" id="staffDetailsPdf" ${rolePerm().export ? "" : "disabled"}>PDF</button>
+          <button class="secondary-button" id="staffDetailsPrint">Print</button>
+          ${canManageStaffDetails() ? `<button class="primary-button" id="showStaffForm">Add Staff</button>` : ""}
+        </div>
+      </section>
+      <div class="staff-summary-grid">
+        ${staffSummaryCard("Total Active Staff", activeRows.length, "Active employee records", "idcard")}
+        ${staffSummaryCard("Birthdays This Month", birthdays.length, "DOB month matches today", "gift")}
+        ${staffSummaryCard("Work Anniversaries This Month", anniversaries.length, "Completed service years", "award")}
+        ${staffSummaryCard("New Joiners This Month", newJoiners.length, "Joined during this month", "users")}
+      </div>
+      ${renderStaffDetailsForm()}
+      <section class="panel staff-details-panel">
+        <div class="staff-details-filter-grid">
+          ${staffFilterInput("staffSearch", "Search", "Search by staff name, email, code or position")}
+          ${staffFilterSelect("staffDepartment", "Department", uniqueStaffValues("department"))}
+          ${staffFilterSelect("staffPosition", "Position", uniqueStaffValues("position"))}
+          ${staffFilterSelect("staffStatus", "Employment Status", ["Active", "On Leave", "Resigned", "Terminated", "Inactive"])}
+          ${staffFilterSelect("staffBranch", "Branch", uniqueStaffValues("branch"))}
+          ${staffFilterMonth("staffBirthdayMonth", "Birthday Month")}
+          ${staffFilterMonth("staffJoiningMonth", "Joining Month")}
+          <div class="field"><label>Sort By</label><select id="staffSort">${["Newest", "Staff Name", "DOJ", "DOB", "Position", "Department", "Status"].map((item) => `<option ${state.filters.staffSort === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+        </div>
+        <div class="action-row staff-details-filter-actions">
+          <button class="secondary-button" id="clearStaffFilters">Clear Filters</button>
+          <strong>${rows.length} staff record(s)</strong>
+        </div>
+        ${renderStaffDetailsTable(rows)}
+      </section>
+      <section class="panel staff-profile-panel" id="staffProfilePanel">${renderStaffProfile()}</section>
+    </div>
+  `;
+  bindStaffDetailsPage();
+}
+
+function staffSummaryCard(title, value, note, icon) {
+  return `<div class="dashboard-kpi-card staff-summary-card"><div class="dashboard-kpi-top"><span class="dashboard-kpi-icon">${navIcon(icon)}</span><span class="dashboard-kpi-title">${escapeHtml(title)}</span></div><strong>${Number(value || 0).toLocaleString("en-IN")}</strong><div class="dashboard-kpi-meta"><small>${escapeHtml(note)}</small></div></div>`;
+}
+
+function renderStaffDetailsForm() {
+  if (!canManageStaffDetails()) return "";
+  const editing = state.staffDetails.find((row) => row.id === state.filters.staffEditingId) || null;
+  const visible = state.filters.staffFormOpen === "Yes" || editing;
+  const mode = state.filters.staffFormMode || (editing?.linkedUserId ? "existing" : "manual");
+  const selectedUser = state.users.find((user) => user.id === (editing?.linkedUserId || state.filters.staffSelectedUserId)) || null;
+  const userSearch = normalizeImportMatchText(state.filters.staffUserSearch || "");
+  const selectableUsers = state.users.filter((user) => !userSearch || normalizeImportMatchText(`${user.name} ${user.email} ${user.id} ${user.role}`).includes(userSearch));
+  const v = (key, fallback = "") => escapeHtml(editing?.[key] ?? fallback ?? "");
+  return `<section class="panel staff-form-panel ${visible ? "" : "hidden"}">
+    <div class="staff-form-head"><div><h3>${editing ? "Edit Staff" : "Add Staff"}</h3><p>${mode === "existing" ? "Link to an existing app user without creating a duplicate login." : "Create a manual staff record without login access."}</p></div><button class="icon-button" id="closeStaffForm" type="button">X</button></div>
+    <div class="staff-entry-tabs">
+      <button class="${mode === "existing" ? "active" : ""}" data-staff-form-mode="existing" type="button">Select from Existing Users</button>
+      <button class="${mode === "manual" ? "active" : ""}" data-staff-form-mode="manual" type="button">Add Staff Manually</button>
+    </div>
+    <form id="staffDetailsForm" class="staff-details-form">
+      <input type="hidden" name="id" value="${v("id")}">
+      ${mode === "existing" ? `<div class="field staff-user-search"><label>Search Existing Users</label><input id="staffUserSearch" value="${escapeHtml(state.filters.staffUserSearch || "")}" placeholder="Search by name, email, user ID or role"></div><div class="field staff-user-picker"><label>Linked User</label><select name="linkedUserId" id="staffLinkedUser"><option value="">Select existing user</option>${selectableUsers.map((user) => `<option value="${escapeHtml(user.id)}" ${(selectedUser?.id || editing?.linkedUserId) === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.email)} - ${escapeHtml(user.role)}</option>`).join("")}</select></div>` : `<input type="hidden" name="linkedUserId" value="${v("linkedUserId")}">`}
+      ${staffFormField("staffName", "Staff Name", "text", v("staffName", selectedUser?.name || ""), true)}
+      ${staffFormField("staffCode", "Staff Code / Employee ID", "text", v("staffCode"))}
+      ${staffFormField("dateOfJoining", "DOJ", "date", v("dateOfJoining"), true)}
+      ${staffFormField("dateOfBirth", "DOB", "date", v("dateOfBirth"))}
+      ${staffFormField("email", "Email", "email", v("email", selectedUser?.email || ""))}
+      ${staffFormField("mobile", "Mobile", "tel", v("mobile"))}
+      ${staffFormField("position", "Position", "text", v("position", selectedUser?.role || ""), true)}
+      ${staffFormField("department", "Department", "text", v("department"))}
+      <div class="field"><label>Reporting Manager</label><select name="reportingManagerId"><option value="">Select Manager</option>${state.users.filter((u) => ["Admin", "Manager", "Staff Manager"].includes(u.role)).map((u) => `<option value="${escapeHtml(u.id)}" ${editing?.reportingManagerId === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`).join("")}</select></div>
+      ${staffFormField("branch", "Branch or Office", "text", v("branch"))}
+      <div class="field"><label>Employment Type</label><select name="employmentType">${["", "Permanent", "Temporary", "Probation", "Intern", "Consultant", "Part-time"].map((item) => `<option ${editing?.employmentType === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      <div class="field"><label>Employment Status</label><select name="employmentStatus">${["Active", "On Leave", "Resigned", "Terminated", "Inactive"].map((item) => `<option ${((editing?.employmentStatus || "Active") === item) ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      ${staffFormField("gender", "Gender", "text", v("gender"))}
+      ${staffFormField("emergencyContactName", "Emergency Contact Name", "text", v("emergencyContactName"))}
+      ${staffFormField("emergencyContactNumber", "Emergency Contact Number", "tel", v("emergencyContactNumber"))}
+      ${staffFormField("profilePhotoUrl", "Profile Photo URL", "url", v("profilePhotoUrl"))}
+      <div class="field wide-field"><label>Address</label><textarea name="address">${v("address")}</textarea></div>
+      <div class="field wide-field"><label>Remarks</label><textarea name="remarks">${v("remarks")}</textarea></div>
+      <div class="staff-form-errors" id="staffFormErrors"></div>
+      <div class="action-row staff-form-actions"><button class="primary-button" id="saveStaffDetails" type="submit">Save Staff</button><button class="secondary-button" id="cancelStaffDetails" type="button">Cancel</button></div>
+    </form>
+  </section>`;
+}
+
+function staffFormField(name, label, type, value, required = false) {
+  return `<div class="field"><label>${escapeHtml(label)}${required ? " *" : ""}</label><input name="${name}" type="${type}" value="${value}" ${required ? "required" : ""}></div>`;
+}
+
+function staffFilterInput(key, label, placeholder = "") {
+  return `<div class="field"><label>${label}</label><input id="${key}" value="${escapeHtml(state.filters[key] || "")}" placeholder="${escapeHtml(placeholder)}"></div>`;
+}
+
+function staffFilterSelect(key, label, options) {
+  return `<div class="field"><label>${label}</label><select id="${key}"><option value="">All</option>${options.filter(Boolean).map((item) => `<option value="${escapeHtml(item)}" ${state.filters[key] === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></div>`;
+}
+
+function staffFilterMonth(key, label) {
+  const months = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0"));
+  return `<div class="field"><label>${label}</label><select id="${key}"><option value="">All</option>${months.map((month) => `<option value="${month}" ${state.filters[key] === month ? "selected" : ""}>${new Date(`2026-${month}-01T00:00:00+05:30`).toLocaleString("en-IN", { month: "long" })}</option>`).join("")}</select></div>`;
+}
+
+function uniqueStaffValues(key) {
+  return sortList([...new Set(staffDetailsVisibleRows().map((row) => row[key]).filter(Boolean))]);
+}
+
+function filteredStaffDetails() {
+  let rows = staffDetailsVisibleRows();
+  const search = normalizeImportMatchText(state.filters.staffSearch || "");
+  rows = rows.filter((row) => {
+    if (search && !normalizeImportMatchText(`${row.staffName} ${row.staffCode} ${row.email} ${row.mobile} ${row.position} ${row.department}`).includes(search)) return false;
+    if (state.filters.staffDepartment && row.department !== state.filters.staffDepartment) return false;
+    if (state.filters.staffPosition && row.position !== state.filters.staffPosition) return false;
+    if (state.filters.staffStatus && row.employmentStatus !== state.filters.staffStatus) return false;
+    if (state.filters.staffBranch && row.branch !== state.filters.staffBranch) return false;
+    if (state.filters.staffBirthdayMonth && String(staffDateParts(row.dateOfBirth)?.month || "").padStart(2, "0") !== state.filters.staffBirthdayMonth) return false;
+    if (state.filters.staffJoiningMonth && String(staffDateParts(row.dateOfJoining)?.month || "").padStart(2, "0") !== state.filters.staffJoiningMonth) return false;
+    return true;
+  });
+  const sort = state.filters.staffSort || "Newest";
+  if (sort === "Staff Name") rows.sort((a, b) => a.staffName.localeCompare(b.staffName));
+  else if (sort === "DOJ") rows.sort((a, b) => String(a.dateOfJoining).localeCompare(String(b.dateOfJoining)));
+  else if (sort === "DOB") rows.sort((a, b) => String(a.dateOfBirth).localeCompare(String(b.dateOfBirth)));
+  else if (sort === "Position") rows.sort((a, b) => String(a.position).localeCompare(String(b.position)));
+  else if (sort === "Department") rows.sort((a, b) => String(a.department).localeCompare(String(b.department)));
+  else if (sort === "Status") rows.sort((a, b) => String(a.employmentStatus).localeCompare(String(b.employmentStatus)));
+  else rows.sort((a, b) => staffDetailChangeTime(b) - staffDetailChangeTime(a));
+  return rows;
+}
+
+function renderStaffDetailsTable(rows) {
+  if (!rows.length) return empty("No staff records found.");
+  const headers = ["SN", "Profile", "Staff Name", "Staff Code", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting Manager", "Employment Status", "Actions"];
+  return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
+    <td>${index + 1}</td>
+    <td>${staffAvatar(row)}</td>
+    <td><strong>${escapeHtml(row.staffName)}</strong></td>
+    <td>${escapeHtml(row.staffCode || "")}</td>
+    <td>${escapeHtml(row.position || "")}</td>
+    <td>${escapeHtml(row.department || "")}</td>
+    <td>${displayDate(row.dateOfJoining)}</td>
+    <td>${canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)}</td>
+    <td>${escapeHtml(row.email || "")}</td>
+    <td>${escapeHtml(row.mobile || "")}</td>
+    <td>${escapeHtml(staffManagerName(row.reportingManagerId))}</td>
+    <td><span class="staff-status status-${String(row.employmentStatus || "Active").toLowerCase().replaceAll(" ", "-")}">${escapeHtml(row.employmentStatus || "Active")}</span></td>
+    <td class="action-col"><button class="mini-button" data-view-staff="${row.id}">View</button>${canManageStaffDetails() ? `<button class="mini-button" data-edit-staff="${row.id}">Edit</button><button class="mini-button" data-toggle-staff="${row.id}">${["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "Reactivate" : "Deactivate"}</button><button class="mini-button danger" data-delete-staff="${row.id}">Delete</button>` : ""}</td>
+  </tr>`).join("")}</tbody></table></div>`;
+}
+
+function staffAvatar(row) {
+  if (row.profilePhotoUrl) return `<span class="staff-avatar"><img src="${escapeHtml(row.profilePhotoUrl)}" alt=""></span>`;
+  return `<span class="staff-avatar">${escapeHtml(userInitials(row.staffName))}</span>`;
+}
+
+function staffManagerName(id) {
+  return state.users.find((user) => user.id === id)?.name || "";
+}
+
+function renderStaffProfile() {
+  const row = staffDetailsVisibleRows().find((item) => item.id === state.filters.staffProfileId);
+  if (!row) return `<div class="dashboard-empty-state">Select a staff record to view the employee profile.</div>`;
+  const anniversaryDate = staffEventDateForYear(row.dateOfJoining, currentIndiaYearMonth().year);
+  const years = staffCompletedYears(row.dateOfJoining, anniversaryDate);
+  return `<div class="staff-profile">
+    <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
+    <div class="staff-profile-grid">
+      ${staffProfileBlock("Employment Information", [["Staff Code", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting Manager", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
+      ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber].filter(Boolean).join(" - ")]])}
+      ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
+      ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
+    </div>
+  </div>`;
+}
+
+function staffProfileBlock(title, rows) {
+  return `<section><h4>${escapeHtml(title)}</h4>${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong></div>`).join("")}</section>`;
+}
+
+function bindStaffDetailsPage() {
+  document.querySelector("#showStaffForm")?.addEventListener("click", () => {
+    state.filters.staffFormOpen = "Yes";
+    state.filters.staffEditingId = "";
+    state.filters.staffFormMode = "existing";
+    renderStaffDetailsPage();
+  });
+  document.querySelector("#closeStaffForm")?.addEventListener("click", closeStaffForm);
+  document.querySelector("#cancelStaffDetails")?.addEventListener("click", closeStaffForm);
+  document.querySelectorAll("[data-staff-form-mode]").forEach((btn) => btn.addEventListener("click", () => {
+    state.filters.staffFormMode = btn.dataset.staffFormMode;
+    state.filters.staffSelectedUserId = "";
+    renderStaffDetailsPage();
+  }));
+  document.querySelector("#staffLinkedUser")?.addEventListener("change", (event) => {
+    state.filters.staffSelectedUserId = event.target.value;
+    renderStaffDetailsPage();
+  });
+  document.querySelector("#staffUserSearch")?.addEventListener("input", (event) => {
+    state.filters.staffUserSearch = event.target.value;
+    renderStaffDetailsPage();
+    const input = document.querySelector("#staffUserSearch");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  });
+  ["staffSearch", "staffDepartment", "staffPosition", "staffStatus", "staffBranch", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"].forEach((id) => {
+    document.querySelector(`#${id}`)?.addEventListener("input", (event) => {
+      state.filters[id] = event.target.value;
+      saveViewState();
+      renderStaffDetailsPage();
+    });
+  });
+  document.querySelector("#clearStaffFilters")?.addEventListener("click", () => {
+    ["staffSearch", "staffDepartment", "staffPosition", "staffStatus", "staffBranch", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"].forEach((key) => state.filters[key] = "");
+    saveViewState();
+    renderStaffDetailsPage();
+  });
+  document.querySelector("#staffDetailsForm")?.addEventListener("submit", saveStaffDetailsForm);
+  document.querySelectorAll("[data-view-staff]").forEach((btn) => btn.addEventListener("click", () => {
+    state.filters.staffProfileId = btn.dataset.viewStaff;
+    saveViewState();
+    renderStaffDetailsPage();
+  }));
+  document.querySelectorAll("[data-edit-staff]").forEach((btn) => btn.addEventListener("click", () => {
+    state.filters.staffEditingId = btn.dataset.editStaff;
+    state.filters.staffFormOpen = "Yes";
+    renderStaffDetailsPage();
+  }));
+  document.querySelectorAll("[data-toggle-staff]").forEach((btn) => btn.addEventListener("click", () => toggleStaffStatus(btn.dataset.toggleStaff)));
+  document.querySelectorAll("[data-delete-staff]").forEach((btn) => btn.addEventListener("click", () => deleteStaffDetail(btn.dataset.deleteStaff)));
+  document.querySelector("#staffDetailsExcel")?.addEventListener("click", exportStaffDetailsExcel);
+  document.querySelector("#staffDetailsPdf")?.addEventListener("click", exportStaffDetailsPdf);
+  document.querySelector("#staffDetailsPrint")?.addEventListener("click", printStaffDetailsReport);
+}
+
+function closeStaffForm() {
+  state.filters.staffFormOpen = "";
+  state.filters.staffEditingId = "";
+  state.filters.staffSelectedUserId = "";
+  saveViewState();
+  renderStaffDetailsPage();
+}
+
+function saveStaffDetailsForm(event) {
+  event.preventDefault();
+  if (!canManageStaffDetails()) return toast("Only Admin can update staff details.");
+  const button = document.querySelector("#saveStaffDetails");
+  if (button) button.disabled = true;
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const id = data.get("id") || `staff-${crypto.randomUUID()}`;
+  const linkedUserId = data.get("linkedUserId") || "";
+  const email = normalizeEmail(data.get("email"));
+  const staffCode = String(data.get("staffCode") || "").trim();
+  const editingId = data.get("id") || "";
+  const errors = [];
+  const name = String(data.get("staffName") || "").trim();
+  const doj = normalizeImportDate(data.get("dateOfJoining"));
+  const dob = normalizeImportDate(data.get("dateOfBirth"));
+  const position = String(data.get("position") || "").trim();
+  if (!name) errors.push("Staff Name is required.");
+  if (!doj) errors.push("DOJ is required.");
+  if (!position) errors.push("Position is required.");
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Please enter a valid Email.");
+  if (data.get("mobile") && !/^[0-9+\-\s()]{6,20}$/.test(String(data.get("mobile")))) errors.push("Please enter a valid Mobile number.");
+  if (dob && dob > indiaTodayDate()) errors.push("DOB cannot be a future date.");
+  if (doj && doj > indiaTodayDate()) errors.push("DOJ cannot be a future date.");
+  if (email && state.staffDetails.some((row) => row.id !== editingId && normalizeEmail(row.email) === email && !["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus))) errors.push("Email is already used by another active staff record.");
+  if (linkedUserId && state.staffDetails.some((row) => row.id !== editingId && row.linkedUserId === linkedUserId && !["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus))) errors.push("This user is already linked to an active staff record.");
+  if (staffCode && state.staffDetails.some((row) => row.id !== editingId && String(row.staffCode || "").toLowerCase() === staffCode.toLowerCase())) errors.push("Staff Code must be unique.");
+  if (errors.length) {
+    document.querySelector("#staffFormErrors").innerHTML = errors.map((error) => `<p>${escapeHtml(error)}</p>`).join("");
+    if (button) button.disabled = false;
+    return;
+  }
+  const old = state.staffDetails.find((row) => row.id === editingId) || {};
+  const record = {
+    ...old,
+    id,
+    linkedUserId,
+    staffCode,
+    staffName: properCaseName(name),
+    dateOfJoining: doj,
+    dateOfBirth: dob,
+    email,
+    mobile: String(data.get("mobile") || "").trim(),
+    position,
+    department: String(data.get("department") || "").trim(),
+    reportingManagerId: data.get("reportingManagerId") || "",
+    branch: String(data.get("branch") || "").trim(),
+    employmentType: data.get("employmentType") || "",
+    employmentStatus: data.get("employmentStatus") || "Active",
+    gender: String(data.get("gender") || "").trim(),
+    address: String(data.get("address") || "").trim(),
+    emergencyContactName: String(data.get("emergencyContactName") || "").trim(),
+    emergencyContactNumber: String(data.get("emergencyContactNumber") || "").trim(),
+    profilePhotoUrl: String(data.get("profilePhotoUrl") || "").trim(),
+    remarks: String(data.get("remarks") || "").trim(),
+    createdByUserId: old.createdByUserId || state.session?.userId || "",
+    createdByUserName: old.createdByUserName || state.currentUser || "",
+    createdAt: old.createdAt || Date.now(),
+    updatedByUserName: state.currentUser || "",
+    updatedAt: Date.now(),
+    deactivatedAt: ["Inactive", "Resigned", "Terminated"].includes(data.get("employmentStatus")) ? (old.deactivatedAt || new Date().toISOString()) : "",
+  };
+  state.staffDetails = editingId
+    ? state.staffDetails.map((row) => row.id === editingId ? record : row)
+    : [record, ...(state.staffDetails || [])];
+  addAuditLog(editingId ? "Staff details updated" : "Staff details added", { staffId: record.id, staffName: record.staffName });
+  state.filters.staffProfileId = record.id;
+  state.filters.staffFormOpen = "";
+  state.filters.staffEditingId = "";
+  saveState({ fullRemote: true });
+  toast("Staff details saved");
+  renderStaffDetailsPage();
+}
+
+function toggleStaffStatus(id) {
+  if (!canManageStaffDetails()) return toast("Only Admin can update staff status.");
+  state.staffDetails = state.staffDetails.map((row) => row.id === id ? {
+    ...row,
+    employmentStatus: ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "Active" : "Inactive",
+    deactivatedAt: ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "" : new Date().toISOString(),
+    updatedByUserName: state.currentUser || "",
+    updatedAt: Date.now(),
+  } : row);
+  addAuditLog("Staff status updated", { staffId: id });
+  saveState({ fullRemote: true });
+  renderStaffDetailsPage();
+}
+
+function deleteStaffDetail(id) {
+  if (!canManageStaffDetails()) return toast("Only Admin can delete staff details.");
+  if (!confirm("Delete this staff record? This will not delete the user login.")) return;
+  state.staffDetails = (state.staffDetails || []).filter((row) => row.id !== id);
+  addAuditLog("Staff details deleted", { staffId: id });
+  saveState({ fullRemote: true });
+  renderStaffDetailsPage();
+}
+
+function staffDetailsReportRows(rows = filteredStaffDetails()) {
+  return rows.map((row, index) => ({
+    SN: index + 1,
+    "Staff Name": row.staffName,
+    "Staff Code": row.staffCode,
+    DOJ: displayDate(row.dateOfJoining),
+    DOB: canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth),
+    Position: row.position,
+    Department: row.department,
+    Email: row.email,
+    Mobile: row.mobile,
+    "Reporting Manager": staffManagerName(row.reportingManagerId),
+    "Employment Status": row.employmentStatus,
+  }));
+}
+
+function exportStaffDetailsExcel() { exportExcel("staff-details-register", staffDetailsReportRows()); }
+async function exportStaffDetailsPdf() { await downloadPdfRows("staff-details-register", staffDetailsReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Staff Details Register"]); }
+function printStaffDetailsReport() {
+  printStructuredReport({ title: "Staff Details Register", sections: [{ title: "Staff Details", rows: staffDetailsReportRows() }], format: "print" });
 }
 
 function renderUsersPage() {
