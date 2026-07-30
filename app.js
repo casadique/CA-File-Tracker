@@ -2460,6 +2460,68 @@ function renderLogin() {
   };
 }
 
+function recoveryTokenFromUrl() {
+  const hash = new URLSearchParams(String(location.hash || "").replace(/^#/, ""));
+  const search = new URLSearchParams(location.search);
+  const token = hash.get("access_token") || search.get("access_token") || "";
+  const type = hash.get("type") || search.get("type") || "";
+  return token && (!type || type === "recovery") ? token : "";
+}
+
+function clearRecoveryUrl() {
+  if (location.hash || location.search) {
+    history.replaceState({}, document.title, location.pathname);
+  }
+}
+
+function renderPasswordRecovery(token) {
+  document.querySelector("#app").innerHTML = `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="brand-mark">CF</div>
+        <h1>Set New Password</h1>
+        <p class="login-subtitle">Enter a new password for this login.</p>
+        <div class="field">
+          <label>New Password</label>
+          <div class="password-wrap"><input id="recoveryPassword" type="password" autocomplete="new-password" /><button type="button" data-toggle-password="recoveryPassword">View</button></div>
+        </div>
+        <div class="field">
+          <label>Confirm Password</label>
+          <div class="password-wrap"><input id="recoveryPasswordConfirm" type="password" autocomplete="new-password" /><button type="button" data-toggle-password="recoveryPasswordConfirm">View</button></div>
+        </div>
+        <button class="primary-button" id="recoveryPasswordButton">Update Password</button>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+  `;
+  bindPasswordToggles();
+  const submit = () => handlePasswordRecovery(token);
+  document.querySelector("#recoveryPasswordButton").onclick = submit;
+  document.querySelector("#recoveryPasswordConfirm").onkeydown = (e) => {
+    if (e.key === "Enter") submit();
+  };
+}
+
+async function handlePasswordRecovery(token) {
+  const password = document.querySelector("#recoveryPassword").value;
+  const confirm = document.querySelector("#recoveryPasswordConfirm").value;
+  if (!password || password.length < 8) return toast("Password must be at least 8 characters.");
+  if (password !== confirm) return toast("Passwords do not match.");
+  try {
+    await backendApiJson("/api/auth/update-password", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ password }),
+      skipAuthRefresh: true,
+    });
+    clearRecoveryUrl();
+    renderLogin();
+    toast("Password updated. Please login.");
+  } catch (error) {
+    toast(error.message || "Password recovery link expired. Send recovery email again.");
+  }
+}
+
 async function handleLogin() {
   const email = document.querySelector("#loginEmail").value.trim();
   const password = document.querySelector("#loginPassword").value;
@@ -9117,6 +9179,11 @@ function escapeHtml(value) {
 }
 
 async function bootApp() {
+  const recoveryToken = recoveryTokenFromUrl();
+  if (recoveryToken) {
+    renderPasswordRecovery(recoveryToken);
+    return;
+  }
   if (state.session?.loggedIn && isSupabaseMode()) {
     const loaded = await loadStateFromApi();
     if (loaded) return;

@@ -1,5 +1,6 @@
 const express = require("express");
 const { createSupabaseClient } = require("../config/supabase");
+const { supabaseAdmin } = require("../config/supabase");
 const { env } = require("../config/env");
 const { requireAuth } = require("../middleware/auth");
 const { profileForAuthUser, recoverAdminUser } = require("../services/userService");
@@ -56,6 +57,37 @@ router.post("/refresh", async (req, res, next) => {
       user: data.user,
       profile,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/update-password", async (req, res, next) => {
+  try {
+    const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    const password = String(req.body?.password || "");
+    if (!token) {
+      res.status(401).json({ error: "Password recovery token is missing or expired." });
+      return;
+    }
+    if (password.length < 8) {
+      res.status(400).json({ error: "Password must be at least 8 characters." });
+      return;
+    }
+
+    const { data, error } = await createSupabaseClient().auth.getUser(token);
+    if (error || !data?.user?.id) {
+      res.status(401).json({ error: "Password recovery link is invalid or expired." });
+      return;
+    }
+
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
+      password,
+      email_confirm: true,
+    });
+    if (updateError) throw updateError;
+
+    res.json({ ok: true, email: data.user.email });
   } catch (error) {
     next(error);
   }
