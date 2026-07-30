@@ -1,0 +1,124 @@
+/* Final UI overrides loaded after the main stylesheet. */
+.dashboard-maker-tag {
+  display: block;
+  margin-top: 5px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.staff-modern-dashboard {
+  margin-bottom: 14px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-grid {
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
+}
+
+.staff-modern-performance-wrap {
+  margin-top: 0;
+}
+
+.staff-performance-panel,
+.staff-performance-section,
+.staff-performance-table-wrap,
+.transactions-module .expense-card,
+.transactions-module .transaction-card,
+.transactions-module .chart-card,
+.transactions-module .cash-balance-card,
+.transactions-module .transaction-register-card,
+.transactions-module .search-report-card,
+.transaction-workspace .expense-card,
+.transaction-workspace .transaction-card,
+.transaction-workspace .chart-card,
+.transaction-workspace .cash-balance-card {
+  border: 1px solid #d7e3f1;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.staff-performance-panel:hover,
+.staff-performance-section:hover,
+.transactions-module .expense-card:hover,
+.transactions-module .transaction-card:hover,
+.transactions-module .chart-card:hover,
+.transactions-module .cash-balance-card:hover,
+.transactions-module .transaction-register-card:hover,
+.transactions-module .search-report-card:hover,
+.transaction-workspace .expense-card:hover,
+.transaction-workspace .transaction-card:hover,
+.transaction-workspace .chart-card:hover,
+.transaction-workspace .cash-balance-card:hover {
+  transform: translateY(-2px);
+  border-color: #b8cce3;
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.10);
+}
+
+.team-chat-panel {
+  width: min(1180px, calc(100vw - 28px));
+  max-width: 1180px;
+}
+
+.modern-chat-body {
+  grid-template-columns: minmax(330px, 380px) minmax(0, 1fr);
+}
+
+.chat-user-name {
+  color: #0b1220;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.chat-avatar {
+  background: linear-gradient(135deg, #2563eb, #14b8a6);
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+}
+
+.chat-composer-line textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 13px;
+  overflow-y: auto;
+}
+
+.notification-actions {
+  justify-content: flex-end;
+}
+
+.notification-read-button {
+  min-width: 58px;
+}
+
+.notification-read-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.correction-required-table .correction-reason-cell {
+  min-width: 240px;
+  max-width: 360px;
+  white-space: normal;
+  color: #7f1d1d;
+  font-weight: 800;
+}
+
+@media (max-width: 980px) {
+  .staff-modern-dashboard .dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .staff-modern-dashboard .dashboard-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}

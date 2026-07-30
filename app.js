@@ -961,7 +961,14 @@ async function deleteFileFromApi(fileId) {
 
 async function syncFileRecordToApi(file) {
   const result = await saveFileToApi(file);
-  if (result?.files) state.files = result.files;
+  if (result?.file) {
+    const existingIndex = (state.files || []).findIndex((item) => item.id === result.file.id);
+    state.files = existingIndex >= 0
+      ? state.files.map((item) => (item.id === result.file.id ? { ...item, ...result.file } : item))
+      : [result.file, ...(state.files || [])];
+  } else if (result?.files) {
+    state.files = result.files;
+  }
   if (result?.fileNotifications) state.fileNotifications = result.fileNotifications;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
@@ -2227,6 +2234,7 @@ function filteredFiles() {
     if (f.listView === "active" && isCheckedCompleted(file)) return false;
     if (f.listView === "completed" && !isCheckedCompleted(file)) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
+    if (f.listView === "correctionRequired" && !hasOpenCorrection(file)) return false;
     if (f.listView === "completed" && f.checkingStatus && checkingStatusOf(file).label !== f.checkingStatus) return false;
     if (f.listView === "billed" && !isBilledFile(file)) return false;
     if (f.listView === "nonBilled" && !isNonBilledFile(file)) return false;
@@ -2451,7 +2459,13 @@ function checkingStatusOf(file) {
 }
 
 function isCheckedCompleted(file) {
-  return Boolean(file?.filed || file?.stages?.Completed);
+  return Boolean((file?.filed || file?.stages?.Completed) && !hasOpenCorrection(file));
+}
+
+function hasOpenCorrection(file = {}) {
+  const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
+  return Boolean(file?.stages?.["Correction Required"])
+    || ["correction required", "correction in progress", "resubmitted for checking", "returned again", "returned for correction"].includes(status);
 }
 
 function stageIndex(file) {
@@ -2503,9 +2517,9 @@ function staffStats(name) {
   return {
     total: files.length,
     notStarted: files.filter((f) => stageIndex(f) === 0).length,
-    inProgress: files.filter((f) => stageIndex(f) > 0 && !f.filed).length,
-    pending: files.filter((f) => !f.filed).length,
-    completed: files.filter((f) => f.filed).length,
+    inProgress: files.filter((f) => stageIndex(f) > 0 && !isCheckedCompleted(f)).length,
+    pending: files.filter((f) => !isCheckedCompleted(f)).length,
+    completed: files.filter(isCheckedCompleted).length,
     overdue: files.filter(isOverdue).length,
     approvals: files.filter(pendingApproval).length,
     billed: files.filter(isBilledFile).length,
@@ -3018,6 +3032,7 @@ function renderNav() {
     "active-files": "active",
     "completed-files": "completed",
     "not-checked-files": "notChecked",
+    "correction-required-files": "correctionRequired",
     "non-billed-files": "nonBilled",
     "billed-files": "billed",
     "fee-pending": "feePending",
@@ -3060,6 +3075,7 @@ function renderNav() {
         activePage = "files";
         resetFilters();
         state.filters.listView = "active";
+        state.filters.dashboardKind = "myTask";
         saveState();
       } else {
         if (page === "files") {
@@ -3082,7 +3098,7 @@ function renderAll() {
   if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
   if (activePage === "staffDetails" && !canUseStaffDetails()) activePage = "dashboard";
   if (isStaffLogin() && !["dashboard", "files", "staffDetails"].includes(activePage)) activePage = "dashboard";
-  if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "nonBilled", "billed", "feePending"].includes(state.filters.listView) && !state.filters.fromDashboard) {
+  if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "correctionRequired", "nonBilled", "billed", "feePending"].includes(state.filters.listView) && !state.filters.fromDashboard) {
     state.filters.listView = "active";
   }
   saveTabSession();
@@ -3157,18 +3173,8 @@ function renderDashboard() {
   if (isStaffLogin()) {
     const myFiles = staffOwnedFiles();
     document.querySelector("#dashboard").innerHTML = `
-      <div class="grid metrics staff-dashboard-metrics">
-        ${metric("My Total Files", s.total, "Files Assigned to Me", "grad-blue", "all")}
-        ${metric("My Active Files", myFiles.filter((f) => !isCheckedCompleted(f)).length, "Current Work", "grad-blue", "active")}
-        ${metric("My Overdue Files", s.overdue, "Need Attention", "grad-red", "overdue")}
-        ${metric("My Approval Pending", s.sharedNotApproved, "Pending Approval", "grad-yellow", "approval")}
-        ${metric("My Correction Required", s.correctionRequired, "Needs Correction", "grad-yellow", "correction")}
-        ${metric("My Re Allotted Files", s.reAllotted, "Re-Allotted to Me", "grad-purple", "reallotted")}
-        ${metric("My Completed Files", s.completed, "Completed by Me", "grad-green", "completed")}
-        ${metric("My Not Checked Files", s.notChecked, "Awaiting Checking", "grad-yellow", "notChecked")}
-        ${metric("My Billed Files", s.billed, "Billed Files", "grad-darkgreen", "billed")}
-      </div>
-      <div class="dashboard-layout dashboard-single">
+      ${renderModernStaffDashboardShell(s, myFiles)}
+      <div class="dashboard-layout dashboard-single staff-modern-performance-wrap">
         ${renderStaffDashboardPerformance(myFiles)}
       </div>
     `;
@@ -3210,6 +3216,60 @@ function renderDashboard() {
   bindDashboardLinks();
   bindModernDashboard();
   bindDashboardStaffSummary();
+}
+
+function renderModernStaffDashboardShell(s, files = []) {
+  const today = indiaTodayDate();
+  const userName = loggedInUser()?.name || state.currentUser || "Staff";
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date()));
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  return `
+    <section class="modern-dashboard staff-modern-dashboard">
+      <div class="dashboard-topbar-card">
+        <div class="dashboard-greeting">
+          <span class="dashboard-eyebrow">My Workspace</span>
+          <h2>${greeting}, ${escapeHtml(userName)}</h2>
+          <p>Your allotted files, corrections and pending work for today.</p>
+          <span class="dashboard-maker-tag">An App by CA Sadique</span>
+        </div>
+        <div class="dashboard-compact-filterbar">
+          <span class="dashboard-date-pill">${displayDate(today)}</span>
+          <span class="dashboard-filter-pill dashboard-today-label" aria-label="Today">Today</span>
+        </div>
+      </div>
+      <div class="dashboard-kpi-grid staff-dashboard-kpi-grid">
+        ${dashboardKpiCard("My Total Files", s.total, "Files assigned to me", "active", "folder", "all", staffTrendValues(files, "total"))}
+        ${dashboardKpiCard("My Active Files", files.filter((f) => !isCheckedCompleted(f)).length, "Current work", "wip", "task", "active", staffTrendValues(files, "active"))}
+        ${dashboardKpiCard("My Overdue Files", s.overdue, "Need attention", "overdue", "pending", "overdue", staffTrendValues(files, "overdue"), true)}
+        ${dashboardKpiCard("My Approval Pending", s.sharedNotApproved, "Pending approval", "feepending", "report", "approval", staffTrendValues(files, "approval"), true)}
+        ${dashboardKpiCard("Correction Required", s.correctionRequired, "Needs correction", "collectiontoday", "pending", "correction", staffTrendValues(files, "correction"), true)}
+        ${dashboardKpiCard("Re-Allotted Files", s.reAllotted, "Re-allotted to me", "receivedfee", "users", "reallotted", staffTrendValues(files, "reallotted"))}
+        ${dashboardKpiCard("My Completed Files", s.completed, "Completed by me", "completed", "check", "completed", staffTrendValues(files, "completed"))}
+        ${dashboardKpiCard("My Not Checked", s.notChecked, "Awaiting checking", "notchecked", "report", "notChecked", staffTrendValues(files, "notChecked"), true)}
+        ${dashboardKpiCard("My Billed Files", s.billed, "Billed files", "billed", "invoice", "billed", staffTrendValues(files, "billed"))}
+      </div>
+    </section>
+  `;
+}
+
+function staffTrendValues(files = [], kind = "total") {
+  const today = Date.parse(indiaTodayDate());
+  const days = Array.from({ length: 7 }, (_, index) => new Date(today - (6 - index) * 86400000).toISOString().slice(0, 10));
+  return days.map((date) => files.filter((file) => staffTrendMatches(file, kind, date)).length);
+}
+
+function staffTrendMatches(file = {}, kind = "total", date = "") {
+  const received = normalizeImportDate(file.fileReceivedDate || file.receivedDate || "");
+  const updated = normalizeImportDate(file.lastUpdatedDate || file.updatedAt || file.updated_at || "");
+  if (kind === "completed") return isCheckedCompleted(file) && normalizeImportDate(workCompletedDate(file)) <= date;
+  if (kind === "active") return !isCheckedCompleted(file) && (received <= date || updated <= date);
+  if (kind === "overdue") return isOverdue(file) && (received <= date || updated <= date);
+  if (kind === "approval") return Boolean(file.shared && !file.approved) && (received <= date || updated <= date);
+  if (kind === "correction") return hasOpenCorrection(file) && (received <= date || updated <= date);
+  if (kind === "reallotted") return Boolean(file.reAssignedStaff) && normalizeImportDate(file.reAssignedDate || file.workAllotmentDate || "") <= date;
+  if (kind === "notChecked") return isNotCheckedFile(file) && (received <= date || updated <= date);
+  if (kind === "billed") return isBilledFile(file) && normalizeImportDate(file.billedDate || file.lastUpdatedDate || "") <= date;
+  return received <= date || updated <= date;
 }
 
 function renderStaffDashboardPerformance(files) {
@@ -3273,6 +3333,7 @@ function navGroupDefinitions() {
       { key: "files", label: "File Management", collapsible: true, items: [
         navItem("active-files", "folder", "Active Files", "active"),
         ...notCheckedItem,
+        navItem("correction-required-files", "pending", "Correction Required", "correctionRequired"),
         navItem("completed-files", "check", "Completed Files", "completed"),
       ] },
       { key: "billing", label: "Billing Status", collapsible: true, items: [
@@ -3290,6 +3351,7 @@ function navGroupDefinitions() {
     { key: "files", label: "File Management", collapsible: true, items: [
       navItem("active-files", "folder", "Active Files", "active"),
       navItem("not-checked-files", "pending", "Not Checked Files", "notChecked"),
+      navItem("correction-required-files", "pending", "Correction Required", "correctionRequired"),
       navItem("completed-files", "check", "Completed Files", "completed"),
     ] },
     { key: "billing", label: "Billing Status", collapsible: true, items: [
@@ -3327,9 +3389,9 @@ function navItemButton(item, fileViews, counts) {
 }
 
 function navItemActive(id, fileViews) {
-  const specialActive = fileViews[id] && activePage === "files" && state.filters.listView === fileViews[id];
+  const specialActive = fileViews[id] && activePage === "files" && state.filters.listView === fileViews[id] && !(id === "active-files" && state.filters.dashboardKind === "myTask");
   const normalActive = activePage === id && !fileViews[id] && (id !== "files" || !state.filters.listView);
-  const myTaskActive = id === "my-task" && activePage === "files" && state.filters.listView === "active" && isStaffLogin();
+  const myTaskActive = id === "my-task" && activePage === "files" && state.filters.listView === "active" && state.filters.dashboardKind === "myTask" && isStaffLogin();
   return Boolean(normalActive || specialActive || myTaskActive);
 }
 
@@ -3339,6 +3401,7 @@ function navBadgeCounts() {
     myTask: files.filter((file) => !isCheckedCompleted(file)).length,
     active: files.filter((file) => !isCheckedCompleted(file)).length,
     notChecked: files.filter(isNotCheckedFile).length,
+    correctionRequired: files.filter(hasOpenCorrection).length,
     completed: files.filter(isCheckedCompleted).length,
     nonBilled: files.filter(isNonBilledFile).length,
     billed: files.filter(isBilledFile).length,
@@ -3455,6 +3518,7 @@ function renderModernDashboardShell(s) {
           <span class="dashboard-eyebrow">Office Overview</span>
           <h2>${greeting}, ${escapeHtml(userName)}</h2>
           <p>Here's what's happening in your office today.</p>
+          <span class="dashboard-maker-tag">An App by CA Sadique</span>
         </div>
         <div class="dashboard-compact-filterbar">
           <span class="dashboard-date-pill">${displayDate(today)}</span>
@@ -4106,7 +4170,7 @@ function renderStaffFilesPage() {
         <button class="secondary-button" id="staffExportPdf">Export to PDF</button>
         <button class="secondary-button" id="staffPrintReport">Print</button>
       </div>
-      <div id="fileResults">${listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView)}</div>
+      <div id="fileResults">${listView === "correctionRequired" ? renderCorrectionRequiredTable(files) : (listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView))}</div>
     </div>
   `;
   if (showDateFilter) {
@@ -4139,7 +4203,7 @@ function renderStaffFilesPage() {
 function staffFilePageTitle(listView) {
   if (state.filters.overdue === "Yes") return "Overdue Files";
   if (state.filters.pendingApproval === "Yes") return "Approval Pending Files";
-  if (state.filters.dashboardKind === "correctionRequired") return "Correction Required Files";
+  if (listView === "correctionRequired" || state.filters.dashboardKind === "correctionRequired") return "Correction Required Files";
   if (state.filters.dashboardKind === "reAllotted") return "Re-Allotted Files";
   const titleMap = {
     "": "File List",
@@ -4182,7 +4246,7 @@ function staffPageFiles(listView) {
     if (state.filters.overdue === "Yes" && !isOverdue(file)) return false;
     if (state.filters.pendingApproval === "Yes" && !pendingApproval(file)) return false;
     if (state.filters.workflow && !file.stages?.[state.filters.workflow]) return false;
-    if (state.filters.dashboardKind === "correctionRequired" && !file.stages?.["Correction Required"]) return false;
+    if (state.filters.dashboardKind === "correctionRequired" && !hasOpenCorrection(file)) return false;
     if (state.filters.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
     if (listView === "active") return !isCheckedCompleted(file);
     if (listView === "completed") {
@@ -4192,6 +4256,7 @@ function staffPageFiles(listView) {
       if (state.filters.fileTo && completedDate > state.filters.fileTo) return false;
       return true;
     }
+    if (listView === "correctionRequired") return hasOpenCorrection(file);
     if (listView === "notChecked") {
       if (!isNotCheckedFile(file)) return false;
       const completedDate = fileActualCompletionDate(file);
@@ -4205,9 +4270,14 @@ function staffPageFiles(listView) {
     return true;
   });
   const filteredRows = ["", "active"].includes(listView) ? filterStaffActiveRows(rows) : rows;
-  return usesCompletionSort(listView, state.filters.dashboardKind)
-    ? sortFilesByCompletionNewestFirst(filteredRows)
-    : sortFilesForDisplay(filteredRows);
+  return sortStaffPageFiles(filteredRows, listView);
+}
+
+function sortStaffPageFiles(files, listView = "") {
+  if (listView === "correctionRequired" || state.filters.dashboardKind === "correctionRequired") return sortFilesByCorrectionNewestFirst(files);
+  if (listView === "completed" || usesCompletionSort(listView, state.filters.dashboardKind)) return sortFilesByCompletionNewestFirst(files);
+  if (listView === "active" && state.filters.dashboardKind === "myTask") return sortFilesByAssignmentNewestFirst(files);
+  return sortFilesNewestFirst(files);
 }
 
 function filterStaffActiveRows(rows) {
@@ -4287,6 +4357,45 @@ function sortFilesByCompletionNewestFirst(files = []) {
     if (updated) return updated;
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
+}
+
+function sortFilesByAssignmentNewestFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const left = fileAssignmentSortTime(a);
+    const right = fileAssignmentSortTime(b);
+    if (right && left && right !== left) return right - left;
+    if (right && !left) return 1;
+    if (!right && left) return -1;
+    const received = fileDateSortValue(b.fileReceivedDate || b.receivedDate || b.file_received_date || b.received_on)
+      - fileDateSortValue(a.fileReceivedDate || a.receivedDate || a.file_received_date || a.received_on);
+    if (received) return received;
+    const created = fileCreatedSortTime(b) - fileCreatedSortTime(a);
+    if (created) return created;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function fileAssignmentSortTime(file = {}) {
+  return fileDateSortValue(file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date)
+    || fileUpdatedSortTime(file);
+}
+
+function sortFilesByCorrectionNewestFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const left = latestCorrectionSortTime(a);
+    const right = latestCorrectionSortTime(b);
+    if (right && left && right !== left) return right - left;
+    if (right && !left) return 1;
+    if (!right && left) return -1;
+    const updated = fileUpdatedSortTime(b) - fileUpdatedSortTime(a);
+    if (updated) return updated;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function latestCorrectionSortTime(file = {}) {
+  const latest = latestCorrectionForFile(file);
+  return Date.parse(latest?.returnedAt || latest?.returned_at || latest?.createdAt || latest?.created_at || file.returnedAt || file.returned_at || file.returnedDate || "") || 0;
 }
 
 function usesCompletionSort(listView = state.filters.listView, dashboardKind = state.filters.dashboardKind) {
@@ -4914,6 +5023,48 @@ async function returnFileForCorrection(fileId) {
   renderAll();
 }
 
+function renderCorrectionRequiredTable(files) {
+  const rows = sortFilesByCorrectionNewestFirst(files);
+  if (!rows.length) return empty("No correction-required files found.");
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact correction-required-table">
+        <thead><tr>
+          <th>SN</th><th>Client Name</th><th>CR No.</th><th>Service Type</th><th>File Received Date</th><th>Assigned Staff</th><th>Completed Date</th><th>Returned On</th><th>Required By</th><th>Correction Reason</th><th>Status</th><th>Priority</th><th>Expected Date</th><th>Aging</th><th>Last Updated</th><th>Actions</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((file, index) => {
+            const correction = latestCorrectionForFile(file) || {};
+            const returnedOn = correction.returnedAt || correction.returned_at || file.returnedAt || file.returned_at || file.returnedDate || "";
+            const reason = correction.correctionReason || correction.correction_reason || file.correctionRemarks || "";
+            const requiredBy = correction.returnedBy || correction.returned_by_name || file.returnedBy || "-";
+            const expected = correction.expectedCorrectionDate || correction.expected_correction_date || file.expectedCorrectionDate || "";
+            const status = file.correctionStatus || correction.status || "Correction Required";
+            return `<tr class="file-row file-row-overdue">
+              <td>${index + 1}</td>
+              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
+              <td>${escapeHtml(file.crNo || file.cr_no || file.pan || "-")}</td>
+              <td>${escapeHtml(file.serviceType || "")}</td>
+              <td>${fmt(file.fileReceivedDate)}</td>
+              <td>${escapeHtml(file.assignedStaff || file.returnedTo || "Not Assigned")}</td>
+              <td>${fmt(workCompletedDate(file))}</td>
+              <td>${escapeHtml(fmt(returnedOn) || "-")}</td>
+              <td>${escapeHtml(requiredBy)}</td>
+              <td class="correction-reason-cell">${escapeHtml(reason || "-")}</td>
+              <td><span class="badge overdue">${escapeHtml(status)}</span></td>
+              <td><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></td>
+              <td>${fmt(expected)}</td>
+              <td>${returnedOn ? agingText(returnedOn) : "-"}</td>
+              <td>${fmt(file.lastUpdatedDate || file.updated_at || file.updatedAt)}</td>
+              <td><div class="action-row"><button class="mini-button" data-edit="${file.id}">View File</button></div></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function openMarkReceivedModal(fileId) {
   const file = state.files.find((item) => item.id === fileId);
   if (!file) return toast("File record not found.");
@@ -5508,6 +5659,13 @@ function cascadeStages(stage, checked) {
 async function saveFileFromDrawer() {
   const form = document.querySelector("#fileForm");
   if (!form.reportValidity()) return;
+  const saveButton = document.querySelector("#saveFile");
+  if (saveButton?.disabled) return;
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.dataset.originalText = saveButton.textContent || "Save Record";
+    saveButton.textContent = "Saving...";
+  }
   syncSharedState(localStorage.getItem(STORAGE_KEY), false);
   const existingFile = editingId ? state.files.find((file) => file.id === editingId) : null;
   const data = new FormData(form);
@@ -5532,6 +5690,7 @@ async function saveFileFromDrawer() {
       role: state.currentRole,
     });
     saveState();
+    restoreSaveFileButton(saveButton);
     return toast("Staff cannot update Checked By, Checked Date or Checking Remarks.");
   }
   if (isStaffLogin() && !canManageChecking() && isCheckedFile(existingFile) && !stagesObj.Completed) {
@@ -5542,21 +5701,31 @@ async function saveFileFromDrawer() {
       role: state.currentRole,
     });
     saveState();
+    restoreSaveFileButton(saveButton);
     return toast("Staff cannot remove existing checking details.");
   }
   const selectedService = data.get("serviceType");
   const serviceType = selectedService === "__new" ? document.querySelector("#newServiceInput").value.trim() : selectedService.trim();
-  if (!serviceType) return toast("Please enter service type.");
+  if (!serviceType) {
+    restoreSaveFileButton(saveButton);
+    return toast("Please enter service type.");
+  }
   if (!state.services.includes(serviceType)) state.services.push(serviceType);
   state.services = sortList(state.services);
   const selectedCareOf = data.get("careOf");
   const careOf = selectedCareOf === "__new_care_of" ? document.querySelector("#newCareOfInput").value.trim() : selectedCareOf.trim();
-  if (!careOf) return toast("Please enter C/o.");
+  if (!careOf) {
+    restoreSaveFileButton(saveButton);
+    return toast("Please enter C/o.");
+  }
   if (!state.careOfList.includes(careOf)) state.careOfList.push(careOf);
   state.careOfList = sortList(state.careOfList);
   const selectedFy = data.get("fy");
   const fy = selectedFy === "__new_fy" ? document.querySelector("#newFyInput").value.trim() : String(selectedFy || "").trim();
-  if (!fy) return toast("Please enter FY.");
+  if (!fy) {
+    restoreSaveFileButton(saveButton);
+    return toast("Please enter FY.");
+  }
   const canAssignThisFile = canAssignFile(existingFile || {});
   const reAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("reAssignedStaff"), "reAssignedStaffNewInput", "") : (existingFile?.reAssignedStaff || ""), "");
   let reAssignedDate = canAssignThisFile ? data.get("reAssignedDate") : (existingFile?.reAssignedDate || "");
@@ -5610,12 +5779,15 @@ async function saveFileFromDrawer() {
       workDoneBy: existingFile?.completedBy || existingFile?.assignedStaff || assigned || "",
     });
     saveState();
+    restoreSaveFileButton(saveButton);
     return toast("You cannot check a file completed by yourself. This file must be checked by another authorised user.");
   }
   if (canManageChecking() && stagesObj.Completed && (checkedBy || checkedDate || checkingRemarks) && !validCheckingRemark(checkingRemarks)) {
+    restoreSaveFileButton(saveButton);
     return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
   }
   if (checkedDate && completionDate && checkedDate < completionDate) {
+    restoreSaveFileButton(saveButton);
     return toast("Checked Date cannot be earlier than Work Completion Date.");
   }
   const record = {
@@ -5822,11 +5994,18 @@ async function saveFileFromDrawer() {
     await syncFileRecordToApi(record);
   } catch (error) {
     console.error("Central file update failed", error);
+    restoreSaveFileButton(saveButton);
     return toast(`Central update failed: ${error.message || "Please retry."}`);
   }
   closeOverlays();
   toast("File record saved and synced");
   renderAll();
+}
+
+function restoreSaveFileButton(button) {
+  if (!button) return;
+  button.disabled = false;
+  button.textContent = button.dataset.originalText || "Save Record";
 }
 
 function renderStaffPage() {
@@ -7462,6 +7641,13 @@ function worksheetCellValue(cell, sharedStrings, dateStyles) {
   const raw = cell.querySelector("v")?.textContent || "";
   if (dateStyles.has(style) && raw && !Number.isNaN(Number(raw))) return excelSerialDate(Number(raw));
   return raw;
+}
+
+function agingText(dateString) {
+  const date = Date.parse(normalizeImportDate(dateString) || dateString || "");
+  if (!date) return "-";
+  const days = Math.max(0, Math.floor((Date.now() - date) / 86400000));
+  return `${days} day${days === 1 ? "" : "s"}`;
 }
 
 function excelColumnIndex(letters) {
@@ -10991,6 +11177,7 @@ function fileListSectionTitle() {
     active: "Active Files",
     completed: "Completed Files",
     notChecked: "Not Checked Files",
+    correctionRequired: "Correction Required Files",
     billed: "Billed Files",
     nonBilled: "Non-Billed Files",
     feePending: "Fee Pending Files",
@@ -11357,15 +11544,9 @@ function openNotifications() {
   document.querySelector("#backdrop").classList.add("show");
   document.querySelector("#closeNotifications").onclick = closeOverlays;
   document.querySelector("#markAllRead").onclick = () => {
-    state.readNotifications = [...new Set([...(state.readNotifications || []), ...allItems.map((item) => item.id)])];
-    const chatIds = allItems.filter((item) => item.chatId).map((item) => item.chatId);
-    if (chatIds.length) {
-      markChatMessagesRead(chatIds);
-    }
+    markNotificationItemsRead(allItems);
     panel.dataset.filter = "unread";
-    saveState();
-    mount();
-    openNotifications();
+    refreshNotificationsPanel();
   };
   document.querySelectorAll("[data-notification-filter]").forEach((btn) => {
     btn.onclick = () => {
@@ -11375,13 +11556,9 @@ function openNotifications() {
   });
   document.querySelectorAll("[data-mark-read]").forEach((btn) => {
     btn.onclick = () => {
-      state.readNotifications = [...new Set([...(state.readNotifications || []), btn.dataset.markRead])];
-      if (btn.dataset.markRead.startsWith("chat-")) {
-        markChatMessageRead(btn.dataset.markRead.replace("chat-", ""));
-      }
-      saveState();
-      mount();
-      openNotifications();
+      const item = allNotificationItems().find((row) => row.id === btn.dataset.markRead) || { id: btn.dataset.markRead };
+      markNotificationItemsRead([item]);
+      refreshNotificationsPanel();
     };
   });
   document.querySelectorAll("[data-open-notification-file]").forEach((btn) => {
@@ -11402,6 +11579,20 @@ function openNotifications() {
       openFileDrawer(id);
     };
   });
+}
+
+function markNotificationItemsRead(items = []) {
+  const ids = items.map((item) => item.id).filter(Boolean);
+  state.readNotifications = [...new Set([...(state.readNotifications || []), ...ids])];
+  const chatIds = items.filter((item) => item.chatId).map((item) => item.chatId);
+  if (chatIds.length) markChatMessagesRead(chatIds);
+  saveState({ skipMerge: true });
+}
+
+function refreshNotificationsPanel() {
+  updateTopActionBadges();
+  renderNav();
+  openNotifications();
 }
 
 function notificationFilterTab(value, label, activeFilter) {
@@ -11554,6 +11745,7 @@ function bindChatSidebarEvents() {
       chatSearchTimer = setTimeout(renderChatConversationListOnly, 240);
     });
     searchInput.addEventListener("keydown", (event) => {
+      event.stopPropagation();
       if (event.key === "Escape") {
         event.preventDefault();
         chatUiState.search = "";
@@ -11592,7 +11784,8 @@ function bindChatConversationClicks() {
 }
 
 function bindChatComposerEvents() {
-  document.querySelector("#sendChatMessage")?.addEventListener("click", sendChatMessage);
+  document.querySelector("#chatComposeForm")?.addEventListener("submit", handleChatSubmit);
+  document.querySelector("#sendChatMessage")?.addEventListener("click", handleChatSubmit);
   const textarea = document.querySelector("#chatText");
   if (textarea) {
     textarea.addEventListener("input", () => {
@@ -11741,7 +11934,7 @@ function renderActiveConversationPanel(draftText = "") {
         <label class="chat-tool-button" for="chatAttachment" title="Attach PDF or Excel" aria-label="Attach file">${navIcon("backup")}</label>
         <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
         <textarea id="chatText" placeholder="${chatUiState.targetType === "personal" ? "Message this staff member..." : "Message the group..."}" rows="1">${escapeHtml(draftText)}</textarea>
-        <button class="chat-send-button" id="sendChatMessage" type="button" title="Send message" aria-label="Send message">${navIcon("chat")}</button>
+        <button class="chat-send-button" id="sendChatMessage" type="submit" title="Send message" aria-label="Send message">${navIcon("chat")}</button>
       </div>
     </form>
   `;
@@ -11841,8 +12034,15 @@ function scrollActiveChatToBottom() {
 function handleMessageKeyDown(event) {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
+    event.stopPropagation();
     sendChatMessage();
   }
+}
+
+function handleChatSubmit(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  sendChatMessage();
 }
 
 function updateSendButtonState() {

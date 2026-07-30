@@ -5741,6 +5741,276 @@ textarea {
   }
 }
 
+/* Final workflow polish: keep these overrides after all module styles. */
+.dashboard-maker-tag {
+  display: block;
+  margin-top: 5px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.staff-performance-metrics .metric-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 118px;
+  padding: 18px;
+  border: 1px solid #d7e3f1;
+  border-bottom: 4px solid #2563eb;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.staff-performance-metrics .metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.10);
+}
+
+.staff-performance-metrics .metric-card span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.staff-performance-metrics .metric-card strong {
+  color: #020617;
+  font-size: 25px;
+  font-weight: 950;
+}
+
+.staff-performance-metrics .metric-card p {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.transactions-module .expense-card,
+.transactions-module .transaction-card,
+.transactions-module .chart-card,
+.transactions-module .cash-balance-card,
+.transactions-module .transaction-register-card,
+.transactions-module .search-report-card,
+.transaction-workspace .expense-card,
+.transaction-workspace .transaction-card,
+.transaction-workspace .chart-card,
+.transaction-workspace .cash-balance-card {
+  border: 1px solid #d7e3f1;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.transactions-module .expense-card:hover,
+.transactions-module .transaction-card:hover,
+.transactions-module .chart-card:hover,
+.transactions-module .cash-balance-card:hover,
+.transactions-module .transaction-register-card:hover,
+.transactions-module .search-report-card:hover,
+.transaction-workspace .expense-card:hover,
+.transaction-workspace .transaction-card:hover,
+.transaction-workspace .chart-card:hover,
+.transaction-workspace .cash-balance-card:hover {
+  transform: translateY(-2px);
+  border-color: #b8cce3;
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.10);
+}
+
+.correction-required-table th,
+.correction-required-table td {
+  vertical-align: top;
+}
+
+.correction-required-table .correction-reason-cell {
+  min-width: 240px;
+  max-width: 360px;
+  white-space: normal;
+  color: #7f1d1d;
+  font-weight: 800;
+}
+
+/* Final visual overrides for staff performance and transaction cards. */
+.dashboard-maker-tag {
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 5px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.staff-performance-metrics .metric-card {
+  min-height: 126px;
+  padding: 14px;
+  border: 1px solid #c8d9ec;
+  border-bottom-width: 4px;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 38%),
+    linear-gradient(145deg, #ffffff 0%, #fbfdff 65%, #f6f9ff 100%);
+  color: #0f172a;
+  box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
+}
+
+.staff-performance-metrics .metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.10);
+}
+
+.staff-performance-metrics .metric-card::after {
+  display: none;
+}
+
+.staff-performance-metrics .metric-card span {
+  color: #2563eb;
+  background: #e8efff;
+}
+
+.staff-performance-metrics .metric-card strong {
+  color: #0f172a;
+}
+
+.staff-performance-metrics .metric-card p {
+  color: #64748b;
+  opacity: 1;
+}
+
+.staff-performance-metrics .metric-card.grad-red { border-bottom-color: #ef4444; }
+.staff-performance-metrics .metric-card.grad-yellow { border-bottom-color: #f59e0b; }
+.staff-performance-metrics .metric-card.grad-green,
+.staff-performance-metrics .metric-card.grad-darkgreen { border-bottom-color: #14b8a6; }
+.staff-performance-metrics .metric-card.grad-slate { border-bottom-color: #475569; }
+.staff-performance-metrics .metric-card.grad-blue { border-bottom-color: #2563eb; }
+
+.expense-overview-card,
+.expense-form,
+.expense-tools-card,
+.transaction-side-card,
+.cash-balance-card,
+.transactions-page-head {
+  border-color: #bfd3eb;
+  box-shadow:
+    0 7px 20px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.expense-form,
+.expense-tools-card,
+.transaction-side-card {
+  background: linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+}
+
+.cash-balance-card {
+  border: 1px solid #bfd3eb;
+}
+
+.correction-required-table th,
+.correction-required-table td {
+  white-space: nowrap;
+}
+
+.correction-required-table .correction-reason-cell {
+  min-width: 260px;
+  max-width: 420px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+/* Staff performance and transaction polish */
+.dashboard-maker-tag {
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 5px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.staff-performance-metrics .metric-card {
+  min-height: 126px;
+  padding: 14px;
+  border: 1px solid #c8d9ec;
+  border-bottom-width: 4px;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 38%),
+    linear-gradient(145deg, #ffffff 0%, #fbfdff 65%, #f6f9ff 100%);
+  color: #0f172a;
+  box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
+}
+
+.staff-performance-metrics .metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.10);
+}
+
+.staff-performance-metrics .metric-card::after {
+  display: none;
+}
+
+.staff-performance-metrics .metric-card span {
+  color: #2563eb;
+  background: #e8efff;
+}
+
+.staff-performance-metrics .metric-card strong {
+  color: #0f172a;
+}
+
+.staff-performance-metrics .metric-card p {
+  color: #64748b;
+  opacity: 1;
+}
+
+.staff-performance-metrics .metric-card.grad-red { border-bottom-color: #ef4444; }
+.staff-performance-metrics .metric-card.grad-yellow { border-bottom-color: #f59e0b; }
+.staff-performance-metrics .metric-card.grad-green,
+.staff-performance-metrics .metric-card.grad-darkgreen { border-bottom-color: #14b8a6; }
+.staff-performance-metrics .metric-card.grad-slate { border-bottom-color: #475569; }
+.staff-performance-metrics .metric-card.grad-blue { border-bottom-color: #2563eb; }
+
+.expense-overview-card,
+.expense-form,
+.expense-tools-card,
+.transaction-side-card,
+.cash-balance-card,
+.transactions-page-head {
+  border-color: #bfd3eb;
+  box-shadow:
+    0 7px 20px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.expense-form,
+.expense-tools-card,
+.transaction-side-card {
+  background: linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+}
+
+.cash-balance-card {
+  border: 1px solid #bfd3eb;
+}
+
+.correction-required-table th,
+.correction-required-table td {
+  white-space: nowrap;
+}
+
+.correction-required-table .correction-reason-cell {
+  min-width: 260px;
+  max-width: 420px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
 /* Final dashboard action-bar guards. These sit last because older theme layers
    repeat topbar rules for different deployments. */
 .dashboard-topbar .top-action-sample {
@@ -6182,8 +6452,8 @@ textarea {
 
 /* Team Chat direct-message refresh */
 .team-chat-panel {
-  width: min(1120px, calc(100vw - 28px));
-  max-width: 1120px;
+  width: min(1180px, calc(100vw - 28px));
+  max-width: 1180px;
 }
 
 .team-chat-panel .drawer-head {
@@ -6193,7 +6463,7 @@ textarea {
 
 .modern-chat-body {
   display: grid;
-  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(330px, 380px) minmax(0, 1fr);
   height: min(90vh, 820px);
   min-height: 620px;
   padding: 0;
@@ -6411,7 +6681,7 @@ button.new-chat-user {
 
 .chat-conversation-item {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
   gap: 11px;
   align-items: center;
   width: 100%;
@@ -6443,14 +6713,15 @@ button.new-chat-user {
 
 .chat-avatar {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   border-radius: 999px;
-  background: linear-gradient(135deg, #dbeafe, #ccfbf1);
-  color: #075985;
-  font-size: 12px;
+  background: linear-gradient(135deg, #2563eb, #14b8a6);
+  color: #ffffff;
+  font-size: 13px;
   font-weight: 950;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
 }
 
 .chat-conversation-copy {
@@ -6467,14 +6738,15 @@ button.new-chat-user {
 }
 
 .chat-user-name {
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 800;
+  color: #0b1220;
+  font-size: 15px;
+  font-weight: 950;
 }
 
 .chat-conversation-copy small {
   color: #64748b;
   font-size: 12px;
+  line-height: 1.25;
 }
 
 .chat-conversation-meta {
@@ -6657,11 +6929,15 @@ button.new-chat-user {
 .chat-composer-line textarea {
   min-height: 42px;
   max-height: 132px;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 13px;
   resize: none;
   border: 1px solid #d7e3f1;
   border-radius: 16px;
   background: #f8fafc;
   line-height: 1.35;
+  overflow-y: auto;
 }
 
 .chat-composer-line textarea:focus {
@@ -6738,7 +7014,7 @@ button.new-chat-user {
 
 @media (max-width: 900px) {
   .modern-chat-body {
-    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
     min-height: 560px;
   }
 

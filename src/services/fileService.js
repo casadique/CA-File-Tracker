@@ -8,9 +8,17 @@ async function listFiles(state, options = {}) {
 function sortFilesForRequest(files, options = {}) {
   const sortField = String(options.sort || options.sortField || "").trim();
   const direction = String(options.direction || options.sortDirection || "desc").toLowerCase() === "asc" ? "asc" : "desc";
-  if (sortField === "file_received_date") return sortFilesByDate(files, fileReceivedDateValue, direction, fileCreatedTime);
-  if (sortField === "completed_date") return sortFilesByDate(files, fileCompletionDateValue, direction, fileUpdatedTime);
-  return sortFilesNewestFirst(files);
+  const listView = String(options.listView || options.view || "").trim();
+  let rows = [...files];
+  if (listView === "completed") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file));
+  if (listView === "active") rows = rows.filter((file) => !isCompletedFile(file) || hasOpenCorrection(file));
+  if (listView === "correctionRequired") rows = rows.filter(hasOpenCorrection);
+  if (listView === "notChecked") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !file.checkedBy);
+  if (sortField === "assigned_at") return sortFilesByDate(rows, fileAssignmentDateValue, direction, fileReceivedDateValue);
+  if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileUpdatedTime);
+  if (sortField === "file_received_date") return sortFilesByDate(rows, fileReceivedDateValue, direction, fileCreatedTime);
+  if (sortField === "completed_date") return sortFilesByDate(rows, fileCompletionDateValue, direction, fileUpdatedTime);
+  return sortFilesNewestFirst(rows);
 }
 
 function sortFilesByDate(files, dateGetter, direction = "desc", tieGetter = fileCreatedTime) {
@@ -37,6 +45,15 @@ function fileCompletionDateValue(file = {}) {
   return dateOrNumber(file.completed_date || file.completionDate || file.completedDate || file.workCompletedDate || file.work_completed_date || file.completed_at || file.completedAt);
 }
 
+function fileAssignmentDateValue(file = {}) {
+  return dateOrNumber(file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date);
+}
+
+function fileCorrectionDateValue(file = {}) {
+  const latest = latestCorrection(file);
+  return dateOrNumber(latest?.returned_at || latest?.returnedAt || latest?.created_at || latest?.createdAt || file.returned_for_correction_at || file.returnedAt || file.returned_at || file.returnedDate);
+}
+
 function fileCreatedTime(file = {}) {
   return dateOrNumber(file.created_at || file.createdAt || file.updated_at || file.updatedAt || file.lastUpdatedDate);
 }
@@ -50,6 +67,25 @@ function dateOrNumber(value) {
   if (!value) return 0;
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isCompletedFile(file = {}) {
+  return Boolean(file.filed || file.stages?.Completed);
+}
+
+function hasOpenCorrection(file = {}) {
+  const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
+  return Boolean(file.stages?.["Correction Required"])
+    || ["correction required", "correction in progress", "resubmitted for checking", "returned again", "returned for correction"].includes(status);
+}
+
+function latestCorrection(file = {}) {
+  const history = Array.isArray(file.correctionHistory) ? file.correctionHistory : [];
+  return [...history].sort((a, b) => fileCorrectionRowTime(b) - fileCorrectionRowTime(a))[0] || null;
+}
+
+function fileCorrectionRowTime(row = {}) {
+  return dateOrNumber(row.returned_at || row.returnedAt || row.created_at || row.createdAt || row.returnedDate);
 }
 
 async function upsertFile(file, userId, profile = {}) {
