@@ -7,6 +7,13 @@ const { profileForAuthUser, recoverAdminUser } = require("../services/userServic
 
 const router = express.Router();
 
+router.get("/public-config", (_req, res) => {
+  res.json({
+    supabaseUrl: env.supabaseUrl,
+    supabaseAnonKey: env.supabaseAnonKey,
+  });
+});
+
 router.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body || {};

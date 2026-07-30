@@ -2460,12 +2460,13 @@ function renderLogin() {
   };
 }
 
-function recoveryTokenFromUrl() {
+function recoverySessionFromUrl() {
   const hash = new URLSearchParams(String(location.hash || "").replace(/^#/, ""));
   const search = new URLSearchParams(location.search);
-  const token = hash.get("access_token") || search.get("access_token") || "";
+  const accessToken = hash.get("access_token") || search.get("access_token") || "";
+  const refreshToken = hash.get("refresh_token") || search.get("refresh_token") || "";
   const type = hash.get("type") || search.get("type") || "";
-  return token && (!type || type === "recovery") ? token : "";
+  return accessToken && (!type || type === "recovery") ? { accessToken, refreshToken } : null;
 }
 
 function clearRecoveryUrl() {
@@ -2474,7 +2475,7 @@ function clearRecoveryUrl() {
   }
 }
 
-function renderPasswordRecovery(token) {
+function renderPasswordRecovery(recoverySession) {
   document.querySelector("#app").innerHTML = `
     <div class="login-page">
       <div class="login-card">
@@ -2495,25 +2496,31 @@ function renderPasswordRecovery(token) {
     <div class="toast" id="toast"></div>
   `;
   bindPasswordToggles();
-  const submit = () => handlePasswordRecovery(token);
+  const submit = () => handlePasswordRecovery(recoverySession);
   document.querySelector("#recoveryPasswordButton").onclick = submit;
   document.querySelector("#recoveryPasswordConfirm").onkeydown = (e) => {
     if (e.key === "Enter") submit();
   };
 }
 
-async function handlePasswordRecovery(token) {
+async function handlePasswordRecovery(recoverySession) {
   const password = document.querySelector("#recoveryPassword").value;
   const confirm = document.querySelector("#recoveryPasswordConfirm").value;
   if (!password || password.length < 8) return toast("Password must be at least 8 characters.");
   if (password !== confirm) return toast("Passwords do not match.");
   try {
-    await backendApiJson("/api/auth/update-password", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ password }),
-      skipAuthRefresh: true,
+    if (!window.supabase?.createClient) throw new Error("Password recovery service is still loading. Please try again.");
+    const config = await backendApiJson("/api/auth/public-config", { skipAuthRefresh: true });
+    const client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
     });
+    const { error: sessionError } = await client.auth.setSession({
+      access_token: recoverySession.accessToken,
+      refresh_token: recoverySession.refreshToken,
+    });
+    if (sessionError) throw sessionError;
+    const { error: updateError } = await client.auth.updateUser({ password });
+    if (updateError) throw updateError;
     clearRecoveryUrl();
     renderLogin();
     toast("Password updated. Please login.");
@@ -9179,9 +9186,9 @@ function escapeHtml(value) {
 }
 
 async function bootApp() {
-  const recoveryToken = recoveryTokenFromUrl();
-  if (recoveryToken) {
-    renderPasswordRecovery(recoveryToken);
+  const recoverySession = recoverySessionFromUrl();
+  if (recoverySession) {
+    renderPasswordRecovery(recoverySession);
     return;
   }
   if (state.session?.loggedIn && isSupabaseMode()) {
