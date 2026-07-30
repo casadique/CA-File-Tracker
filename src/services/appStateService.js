@@ -72,6 +72,7 @@ function normalizeServerState(state) {
   return {
     ...state,
     files: sortFilesNewestFirst(state.files || []),
+    visitors: sortVisitorsNewestFirst(state.visitors || []),
     expenses: sortFinanceRows(state.expenses || []),
     otherCashCollections: sortFinanceRows(state.otherCashCollections || []),
     chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
@@ -116,6 +117,18 @@ function sortFinanceRows(rows) {
     const right = dateOrNumber(b.updated_at || b.updatedAt || b.created_at || b.createdAt || b.date);
     if (right !== left) return right - left;
     return String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function sortVisitorsNewestFirst(rows) {
+  return [...rows].sort((a, b) => {
+    const aDate = String(a.date || a.visit_date || "");
+    const bDate = String(b.date || b.visit_date || "");
+    if (bDate !== aDate) return bDate.localeCompare(aDate);
+    const aTime = String(a.visitTime || a.visit_time || "");
+    const bTime = String(b.visitTime || b.visit_time || "");
+    if (bTime !== aTime) return bTime.localeCompare(aTime);
+    return dateOrNumber(b.created_at || b.createdAt || b.updated_at || b.updatedAt) - dateOrNumber(a.created_at || a.createdAt || a.updated_at || a.updatedAt);
   });
 }
 

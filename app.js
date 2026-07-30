@@ -520,15 +520,20 @@ function normalizeState(appState) {
     .filter((visitor) => visitor?.id && !deletedVisitorIds.has(visitor.id))
     .map((visitor) => ({
       ...visitor,
-      date: normalizeImportDate(visitor.date) || todayDate(),
-      visitorName: visitor.visitorName || visitor.name || "",
+      date: normalizeImportDate(visitor.date || visitor.visit_date) || todayDate(),
+      visitTime: visitor.visitTime || visitor.visit_time || "",
+      visitorName: visitor.visitorName || visitor.visitor_name || visitor.name || "",
+      mobileNumber: visitor.mobileNumber || visitor.mobile_number || "",
+      company: visitor.company || visitor.company_or_organisation || "",
       purpose: visitor.purpose || "",
-      metWhom: visitor.metWhom || "",
-      followUp: visitor.followUp || visitor.followup || visitor.Followup || visitor["Follow-up"] || "",
-      enteredBy: visitor.enteredBy || appState.currentUser || "CA Sadique",
-      createdAt: Number(visitor.createdAt || 0) || Date.now(),
-      updatedAt: Number(visitor.updatedAt || 0) || Date.now(),
-    }));
+      metWhom: visitor.metWhom || visitor.met_whom || "",
+      remarks: visitor.remarks || visitor.followUp || visitor.followup || visitor.Followup || visitor["Follow-up"] || "",
+      followUp: visitor.followUp || visitor.remarks || visitor.followup || visitor.Followup || visitor["Follow-up"] || "",
+      enteredBy: visitor.enteredBy || visitor.entered_by_user_name || appState.currentUser || "CA Sadique",
+      createdAt: visitor.createdAt || visitor.created_at || Date.now(),
+      updatedAt: visitor.updatedAt || visitor.updated_at || Date.now(),
+    }))
+    .sort(visitorNewestFirst);
   const revokedEmails = new Set((appState.revokedAccess || []).map((item) => String(item.email || item).toLowerCase()));
   const revokedIds = new Set((appState.revokedAccess || []).map((item) => String(item.id || "").toLowerCase()).filter(Boolean));
   for (let i = mergedUsers.length - 1; i >= 0; i -= 1) {
@@ -977,6 +982,23 @@ async function saveCashCollectionToApi(collection) {
 async function deleteCashCollectionFromApi(id) {
   const result = await apiJson(`/api/finance/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function saveVisitorsToApi(visitors) {
+  const result = await apiJson("/api/visitors", {
+    method: "POST",
+    body: JSON.stringify({ visitors }),
+  });
+  if (result?.visitors) state.visitors = result.visitors;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function deleteVisitorFromApi(id) {
+  const result = await apiJson(`/api/visitors/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (result?.visitors) state.visitors = result.visitors;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -2779,7 +2801,7 @@ function renderAll() {
     invites: ["Team Invitation", ""],
     visitors: ["Visitors", "Visitor register and office meeting log"],
     dailyReport: ["Daily Report", "Completed files and visitor summary by date"],
-    expenses: ["Expenses", "Cash expenses, collections and cash balance"],
+    expenses: ["Transactions", "Collections, expenses and cash balance"],
     reports: ["Reports & Export", ""],
     verification: ["Verification", "Confirm staff allotments, status updates and login visibility"],
     backup: ["Backup", "Download a full safety copy of tracker data"],
@@ -2997,7 +3019,7 @@ function navGroupDefinitions() {
       ...(canUseVerificationPage() ? [navItem("verification", "check", "Verification")] : []),
     ] },
     { key: "admin", label: "Administration", collapsible: true, items: [
-      navItem("expenses", "expense", "Expenses"),
+      navItem("expenses", "expense", "Transactions"),
       ...(canUseBackupPage() ? [navItem("backup", "backup", "Backup")] : []),
       navItem("users", "lock", "User Management", "", true),
     ] },
@@ -7614,6 +7636,16 @@ function visitorSortTime(visitor) {
   return (Date.parse(visitor.date || "") || 0) * 1000000 + Number(visitor.createdAt || visitor.updatedAt || 0);
 }
 
+function visitorNewestFirst(a = {}, b = {}) {
+  const aDate = String(a.date || a.visit_date || "");
+  const bDate = String(b.date || b.visit_date || "");
+  if (bDate !== aDate) return bDate.localeCompare(aDate);
+  const aTime = String(a.visitTime || a.visit_time || "");
+  const bTime = String(b.visitTime || b.visit_time || "");
+  if (bTime !== aTime) return bTime.localeCompare(aTime);
+  return (Date.parse(b.createdAt || b.created_at || b.updatedAt || b.updated_at || "") || 0) - (Date.parse(a.createdAt || a.created_at || a.updatedAt || a.updated_at || "") || 0);
+}
+
 function visitorPersonOptions() {
   return sortList([
     ...state.users.map((user) => user.name),
@@ -7627,15 +7659,17 @@ function filteredVisitors() {
   const f = state.filters;
   return (state.visitors || [])
     .filter((visitor) => {
-      const selectedDate = f.visitorDate || todayDate();
+      const selectedDate = f.visitorDate || "";
       if (selectedDate && visitor.date !== selectedDate) return false;
       if (f.visitorFrom && visitor.date < f.visitorFrom) return false;
       if (f.visitorTo && visitor.date > f.visitorTo) return false;
       if (f.visitorName && !normalizeImportMatchText(visitor.visitorName).includes(normalizeImportMatchText(f.visitorName))) return false;
+      if (f.visitorCompany && !normalizeImportMatchText(visitor.company).includes(normalizeImportMatchText(f.visitorCompany))) return false;
+      if (f.visitorPurpose && !normalizeImportMatchText(visitor.purpose).includes(normalizeImportMatchText(f.visitorPurpose))) return false;
       if (f.visitorMetWhom && !normalizeImportMatchText(visitor.metWhom).includes(normalizeImportMatchText(f.visitorMetWhom))) return false;
       return true;
     })
-    .sort((a, b) => visitorSortTime(b) - visitorSortTime(a));
+    .sort(visitorNewestFirst);
 }
 
 function renderVisitorsPage() {
@@ -7646,13 +7680,13 @@ function renderVisitorsPage() {
     return;
   }
   const visitors = filteredVisitors();
-  const selectedDate = state.filters.visitorDate || todayDate();
+  const selectedDate = state.filters.visitorDate || "";
   page.innerHTML = `
     <div class="panel visitor-panel">
       <div class="filter-hero">
         <div>
           <h3>Visitor Register</h3>
-          <p>${displayDate(selectedDate)} | ${visitors.length} visitor record(s)</p>
+          <p>${selectedDate ? displayDate(selectedDate) : "All dates"} | ${visitors.length} visitor record(s)</p>
         </div>
         <button class="primary-button" id="addVisitorButton">+ Add Visitor</button>
       </div>
@@ -7661,12 +7695,15 @@ function renderVisitorsPage() {
         ${visitorDateInput("visitorFrom", "From")}
         ${visitorDateInput("visitorTo", "To")}
         ${visitorTextInput("visitorName", "Visitor Name", "Search visitor")}
+        ${visitorTextInput("visitorCompany", "Company", "Search company")}
+        ${visitorTextInput("visitorPurpose", "Purpose", "Search purpose")}
         ${visitorTextInput("visitorMetWhom", "Met Whom", "Search person")}
       </div>
       <div class="action-row visitor-action-row">
         <button class="secondary-button" id="clearVisitorFilters">Clear Filters</button>
         <button class="secondary-button" id="exportVisitorsExcel" ${rolePerm().export ? "" : "disabled"}>Export to Excel</button>
         <button class="secondary-button" id="exportVisitorsPdf" ${rolePerm().export ? "" : "disabled"}>Export to PDF</button>
+        <button class="secondary-button" id="printVisitors">Print</button>
       </div>
       ${state.filters.visitorEntryOpen === "Yes" ? renderVisitorInlineEntry() : ""}
       ${renderVisitorsTable(visitors)}
@@ -7680,7 +7717,7 @@ function visitorTextInput(key, label, placeholder) {
 }
 
 function visitorDateInput(key, label) {
-  const value = key === "visitorDate" ? (state.filters[key] || todayDate()) : (state.filters[key] || "");
+  const value = state.filters[key] || "";
   return `<div class="field"><label>${label}</label><input type="date" data-visitor-filter="${key}" value="${escapeHtml(value)}"></div>`;
 }
 
@@ -7695,7 +7732,7 @@ function renderVisitorInlineEntry() {
       </div>
       <div class="visitor-entry-table-wrap">
         <table class="visitor-entry-table">
-          <thead><tr><th>Name</th><th>Purpose of Visit</th><th>Met Whom</th><th>Followup</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Time</th><th>Name</th><th>Mobile</th><th>Company</th><th>Purpose</th><th>Met Whom</th><th>Remarks</th><th>Actions</th></tr></thead>
           <tbody id="visitorEntryRows">
             ${visitorEntryRow({}, 0)}
           </tbody>
@@ -7716,16 +7753,20 @@ function renderVisitorEditRow(visitor, index) {
     <tr class="visitor-edit-row" data-edit-visitor-row="${visitor.id}">
       <td>${index + 1}</td>
       <td><input type="date" data-edit-field="date" value="${escapeHtml(visitor.date || todayDate())}"></td>
+      <td><input type="time" data-edit-field="visitTime" value="${escapeHtml(visitor.visitTime || "")}"></td>
       <td><input data-edit-field="visitorName" value="${escapeHtml(visitor.visitorName || "")}"></td>
+      <td><input data-edit-field="mobileNumber" value="${escapeHtml(visitor.mobileNumber || "")}"></td>
+      <td><input data-edit-field="company" value="${escapeHtml(visitor.company || "")}"></td>
       <td><textarea data-edit-field="purpose" rows="2">${escapeHtml(visitor.purpose || "")}</textarea></td>
       <td>${visitorPersonSelect("data-edit-field=\"metWhom\"", visitor.metWhom || "")}</td>
-      <td><textarea data-edit-field="followUp" rows="2">${escapeHtml(visitor.followUp || "")}</textarea></td>
+      <td><textarea data-edit-field="remarks" rows="2">${escapeHtml(visitor.remarks || visitor.followUp || "")}</textarea></td>
+      <td>${escapeHtml(visitor.enteredBy || "")}</td>
       <td><div class="action-row">
         <button class="mini-button success" data-save-visitor-edit="${visitor.id}">Save</button>
         <button class="mini-button" data-cancel-visitor-edit>Cancel</button>
       </div></td>
     </tr>
-    <tr class="hidden"><td colspan="7"></td></tr>
+    <tr class="hidden"><td colspan="11"></td></tr>
   `;
 }
 
@@ -7734,17 +7775,21 @@ function renderVisitorsTable(visitors) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact visitor-table">
-        <thead><tr><th>SN</th><th>Date</th><th>Name</th><th>Purpose of Visit</th><th>Met Whom</th><th>Followup</th><th>Actions</th></tr></thead>
+        <thead><tr><th>SN</th><th>Visit Date</th><th>Visit Time</th><th>Visitor Name</th><th>Mobile Number</th><th>Company</th><th>Purpose</th><th>Met Whom</th><th>Remarks</th><th>Entered By</th><th class="action-col">Actions</th></tr></thead>
         <tbody>
           ${visitors.map((visitor, index) => `
             ${state.filters.editVisitorId === visitor.id ? renderVisitorEditRow(visitor, index) : `<tr>
               <td>${index + 1}</td>
               <td>${displayDate(visitor.date)}</td>
+              <td>${escapeHtml(visitor.visitTime || "")}</td>
               <td><span class="client-name">${escapeHtml(visitor.visitorName)}</span></td>
+              <td>${escapeHtml(visitor.mobileNumber || "")}</td>
+              <td>${escapeHtml(visitor.company || "")}</td>
               <td class="visitor-purpose-cell">${escapeHtml(visitor.purpose)}</td>
               <td>${escapeHtml(visitor.metWhom)}</td>
-              <td class="visitor-purpose-cell">${escapeHtml(visitor.followUp || "")}</td>
-              <td><div class="action-row">
+              <td class="visitor-purpose-cell">${escapeHtml(visitor.remarks || visitor.followUp || "")}</td>
+              <td>${escapeHtml(visitor.enteredBy || "")}</td>
+              <td class="action-col"><div class="action-row">
                 <button class="mini-button" data-edit-visitor="${visitor.id}">Edit</button>
                 <button class="mini-button danger" data-delete-visitor="${visitor.id}">Delete</button>
               </div></td>
@@ -7772,12 +7817,13 @@ function bindVisitorsPage(visitors) {
     input.onchange = input.oninput;
   });
   document.querySelector("#clearVisitorFilters").onclick = () => {
-    ["visitorDate", "visitorFrom", "visitorTo", "visitorName", "visitorPurpose", "visitorMetWhom"].forEach((key) => (state.filters[key] = ""));
+    ["visitorDate", "visitorFrom", "visitorTo", "visitorName", "visitorCompany", "visitorPurpose", "visitorMetWhom"].forEach((key) => (state.filters[key] = ""));
     saveState();
     renderVisitorsPage();
   };
   document.querySelector("#exportVisitorsExcel").onclick = () => exportVisitorsExcel(visitors);
   document.querySelector("#exportVisitorsPdf").onclick = () => printVisitorRows(visitors, "pdf");
+  document.querySelector("#printVisitors").onclick = () => printVisitorRows(visitors, "print");
   bindVisitorInlineEntry();
   document.querySelectorAll("[data-edit-visitor]").forEach((btn) => {
     btn.onclick = () => {
@@ -7802,11 +7848,16 @@ function bindVisitorsPage(visitors) {
 function visitorExportRow(visitor, index) {
   return {
     SN: index + 1,
-    Date: displayDate(visitor.date),
-    Name: visitor.visitorName,
-    "Purpose of Visit": visitor.purpose,
+    "Visit Date": displayDate(visitor.date),
+    "Visit Time": visitor.visitTime || "",
+    "Visitor Name": visitor.visitorName,
+    "Mobile Number": visitor.mobileNumber || "",
+    Company: visitor.company || "",
+    Purpose: visitor.purpose,
     "Met Whom": visitor.metWhom,
-    Followup: visitor.followUp || "",
+    Remarks: visitor.remarks || visitor.followUp || "",
+    "Entered By": visitor.enteredBy || "",
+    "Created On": displayDate(visitor.createdAt || visitor.created_at || visitor.date),
   };
 }
 
@@ -7821,15 +7872,20 @@ async function exportVisitorsExcel(visitors) {
 async function printVisitorRows(visitors, format) {
   if (format === "pdf" && !rolePerm().export) return toast("This role cannot export data.");
   const rows = visitors.map(visitorExportRow);
+  const dateLine = [
+    state.filters.visitorFrom ? `From ${displayDate(state.filters.visitorFrom)}` : "",
+    state.filters.visitorTo ? `To ${displayDate(state.filters.visitorTo)}` : "",
+    state.filters.visitorDate ? `Date ${displayDate(state.filters.visitorDate)}` : "",
+  ].filter(Boolean).join(" | ");
   if (format === "pdf") {
-    await downloadPdfRows(`visitors-${todayDate()}`, rows, ["Muhammad & Associates,", "Chartered Accountants,", "Visitor Register"]);
+    await downloadPdfRows(`visitors-${todayDate()}`, rows, ["Muhammad & Associates,", "Chartered Accountants,", "Visitors Report", dateLine || "All dates"]);
     addAuditLog("Visitors exported", { format: "PDF", count: visitors.length });
     saveState();
     toast("Visitor PDF downloaded");
     return;
   }
   printStructuredReport({
-    title: "Visitor Register",
+    title: "Visitors Report",
     sections: [{ title: "Visitors", rows }],
     format,
   });
@@ -7840,10 +7896,13 @@ async function printVisitorRows(visitors, format) {
 function visitorEntryRow(visitor = {}, index = 0) {
   return `
     <tr data-visitor-entry-row>
+      <td><input type="time" data-visitor-entry="visitTime" value="${escapeHtml(visitor.visitTime || "")}"></td>
       <td><input data-visitor-entry="visitorName" value="${escapeHtml(visitor.visitorName || "")}" placeholder="Visitor name"></td>
+      <td><input data-visitor-entry="mobileNumber" value="${escapeHtml(visitor.mobileNumber || "")}" placeholder="Mobile"></td>
+      <td><input data-visitor-entry="company" value="${escapeHtml(visitor.company || "")}" placeholder="Company"></td>
       <td><textarea data-visitor-entry="purpose" rows="2" placeholder="Purpose of visit">${escapeHtml(visitor.purpose || "")}</textarea></td>
       <td>${visitorPersonSelect("data-visitor-entry=\"metWhom\"", visitor.metWhom || "")}</td>
-      <td><textarea data-visitor-entry="followUp" rows="2" placeholder="Followup">${escapeHtml(visitor.followUp || "")}</textarea></td>
+      <td><textarea data-visitor-entry="remarks" rows="2" placeholder="Remarks">${escapeHtml(visitor.remarks || visitor.followUp || "")}</textarea></td>
       <td class="visitor-remove-cell"><div class="action-row">
         <button type="button" class="mini-button" data-clear-visitor-row>Clear Row</button>
         ${index === 0 ? "" : `<button type="button" class="mini-button danger" data-remove-visitor-row>Remove Row</button>`}
@@ -7905,7 +7964,7 @@ function bindVisitorEntryRows() {
   });
 }
 
-function saveVisitorInlineRows() {
+async function saveVisitorInlineRows() {
   const saveButton = document.querySelector("#saveVisitorButton");
   if (saveButton?.disabled) return;
   if (saveButton) saveButton.disabled = true;
@@ -7917,7 +7976,7 @@ function saveVisitorInlineRows() {
   rows.forEach((row) => {
     row.classList.remove("invalid-row");
     const values = Object.fromEntries([...row.querySelectorAll("[data-visitor-entry]")].map((input) => [input.dataset.visitorEntry, String(input.value || "").trim()]));
-    const blank = !values.visitorName && !values.purpose && !values.metWhom && !values.followUp;
+    const blank = !values.visitTime && !values.visitorName && !values.mobileNumber && !values.company && !values.purpose && !values.metWhom && !values.remarks;
     if (blank) return;
     if (!values.visitorName || !values.purpose || !values.metWhom) {
       row.classList.add("invalid-row");
@@ -7927,10 +7986,14 @@ function saveVisitorInlineRows() {
     records.push({
       id: crypto.randomUUID(),
       date,
+      visitTime: values.visitTime || "",
       visitorName: values.visitorName,
+      mobileNumber: values.mobileNumber || "",
+      company: values.company || "",
       purpose: values.purpose,
       metWhom: values.metWhom,
-      followUp: values.followUp || "",
+      remarks: values.remarks || "",
+      followUp: values.remarks || "",
       enteredBy: state.currentUser || "CA Sadique",
       createdAt: now,
       updatedAt: now,
@@ -7940,10 +8003,20 @@ function saveVisitorInlineRows() {
     if (saveButton) saveButton.disabled = false;
     return toast(invalid ? "Please complete the highlighted visitor rows." : "Please enter at least one visitor.");
   }
-  records.forEach((record) => {
-    state.visitors = [record, ...(state.visitors || [])];
-    addAuditLog("Visitor added", { updated: visitorAuditSnapshot(record) });
-  });
+  try {
+    if (isSupabaseMode()) {
+      await saveVisitorsToApi(records);
+    } else {
+      records.forEach((record) => {
+        state.visitors = [record, ...(state.visitors || [])].sort(visitorNewestFirst);
+        addAuditLog("Visitor added", { updated: visitorAuditSnapshot(record) });
+      });
+      saveState();
+    }
+  } catch (error) {
+    if (saveButton) saveButton.disabled = false;
+    return toast(error.message || "Central visitor save failed.");
+  }
   if (invalid) {
     toast(`${records.length} valid visitor(s) saved. Highlighted row(s) were not saved.`);
     document.querySelectorAll("[data-visitor-entry-row]:not(.invalid-row)").forEach((row) => row.remove());
@@ -7952,64 +8025,95 @@ function saveVisitorInlineRows() {
     }
     bindVisitorEntryRows();
     if (saveButton) saveButton.disabled = false;
-    saveState();
     return;
   } else {
-    toast(`${records.length} visitor record(s) saved`);
+    toast(`${records.length} visitor record(s) saved and synced`);
   }
   state.filters.visitorEntryOpen = "";
   state.filters.visitorDate = date;
-  saveState();
+  saveState({ skipMerge: true, skipRemote: true });
   renderAll();
 }
 
-function saveVisitorInlineEdit(id) {
+async function saveVisitorInlineEdit(id) {
+  const button = document.querySelector(`[data-save-visitor-edit="${CSS.escape(id)}"]`);
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
   const row = [...document.querySelectorAll("[data-edit-visitor-row]")].find((item) => item.dataset.editVisitorRow === id);
   const existing = state.visitors.find((visitor) => visitor.id === id);
-  if (!row || !existing) return toast("Visitor record not found.");
+  if (!row || !existing) {
+    if (button) button.disabled = false;
+    return toast("Visitor record not found.");
+  }
   row.classList.remove("invalid-row");
   const values = Object.fromEntries([...row.querySelectorAll("[data-edit-field]")].map((input) => [input.dataset.editField, String(input.value || "").trim()]));
   if (!values.date || !values.visitorName || !values.purpose || !values.metWhom) {
     row.classList.add("invalid-row");
+    if (button) button.disabled = false;
     return toast("Please complete the highlighted visitor row.");
   }
   const record = {
     ...existing,
     date: values.date,
+    visitTime: values.visitTime || "",
     visitorName: values.visitorName,
+    mobileNumber: values.mobileNumber || "",
+    company: values.company || "",
     purpose: values.purpose,
     metWhom: values.metWhom,
-    followUp: values.followUp || "",
+    remarks: values.remarks || "",
+    followUp: values.remarks || "",
     updatedAt: Date.now(),
   };
-  state.visitors = state.visitors.map((visitor) => visitor.id === id ? record : visitor);
-  state.filters.editVisitorId = "";
-  addAuditLog("Visitor edited", { previous: visitorAuditSnapshot(existing), updated: visitorAuditSnapshot(record) });
-  saveState();
-  toast("Visitor updated");
-  renderAll();
+  try {
+    if (isSupabaseMode()) {
+      await saveVisitorsToApi([record]);
+    } else {
+      state.visitors = state.visitors.map((visitor) => visitor.id === id ? record : visitor).sort(visitorNewestFirst);
+      addAuditLog("Visitor edited", { previous: visitorAuditSnapshot(existing), updated: visitorAuditSnapshot(record) });
+      saveState();
+    }
+    state.filters.editVisitorId = "";
+    saveState({ skipMerge: true, skipRemote: true });
+    toast("Visitor updated and synced");
+    renderAll();
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || "Central visitor update failed.");
+  }
 }
 
-function deleteVisitor(id) {
+async function deleteVisitor(id) {
   if (!canUseVisitorModules()) return toast("Visitors is available only for Admin and Manager.");
   const visitor = state.visitors.find((item) => item.id === id);
   if (!visitor) return toast("Visitor record not found.");
   if (!confirm(`Delete visitor record for ${visitor.visitorName}?`)) return;
-  state.deletedVisitorIds = [...new Set([...(state.deletedVisitorIds || []), id])];
-  state.visitors = state.visitors.filter((item) => item.id !== id);
-  addAuditLog("Visitor deleted", { previous: visitorAuditSnapshot(visitor) });
-  saveState({ skipMerge: true });
-  toast("Visitor deleted");
-  renderAll();
+  try {
+    if (isSupabaseMode()) {
+      await deleteVisitorFromApi(id);
+    } else {
+      state.deletedVisitorIds = [...new Set([...(state.deletedVisitorIds || []), id])];
+      state.visitors = state.visitors.filter((item) => item.id !== id);
+      addAuditLog("Visitor deleted", { previous: visitorAuditSnapshot(visitor) });
+      saveState({ skipMerge: true });
+    }
+    toast("Visitor deleted and synced");
+    renderAll();
+  } catch (error) {
+    toast(error.message || "Central visitor delete failed.");
+  }
 }
 
 function visitorAuditSnapshot(visitor) {
   return {
     date: visitor.date,
+    visitTime: visitor.visitTime || "",
     visitorName: visitor.visitorName,
+    mobileNumber: visitor.mobileNumber || "",
+    company: visitor.company || "",
     purpose: visitor.purpose,
     metWhom: visitor.metWhom,
-    followUp: visitor.followUp || "",
+    remarks: visitor.remarks || visitor.followUp || "",
     enteredBy: visitor.enteredBy || "",
   };
 }
@@ -8029,13 +8133,8 @@ function renderExpensesPage() {
   const balance = cashBalanceForRange();
   root.innerHTML = `
     <div class="expense-shell">
-      <div class="expense-hero">
-        <div>
-          <span>Finance Desk</span>
-          <h3>Expenses</h3>
-          <p>Manage daily expenses, other cash collections and cash balance in one place.</p>
-        </div>
-        <strong>${money(balance.closing)}</strong>
+      <div class="transaction-heading">
+        <h3>Transactions</h3>
       </div>
       <div class="expense-overview-grid">
         ${expenseOverviewCard("Cash Balance", balance.closing, "balance")}
@@ -8163,6 +8262,7 @@ function renderCashBalanceTab() {
       <div class="filters colourful-filters expense-filters balance-filter-row">
         ${expenseFilterInput("balanceFrom", "From Date", "date")}
         ${expenseFilterInput("balanceTo", "To Date", "date")}
+        ${expenseFilterSelect("balanceMode", "Payment Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
         <div class="field"><label>Action</label><button class="secondary-button" id="balanceSearch">Search</button></div>
         <div class="field"><label>Reset</label><button class="secondary-button" id="balanceReset">Reset</button></div>
         <div class="field"><label>Export</label><button class="secondary-button" id="balanceExcel">Export Excel</button></div>
@@ -8176,6 +8276,7 @@ function renderCashBalanceTab() {
       ${cashBalanceCard("Cash Expenses", balance.cashExpenses)}
       ${cashBalanceCard("Closing Cash Balance", balance.closing, true)}
     </div>
+    ${renderCashMovementTable()}
   `;
 }
 
@@ -8189,6 +8290,7 @@ function renderExpenseFilters() {
       ${expenseFilterInput("expenseFrom", "From Date", "date")}
       ${expenseFilterInput("expenseTo", "To Date", "date")}
       ${expenseFilterInput("expenseParticulars", "Particulars")}
+      ${expenseFilterSelect("expenseMode", "Payment Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
       ${expenseFilterInput("expensePaidTo", "Paid To")}
       <div class="field"><label>Search</label><button class="secondary-button" id="expenseSearch">Search</button></div>
       <div class="field"><label>Clear</label><button class="secondary-button" id="expenseReset">Clear</button></div>
@@ -8595,9 +8697,10 @@ function filteredExpenses() {
     if (state.filters.expenseFrom && item.date < state.filters.expenseFrom) return false;
     if (state.filters.expenseTo && item.date > state.filters.expenseTo) return false;
     if (state.filters.expenseParticulars && !item.particulars.toLowerCase().includes(state.filters.expenseParticulars.toLowerCase())) return false;
+    if (state.filters.expenseMode && item.mode !== state.filters.expenseMode) return false;
     if (state.filters.expensePaidTo && !item.paidTo.toLowerCase().includes(state.filters.expensePaidTo.toLowerCase())) return false;
     return true;
-  }).sort((a, b) => a.date.localeCompare(b.date) || String(a.voucherNo).localeCompare(String(b.voucherNo)));
+  }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
 }
 
 function filteredCashCollections() {
@@ -8609,12 +8712,13 @@ function filteredCashCollections() {
     if (state.filters.cashReceivedFrom && !item.receivedFrom.toLowerCase().includes(state.filters.cashReceivedFrom.toLowerCase())) return false;
     if (state.filters.cashVoucher && !item.voucherNo.toLowerCase().includes(state.filters.cashVoucher.toLowerCase())) return false;
     return true;
-  }).sort((a, b) => a.date.localeCompare(b.date) || String(a.voucherNo).localeCompare(String(b.voucherNo)));
+  }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
 }
 
 function renderExpenseTable(rows) {
   if (!rows.length) return empty("No expense entries found.");
-  return `<div class="table-wrap"><table class="file-table expense-table"><thead><tr><th>SN</th><th>Date</th><th>Particulars</th><th>V.No</th><th class="amount-col">Amount</th><th>Mode</th><th>Paid To</th><th>Attachment</th><th>Action</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.mode)}</td><td>${escapeHtml(item.paidTo)}</td><td>${expenseAttachmentLink(item)}</td><td><button class="mini-button" data-edit-expense="${item.id}">Edit</button><button class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+  const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return `<div class="transaction-table-head"><strong>Total Expenses: ${money(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>SN</th><th>Expense Date</th><th>Particulars</th><th>Voucher Number</th><th>Paid To</th><th>Payment Mode</th><th class="amount-col">Amount</th><th>Remarks</th><th>Entered By</th><th>Created On</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.paidTo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${money(item.amount)}</td><td class="wrap-cell">${escapeHtml(item.remarks)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${displayDate(item.createdAt || item.created_at || item.date)}</td><td class="action-col"><button class="mini-button" data-edit-expense="${item.id}">Edit</button><button class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function expenseAttachmentLink(item) {
@@ -8627,7 +8731,8 @@ function expenseAttachmentLink(item) {
 
 function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
-  return `<div class="table-wrap"><table class="file-table expense-table"><thead><tr><th>SN</th><th>Date</th><th>Particulars</th><th>V.No</th><th class="amount-col">Amount</th><th>Mode</th><th>Received From</th><th>Remarks</th><th>Action</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.voucherNo)}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.mode)}</td><td>${escapeHtml(item.receivedFrom)}</td><td>${escapeHtml(item.remarks)}</td><td><button class="mini-button" data-edit-cash="${item.id}">Edit</button><button class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+  const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return `<div class="transaction-table-head"><strong>Total Collections: ${money(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>SN</th><th>Collection Date</th><th>Received From</th><th>Particulars</th><th>Reference Number</th><th>Payment Mode</th><th class="amount-col">Amount</th><th>Remarks</th><th>Entered By</th><th>Created On</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.receivedFrom)}</td><td>${escapeHtml(item.particulars)}</td><td>${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${money(item.amount)}</td><td class="wrap-cell">${escapeHtml(item.remarks)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${displayDate(item.createdAt || item.created_at || item.date)}</td><td class="action-col"><button class="mini-button" data-edit-cash="${item.id}">Edit</button><button class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function resetExpenseFilters() {
@@ -8645,6 +8750,7 @@ function resetCashFilters() {
 function resetBalanceFilters() {
   state.filters.balanceFrom = "";
   state.filters.balanceTo = "";
+  state.filters.balanceMode = "";
   saveState();
   renderAll();
 }
@@ -8652,11 +8758,52 @@ function resetBalanceFilters() {
 function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
   const effectiveTo = to || from || todayDate();
   const inRange = (date) => (!from || date >= from) && (!effectiveTo || date <= effectiveTo);
+  const mode = state.filters.balanceMode || "";
+  const modeOk = (itemMode) => !mode || itemMode === mode;
   const opening = (Number(state.openingCashBalance || 0) || 0) + (state.openingBalances || []).filter((item) => !effectiveTo || item.date <= effectiveTo).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0);
-  const otherCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0);
+  const otherCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return { opening, feeCollections, otherCollections, cashExpenses, closing: opening + feeCollections + otherCollections - cashExpenses };
+}
+
+function cashMovementRows() {
+  const from = state.filters.balanceFrom || "";
+  const to = state.filters.balanceTo || from || todayDate();
+  const inRange = (date) => (!from || date >= from) && (!to || date <= to);
+  const rows = [
+    ...(state.otherCashCollections || []).filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
+      date: item.date,
+      type: "Collection",
+      particulars: item.particulars || item.receivedFrom || "",
+      reference: item.voucherNo || "",
+      cashIn: Number(item.amount || 0),
+      cashOut: 0,
+      enteredBy: item.createdBy || item.enteredBy || "",
+      createdAt: item.createdAt || item.created_at || "",
+    })),
+    ...(state.expenses || []).filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
+      date: item.date,
+      type: "Expense",
+      particulars: item.particulars || "",
+      reference: item.voucherNo || "",
+      cashIn: 0,
+      cashOut: Number(item.amount || 0),
+      enteredBy: item.createdBy || item.enteredBy || "",
+      createdAt: item.createdAt || item.created_at || "",
+    })),
+  ].sort((a, b) => a.date.localeCompare(b.date) || (Date.parse(a.createdAt || "") - Date.parse(b.createdAt || "")));
+  let running = cashBalanceForRange(from, from).opening;
+  return rows.map((row, index) => {
+    running += row.cashIn - row.cashOut;
+    return { ...row, sn: index + 1, runningBalance: running };
+  });
+}
+
+function renderCashMovementTable() {
+  const rows = cashMovementRows();
+  if (!rows.length) return empty("No cash movement found for the selected range.");
+  return `<div class="transaction-table-head"><strong>Cash Movement</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>SN</th><th>Date</th><th>Transaction Type</th><th>Particulars</th><th>Reference</th><th class="amount-col">Cash In</th><th class="amount-col">Cash Out</th><th class="amount-col">Running Balance</th><th>Entered By</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${row.sn}</td><td>${expenseDisplayDate(row.date)}</td><td>${row.type}</td><td>${escapeHtml(row.particulars)}</td><td>${escapeHtml(row.reference)}</td><td class="amount-cell">${row.cashIn ? money(row.cashIn) : ""}</td><td class="amount-cell">${row.cashOut ? money(row.cashOut) : ""}</td><td class="amount-cell">${money(row.runningBalance)}</td><td>${escapeHtml(row.enteredBy)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function expenseReportRows(rows = filteredExpenses()) {
