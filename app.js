@@ -3432,6 +3432,7 @@ function navIcon(name) {
     filterOff: '<svg viewBox="0 0 24 24"><path d="M3.3 2 2 3.3l7.2 7.2V20l3.1-1.8L20.7 22l1.3-1.3L3.3 2ZM4 5h1.2l2 2H7.4L11 11.2v3.3L9 15.7V12L4 5Zm5.8 2-2-2H20l-6 7v1.2l-2-2V11l3.4-4H9.8Z"/></svg>',
     spreadsheet: '<svg viewBox="0 0 24 24"><path d="M5 3h14v18H5V3Zm2 2v4h4V5H7Zm6 0v4h4V5h-4ZM7 11v3h4v-3H7Zm6 0v3h4v-3h-4ZM7 16v3h4v-3H7Zm6 0v3h4v-3h-4Z"/></svg>',
     pdf: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Zm7 1.8V8h3.2L13 4.8ZM8 12h2.4c1.4 0 2.3.8 2.3 2.1s-.9 2.1-2.3 2.1h-.8V18H8v-6Zm1.6 2.8h.7c.5 0 .8-.3.8-.7s-.3-.7-.8-.7h-.7v1.4Zm3.9-2.8h2c1.6 0 2.7 1.2 2.7 3s-1.1 3-2.7 3h-2v-6Zm1.6 4.6h.3c.7 0 1.2-.5 1.2-1.6s-.5-1.6-1.2-1.6h-.3v3.2Z"/></svg>',
+    print: '<svg viewBox="0 0 24 24"><path d="M7 3h10v5H7V3Zm-2 7h14a3 3 0 0 1 3 3v5h-4v3H6v-3H2v-5a3 3 0 0 1 3-3Zm3 7v2h8v-5H8v3Zm10-3h2v-1a1 1 0 0 0-1-1h-1v2ZM5 12a1 1 0 0 0-1 1v1h2v-2H5Z"/></svg>',
     chat: '<svg viewBox="0 0 24 24"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v6A3.5 3.5 0 0 1 16.5 15H10l-5 4v-4.3A3.5 3.5 0 0 1 4 12.2V5.5Zm4 2.2v1.8h8V7.7H8Zm0 4h5.5V10H8v1.7Z"/></svg>',
     bell: '<svg viewBox="0 0 24 24"><path d="M12 22a2.8 2.8 0 0 0 2.7-2h-5.4A2.8 2.8 0 0 0 12 22Zm7-6-1.7-2.1V9a5.4 5.4 0 0 0-4.3-5.3V2h-2v1.7A5.4 5.4 0 0 0 6.7 9v4.9L5 16v2h14v-2Z"/></svg>',
     search: '<svg viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 0 1 5.1 10.5l4 4-1.4 1.4-4-4A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>',
@@ -4162,10 +4163,10 @@ function renderStaffFilesPage() {
         </div>
       ` : ""}
       <div class="action-row" style="margin-bottom:14px">
-        ${showActiveStaffFilters ? `<button class="secondary-button" id="clearStaffActiveFilters">Clear Filters</button>` : ""}
-        <button class="secondary-button" id="staffExportExcel">Export to Excel</button>
-        <button class="secondary-button" id="staffExportPdf">Export to PDF</button>
-        <button class="secondary-button" id="staffPrintReport">Print</button>
+        ${showActiveStaffFilters ? `<button class="secondary-button staff-report-action staff-report-clear" id="clearStaffActiveFilters">Clear Filters</button>` : ""}
+        <button class="secondary-button staff-report-action staff-report-excel" id="staffExportExcel">${navIcon("spreadsheet")}Export to Excel</button>
+        <button class="secondary-button staff-report-action staff-report-pdf" id="staffExportPdf">${navIcon("pdf")}Export to PDF</button>
+        <button class="secondary-button staff-report-action staff-report-print" id="staffPrintReport">${navIcon("print")}Print</button>
       </div>
       <div id="fileResults">${listView === "correctionRequired" ? renderCorrectionRequiredTable(files) : (listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView))}</div>
     </div>
@@ -5022,12 +5023,13 @@ async function returnFileForCorrection(fileId) {
 
 function renderCorrectionRequiredTable(files) {
   const rows = sortFilesByCorrectionNewestFirst(files);
+  const compactStaffCorrectionView = !["Admin", "Manager"].includes(state.currentRole);
   if (!rows.length) return empty("No correction-required files found.");
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact correction-required-table">
         <thead><tr>
-          <th>SN</th><th>Client Name</th><th>CR No.</th><th>Service Type</th><th>File Received Date</th><th>Assigned Staff</th><th>Completed Date</th><th>Returned On</th><th>Required By</th><th>Correction Reason</th><th>Status</th><th>Priority</th><th>Expected Date</th><th>Aging</th><th>Last Updated</th><th>Actions</th>
+          <th>SN</th><th>Client Name</th><th>CR No.</th><th>Service Type</th>${compactStaffCorrectionView ? "" : "<th>File Received Date</th><th>Assigned Staff</th>"}<th>Completed Date</th><th>Returned On</th><th>Required By</th><th>Correction Reason</th><th>Status</th><th>Priority</th>${compactStaffCorrectionView ? "" : "<th>Expected Date</th><th>Aging</th><th>Last Updated</th>"}<th>Actions</th>
         </tr></thead>
         <tbody>
           ${rows.map((file, index) => {
@@ -5042,17 +5044,14 @@ function renderCorrectionRequiredTable(files) {
               <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
               <td>${escapeHtml(file.crNo || file.cr_no || file.pan || "-")}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
-              <td>${fmt(file.fileReceivedDate)}</td>
-              <td>${escapeHtml(file.assignedStaff || file.returnedTo || "Not Assigned")}</td>
+              ${compactStaffCorrectionView ? "" : `<td>${fmt(file.fileReceivedDate)}</td><td>${escapeHtml(file.assignedStaff || file.returnedTo || "Not Assigned")}</td>`}
               <td>${fmt(workCompletedDate(file))}</td>
               <td>${escapeHtml(fmt(returnedOn) || "-")}</td>
               <td>${escapeHtml(requiredBy)}</td>
               <td class="correction-reason-cell">${escapeHtml(reason || "-")}</td>
               <td><span class="badge overdue">${escapeHtml(status)}</span></td>
               <td><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></td>
-              <td>${fmt(expected)}</td>
-              <td>${returnedOn ? agingText(returnedOn) : "-"}</td>
-              <td>${fmt(file.lastUpdatedDate || file.updated_at || file.updatedAt)}</td>
+              ${compactStaffCorrectionView ? "" : `<td>${fmt(expected)}</td><td>${returnedOn ? agingText(returnedOn) : "-"}</td><td>${fmt(file.lastUpdatedDate || file.updated_at || file.updatedAt)}</td>`}
               <td><div class="action-row"><button class="mini-button" data-edit="${file.id}">View File</button></div></td>
             </tr>`;
           }).join("")}
