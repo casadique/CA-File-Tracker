@@ -4636,43 +4636,43 @@ textarea {
 
 .expense-shell {
   display: grid;
-  gap: 16px;
+  gap: 18px;
+  max-width: 100%;
 }
 
+.transactions-page-head,
 .expense-hero {
   display: flex;
   justify-content: space-between;
   gap: 18px;
   align-items: center;
-  padding: 20px;
+  padding: 18px 20px;
   border: 1px solid #cbd8e8;
   border-radius: 18px;
-  background: linear-gradient(135deg, #f8fbff 0%, #e7f3ff 52%, #e9f8f5 100%);
-  box-shadow: 0 18px 36px rgba(19, 34, 56, 0.08);
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(19, 34, 56, 0.06);
 }
 
-.expense-hero span,
-.expense-card-head span {
-  display: inline-flex;
-  width: fit-content;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: #dce8f7;
-  color: #263f61;
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
+.transactions-page-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: 0;
 }
 
-.expense-hero h3,
-.expense-card-head h3 {
+.transactions-page-head p,
+.expense-card-head p {
   margin: 6px 0 0;
-  color: #132238;
+  color: #64748b;
+  font-size: 14px;
 }
 
-.expense-hero p {
-  margin: 5px 0 0;
-  color: #475569;
+.expense-card-head h3 {
+  margin: 0;
+  color: #132238;
+  font-size: 20px;
+  letter-spacing: 0;
 }
 
 .expense-hero strong {
@@ -4688,16 +4688,37 @@ textarea {
 
 .expense-overview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 14px;
 }
 
 .expense-overview-card {
-  padding: 14px;
+  display: flex;
+  gap: 12px;
+  min-height: 118px;
+  padding: 16px;
   border: 1px solid #d6e2f1;
   border-radius: 16px;
   background: #ffffff;
   box-shadow: 0 12px 26px rgba(19, 34, 56, 0.06);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.expense-overview-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 32px rgba(19, 34, 56, 0.1);
+}
+
+.expense-card-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #e0f2fe;
+  color: #075985;
+  font-weight: 900;
 }
 
 .expense-overview-card span {
@@ -4710,47 +4731,95 @@ textarea {
   display: block;
   margin-top: 8px;
   color: #132238;
-  font-size: 21px;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.expense-overview-card p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .expense-overview-card.balance {
-  background: #d8f3f0;
+  background: #f8feff;
   border-color: #14b8a6;
 }
 
+.expense-overview-card.balance .expense-card-icon,
+.cash-balance-card.highlight {
+  background: #d8f3f0;
+}
+
 .expense-overview-card.expense {
-  background: #ffe0df;
+  background: #fffafa;
   border-color: #dc6b67;
 }
 
+.expense-overview-card.expense .expense-card-icon {
+  background: #ffe0df;
+  color: #9b2d2a;
+}
+
 .expense-overview-card.collection {
-  background: #dff4e8;
+  background: #fbfffd;
   border-color: #36a374;
 }
 
+.expense-overview-card.collection .expense-card-icon {
+  background: #dff4e8;
+  color: #08704d;
+}
+
 .expense-overview-card.fee {
-  background: #dce8f7;
+  background: #fbfdff;
   border-color: #34577f;
 }
 
+.expense-overview-card.fee .expense-card-icon {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
 .expense-tabs {
-  display: inline-flex;
-  width: fit-content;
-  gap: 4px;
-  padding: 5px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 6px;
+  width: min(100%, 760px);
+  padding: 6px;
   border: 1px solid #d8e3f0;
   border-radius: 14px;
-  background: #eef4fb;
+  background: #f3f7fb;
 }
 
 .expense-tab-button {
-  min-height: 36px;
-  padding: 8px 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 14px;
   border: 1px solid transparent;
   border-radius: 10px;
   color: #41556f;
   font-weight: 900;
   cursor: pointer;
+  background: transparent;
+  transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.expense-tab-button:hover {
+  background: #ffffff;
+}
+
+.tab-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.75);
 }
 
 .expense-tab-button.tab-collections {
@@ -4800,17 +4869,17 @@ textarea {
 
 .expense-form {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 11px;
-  padding: 16px;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 18px;
 }
 
 .collection-form {
-  grid-template-columns: minmax(180px, 1fr) minmax(260px, 1.4fr) minmax(150px, 1fr) 120px 120px 130px;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
 }
 
 .expense-entry-form {
-  grid-template-columns: 1.6in minmax(260px, 1fr) 3in 2in 1.5in 2in;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
 }
 
 .expense-entry-form .expense-card-head,
@@ -4841,6 +4910,7 @@ textarea {
 .expense-form .action-row {
   grid-column: 1 / -1;
   margin-top: 4px;
+  justify-content: flex-end;
 }
 
 .expense-remarks-field,
@@ -4849,9 +4919,57 @@ textarea {
 }
 
 .expense-remarks-field textarea {
-  min-height: 96px;
+  min-height: 68px;
   resize: vertical;
   line-height: 1.45;
+}
+
+.amount-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-drop {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  align-items: center;
+  min-height: 78px;
+  padding: 13px;
+  border: 1px dashed #9db7d6;
+  border-radius: 12px;
+  background: #f8fbff;
+  cursor: pointer;
+}
+
+.upload-drop input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.upload-drop span {
+  display: grid;
+  place-items: center;
+  grid-row: span 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #e0f2fe;
+  color: #075985;
+  font-weight: 900;
+}
+
+.upload-drop strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.upload-drop small {
+  margin: 0;
+  color: #64748b;
 }
 
 .expense-attachment-field small {
@@ -4888,7 +5006,7 @@ textarea {
 
 .expense-item-combo {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) 145px;
+  grid-template-columns: minmax(180px, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
@@ -4905,13 +5023,13 @@ textarea {
 
 .expense-search-row {
   display: grid;
-  grid-template-columns: 145px 145px minmax(170px, 1fr) minmax(170px, 1fr) repeat(4, auto);
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 10px;
   align-items: end;
-  overflow-x: auto;
 }
 
 .balance-filter-row {
-  grid-template-columns: 150px 150px repeat(4, auto);
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
   align-items: end;
 }
 
@@ -4951,7 +5069,7 @@ textarea {
 
 .cash-balance-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(4, minmax(190px, 1fr));
   gap: 12px;
 }
 
@@ -4962,11 +5080,6 @@ textarea {
   border-radius: 16px;
   background: #ffffff;
   box-shadow: 0 10px 22px rgba(19, 34, 56, 0.06);
-}
-
-.cash-balance-card.highlight {
-  background: #d8f3f0;
-  border-color: #14b8a6;
 }
 
 .cash-balance-card span {
@@ -4982,6 +5095,84 @@ textarea {
   text-align: right;
 }
 
+.negative-amount {
+  color: #dc2626 !important;
+}
+
+.cash-status {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 12px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-weight: 900;
+}
+
+.cash-status.ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.cash-status.warn {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.cash-verify-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.soft-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.expense-item-manager {
+  width: min(620px, 100%);
+}
+
+.expense-item-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.expense-item-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.visitor-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.visitor-today-note,
+.form-error {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f0f9ff;
+  color: #075985;
+  font-weight: 800;
+}
+
+.form-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .danger-soft {
   color: #b91c1c;
   background: #fee2e2;
@@ -4989,6 +5180,11 @@ textarea {
 }
 
 @media (max-width: 1050px) {
+  .expense-overview-grid,
+  .cash-balance-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
   .expense-entry-grid {
     grid-template-columns: 1fr;
   }
@@ -5026,15 +5222,13 @@ textarea {
   .expense-tabs {
     display: grid;
     width: 100%;
+    grid-template-columns: repeat(3, minmax(190px, 1fr));
+    overflow-x: auto;
+  }
+
+  .expense-overview-grid,
+  .cash-balance-grid {
     grid-template-columns: 1fr;
-  }
-
-  .expense-search-row {
-    grid-template-columns: repeat(8, minmax(130px, max-content));
-  }
-
-  .balance-filter-row {
-    grid-template-columns: repeat(6, minmax(130px, max-content));
   }
 }
 
