@@ -5924,6 +5924,116 @@ textarea {
 .staff-performance-metrics .metric-card.grad-slate { border-bottom-color: #475569; }
 .staff-performance-metrics .metric-card.grad-blue { border-bottom-color: #2563eb; }
 
+#staff .staff-performance-console,
+#staff .staff-performance-workload {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #bfd3eb;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 96% 0%, rgba(37, 99, 235, 0.10), transparent 30%),
+    radial-gradient(circle at 12% 100%, rgba(20, 184, 166, 0.08), transparent 28%),
+    linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow:
+    0 10px 28px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+#staff .staff-performance-console::before,
+#staff .staff-performance-workload::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: linear-gradient(180deg, #2563eb, #14b8a6);
+  content: "";
+}
+
+#staff .staff-selector {
+  max-width: 340px;
+  margin-bottom: 14px;
+}
+
+#staff .staff-selector select {
+  min-height: 42px;
+  border-radius: 12px;
+  border-color: #bfdbfe;
+  background: #ffffff;
+  box-shadow: 0 5px 14px rgba(37, 99, 235, 0.08);
+}
+
+#staff .staff-performance-actions {
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+#staff .staff-performance-actions .secondary-button {
+  border-color: #bfdbfe;
+  background: linear-gradient(145deg, #eff6ff 0%, #ffffff 100%);
+  color: #1d4ed8;
+  font-weight: 900;
+  box-shadow: 0 7px 18px rgba(37, 99, 235, 0.10);
+}
+
+#staff .staff-performance-actions .secondary-button:nth-child(2) {
+  border-color: #99f6e4;
+  background: linear-gradient(145deg, #ecfeff 0%, #ffffff 100%);
+  color: #0f766e;
+}
+
+#staff .staff-performance-metrics {
+  gap: 16px;
+}
+
+#staff .staff-performance-metrics .metric-card {
+  min-height: 132px;
+  border-radius: 18px;
+  box-shadow:
+    0 8px 20px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+#staff .staff-performance-metrics .metric-card span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 7px 10px;
+  border-radius: 9px;
+}
+
+#staff .staff-performance-metrics .metric-card strong {
+  margin-top: 10px;
+  font-size: 30px;
+  line-height: 1;
+}
+
+#staff .staff-performance-metrics .metric-card p {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+#staff .staff-performance-workload {
+  margin-top: 16px;
+}
+
+#staff .staff-performance-workload h3 {
+  margin: 0 0 12px;
+  color: #172554;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+@media (max-width: 760px) {
+  #staff .staff-performance-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #staff .staff-selector {
+    max-width: none;
+  }
+}
+
 .expense-overview-card,
 .expense-form,
 .expense-tools-card,

@@ -4956,21 +4956,17 @@ function renderFeeReceivedFileTable(files) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Invoice Number</th><th>Bill Amount</th><th>Amount Received</th><th>Fee Received Date</th><th>Received By</th><th>Payment Mode</th><th>Receipt Number</th><th>Actions</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Amount</th><th>Amount Received</th><th>Fee Received Date</th><th>Received By</th></tr></thead>
         <tbody>
           ${rows.map((file, index) => `<tr>
             <td>${index + 1}</td>
             <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}${file.careOf ? ` | C/o: ${escapeHtml(file.careOf)}` : ""}</span></td>
             <td>${escapeHtml(file.serviceType || "")}</td>
             <td>${escapeHtml(fileFy(file) || "-")}</td>
-            <td>${escapeHtml(file.invoiceNumber || file.invoice_number || "-")}</td>
             <td class="amount-cell">${rupee(dashboardFileAmount(file, "billed"))}</td>
             <td class="amount-cell">${rupee(dashboardFileAmount(file, "received"))}</td>
             <td>${fmt(file.feeReceivedDate || file.receivedOn || file.received_on)}</td>
             <td>${escapeHtml(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy || "-")}</td>
-            <td>${escapeHtml(file.paymentMode || file.feeCollectionMode || "-")}</td>
-            <td>${escapeHtml(file.receiptNumber || file.receipt_number || "-")}</td>
-            <td><div class="action-row">${fileRowActions(file)}</div></td>
           </tr>`).join("")}
         </tbody>
       </table>
@@ -6449,12 +6445,12 @@ function renderStaffPage() {
   const s = staffStats(selected);
   document.querySelector("#staff").innerHTML = `
     ${allowed ? "" : `<div class="permission-note">Staff performance is mainly intended for Admin and Manager roles. This preview still shows your accessible records.</div>`}
-    <div class="panel">
+    <div class="panel staff-performance-console">
       <div class="field staff-selector">
         <label>Select Staff Member</label>
         <select id="staffSelect"><option value="">All Staff</option>${state.users.map((u) => `<option ${selected === u.name ? "selected" : ""}>${u.name}</option>`).join("")}</select>
       </div>
-      <div class="action-row" style="margin-bottom:14px">
+      <div class="action-row staff-performance-actions">
         <button class="secondary-button" id="staffExcel" ${rolePerm().export ? "" : "disabled"}>Export Staff Excel</button>
         <button class="secondary-button" id="staffPdf" ${rolePerm().export ? "" : "disabled"}>Export Staff Pdf</button>
       </div>
@@ -6469,7 +6465,7 @@ function renderStaffPage() {
         ${staffMetric("Billed / Unbilled", `${s.billed}/${s.unbilled}`, "Billing status", "grad-darkgreen", "billing")}
       </div>
     </div>
-    <div class="panel" style="margin-top:16px">
+    <div class="panel staff-performance-workload">
       <h3>Selected Staff Workload</h3>
       ${renderFileTable(visibleFiles().filter((f) => !selected || fileBelongsToUser(f, findUserByStaffIdentity(selected))))}
     </div>
@@ -10141,7 +10137,7 @@ function renderCashCollectionsTab() {
           ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01", "compact-field amount-field")}
           ${expenseSelect("cashModeEntry", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
           ${expenseInput("cashVoucherNo", "Ref No.", editingCashCollection()?.voucherNo || "", "text", "", "compact-field ref-field")}
-          ${expenseInput("cashParticularsEntry", "Particulars", editingCashCollection()?.particulars || "", "text", "", "particulars-field")}
+          ${collectionParticularsSelect(editingCashCollection()?.particulars || "Fee Collection")}
           ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
           ${cashAttachmentField(editingCashCollection())}
           <div class="action-row">
@@ -10407,6 +10403,13 @@ function cashReceivedFromOptions(currentValue = "") {
     ...(state.otherCashCollectionSources || []),
     ...(state.files || []).map((file) => file.name),
   ].map(properCaseName).filter((name) => name && (name === "CA Sadique" || !staffNames.has(normalizePersonName(name)))));
+}
+
+function collectionParticularsSelect(value = "Fee Collection") {
+  const options = ["Fee Collection", "Tax Collection", "Tax & Fee Collection", "Other Collections", "Expense Reimbursement"];
+  const selected = value || "Fee Collection";
+  const list = options.includes(selected) ? options : [selected, ...options];
+  return `<div class="field particulars-field"><label>Particulars</label><select id="cashParticularsEntry">${list.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></div>`;
 }
 
 function expenseFilterInput(key, label, type = "text") {
@@ -10833,7 +10836,7 @@ function filteredCashCollections() {
 function renderExpenseTable(rows) {
   if (!rows.length) return empty("No expense entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th class="wide-col expense-item-column">Expense Item</th><th class="wide-col paid-to-column">Paid To</th><th>Mode</th><th class="ref-col voucher-column">Voucher No.</th><th class="amount-col amount-column">Amount</th><th>Entered By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td class="wide-cell expense-item-cell">${escapeHtml(item.particulars)}</td><td class="wide-cell paid-to-cell">${escapeHtml(item.paidTo)}</td><td>${escapeHtml(item.mode)}</td><td class="ref-cell voucher-cell" title="${escapeHtml(item.voucherNo)}">${escapeHtml(item.voucherNo)}</td><td class="amount-cell amount-column">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th class="wide-col expense-item-column">Expense Item</th><th class="wide-col paid-to-column">Paid To</th><th>Mode</th><th class="ref-col voucher-column">Voucher No.</th><th class="amount-col amount-column">Amount</th><th>Entered By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td class="wide-cell expense-item-cell">${escapeHtml(item.particulars)}</td><td class="wide-cell paid-to-cell">${escapeHtml(item.paidTo)}</td><td>${escapeHtml(item.mode)}</td><td class="ref-cell voucher-cell" title="${escapeHtml(item.voucherNo)}">${escapeHtml(item.voucherNo)}</td><td class="amount-cell amount-column">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function expenseAttachmentLink(item) {
@@ -10847,7 +10850,7 @@ function expenseAttachmentLink(item) {
 function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function resetExpenseFilters() {
