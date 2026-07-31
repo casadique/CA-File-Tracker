@@ -3007,6 +3007,14 @@ function actionBadge(count) {
   return `<span class="top-action-badge">${total > 99 ? "99+" : total}</span>`;
 }
 
+function topActionIconContent(icon, label, count = 0) {
+  return `
+    <span class="top-icon-symbol" aria-hidden="true">${navIcon(icon)}</span>
+    <span class="top-icon-label">${escapeHtml(label)}</span>
+    ${actionBadge(count)}
+  `;
+}
+
 function quoteIndexForDate(dateString, length) {
   if (!length) return 0;
   const key = String(dateString || indiaTodayDate()).replace(/\D/g, "");
@@ -3067,8 +3075,7 @@ function renderDailyQuoteBanner() {
 function topActionIconButton(id, type, icon, label, count = 0) {
   return `
     <button class="top-icon-action top-icon-${type}" id="${id}" type="button" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
-      ${navIcon(icon)}
-      ${actionBadge(count)}
+      ${topActionIconContent(icon, label, count)}
     </button>
   `;
 }
@@ -3079,11 +3086,11 @@ function updateTopActionBadges() {
     const label = unreadChatLabel();
     chatButton.title = label;
     chatButton.setAttribute("aria-label", label);
-    chatButton.innerHTML = `${navIcon("chat")}${actionBadge(unreadChatCount())}`;
+    chatButton.innerHTML = topActionIconContent("chat", "Team Chats", unreadChatCount());
   }
   const notifyButton = document.querySelector("#notifyButton");
   if (notifyButton) {
-    notifyButton.innerHTML = `${navIcon("bell")}${actionBadge(notifications().length)}`;
+    notifyButton.innerHTML = topActionIconContent("bell", "Notifications", notifications().length);
   }
 }
 
@@ -3143,7 +3150,7 @@ function mount() {
           </div>
           <div class="daily-quote-slot" id="dailyQuoteSlot">${renderDailyQuoteBanner()}</div>
           <div class="top-actions">
-            ${topActionIconButton("chatButton", "chat", "chat", unreadChatLabel(), unreadChatCount())}
+            ${topActionIconButton("chatButton", "chat", "chat", "Team Chats", unreadChatCount())}
             ${topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length)}
             ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download</button><button class="top-action-button top-action-import" id="importFileButton">Import</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
             ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}

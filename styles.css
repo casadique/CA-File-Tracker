@@ -10506,12 +10506,15 @@ textarea,
 .top-actions .top-icon-action {
   position: relative !important;
   isolation: isolate;
-  width: 50px !important;
-  min-width: 50px !important;
+  width: auto !important;
+  min-width: 116px !important;
   height: 50px !important;
   min-height: 50px !important;
-  display: inline-grid !important;
-  place-items: center !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  padding: 0 13px !important;
   border-radius: 16px !important;
   border: 1px solid rgba(148, 163, 184, 0.28) !important;
   box-shadow:
@@ -10536,10 +10539,31 @@ textarea,
   background: rgba(255, 255, 255, 0.58);
 }
 
+.top-actions .top-icon-symbol {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+}
+
+.top-actions .top-icon-symbol svg,
 .top-actions .top-icon-action svg {
   width: 20px !important;
   height: 20px !important;
   fill: currentColor !important;
+}
+
+.top-actions .top-icon-label {
+  display: inline-block;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
 }
 
 .top-actions .top-icon-action:hover,
@@ -10598,10 +10622,11 @@ textarea,
 
 @media (max-width: 760px) {
   .top-actions .top-icon-action {
-    width: 44px !important;
-    min-width: 44px !important;
+    min-width: 78px !important;
     height: 44px !important;
     min-height: 44px !important;
+    gap: 5px !important;
+    padding: 0 9px !important;
     border-radius: 14px !important;
   }
 
@@ -10610,9 +10635,20 @@ textarea,
     border-radius: 10px;
   }
 
+  .top-actions .top-icon-symbol {
+    width: 20px;
+    height: 20px;
+  }
+
+  .top-actions .top-icon-symbol svg,
   .top-actions .top-icon-action svg {
     width: 18px !important;
     height: 18px !important;
+  }
+
+  .top-actions .top-icon-label {
+    max-width: 48px;
+    font-size: 10px;
   }
 
   .top-actions .top-action-badge {
