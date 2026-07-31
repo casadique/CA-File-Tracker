@@ -4401,7 +4401,18 @@ function renderFilesPage() {
     };
   }
   const exportFiltered = document.querySelector("#exportFiltered");
-  if (exportFiltered) exportFiltered.onclick = () => exportExcel("filtered-files", sortFilesForDisplay(filteredFiles()));
+  if (exportFiltered) {
+    exportFiltered.onclick = async () => {
+      const sourceFiles = sortFilesForDisplay(filteredFiles());
+      if (state.filters.listView || state.filters.dashboardKind) {
+        const rows = fileListReportRows(sourceFiles);
+        if (!rows.length) return toast("No data to export.");
+        await downloadXlsxRows(`${fileListPdfFileName(fileListSectionTitle())}-${todayDate()}`, rows);
+        return toast("Excel file downloaded");
+      }
+      return exportExcel("filtered-files", sourceFiles);
+    };
+  }
   const exportFilteredPdf = document.querySelector("#exportFilteredPdf");
   if (exportFilteredPdf) exportFilteredPdf.onclick = () => exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportFilteredPdf);
   bindFileActions();
@@ -4852,11 +4863,25 @@ function fileRegistrationNumber(file = {}) {
   return String(file.pan || file.registrationNumber || file.registration_number || file.regnNo || file.regNo || file.crNo || file.cr_no || "").trim();
 }
 
-function staffCompletedClientCell(file = {}) {
+function clientMetaText(file = {}) {
   const regn = fileRegistrationNumber(file) || "Regn No. Not Available";
   const fy = fileFy(file);
-  const meta = fy ? `${regn} (FY ${fy})` : regn;
+  return fy ? `${regn} (FY ${fy})` : regn;
+}
+
+function clientDetailsCell(file = {}) {
+  const meta = clientMetaText(file);
   return `<span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(meta)}</span>`;
+}
+
+function clientDetailsReportText(file = {}) {
+  const name = filePdfText(file.name);
+  const meta = clientMetaText(file);
+  return meta ? `${name}\n${meta}` : name;
+}
+
+function staffCompletedClientCell(file = {}) {
+  return clientDetailsCell(file);
 }
 
 function staffReportRow(file, listView = "") {
@@ -4899,6 +4924,18 @@ function staffReportRow(file, listView = "") {
       "Due Date": displayDate(file.dueDate),
     };
   }
+  if (listView === "notChecked") {
+    return {
+      "Client Name": clientDetailsReportText(file),
+      Service: file.serviceType,
+      "C/o": file.careOf || "Direct",
+      "Received on": displayDate(file.fileReceivedDate),
+      "Work Allotted": displayDate(file.workAllotmentDate || file.fileReceivedDate),
+      "Work Started": displayDate(startedDate),
+      "Completed Date": displayDate(workCompletedDate(file)),
+      "Checking Status": checkingStatusOf(file).label || "-",
+    };
+  }
   return {
     "Client Name": file.name,
     Service: file.serviceType,
@@ -4929,7 +4966,7 @@ function renderStaffFileTable(files, listView = "") {
               <td>${fileSerialNumber(file, index)}</td>
               ${headers.map((h) => {
                 if (h === "Checking Status") return `<td>${renderCheckingStatusBadge(file)}</td>`;
-                if (listView === "completed" && h === "Client Name") return `<td>${staffCompletedClientCell(file)}</td>`;
+                if (["completed", "notChecked"].includes(listView) && h === "Client Name") return `<td class="client-details-cell">${clientDetailsCell(file)}</td>`;
                 return `<td>${escapeHtml(row[h] || "")}</td>`;
               }).join("")}
               ${showEditAction ? `<td><div class="action-row"><button class="mini-button" data-edit="${file.id}">Edit</button></div></td>` : ""}
@@ -5109,7 +5146,7 @@ function renderFileTable(files) {
             const receiptInfo = receiptSummary(file);
             const completedCells = `
               <td>${fileSerialNumber(file, index)}</td>
-              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(fileRegistrationNumber(file) || "")}</span></td>
+              <td class="client-details-cell">${clientDetailsCell(file)}</td>
               <td>${escapeHtml(fileFy(file) || "-")}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
               <td class="completed-doc-cell">${fmt(dateValue)}</td>
@@ -5143,7 +5180,7 @@ function renderNotCheckedFileTable(files) {
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
         <thead><tr>
-          <th>SN</th><th>Name</th><th>Type of Service</th><th>File Inward Date</th><th>Work Completion Date ↓</th><th>Done By</th><th>Checking Status</th>${managerCheckingColumns ? "<th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>
+          <th>SN</th><th>Client Name</th><th>Type of Service</th><th>File Inward Date</th><th>Work Completion Date ↓</th><th>Done By</th><th>Checking Status</th>${managerCheckingColumns ? "<th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>
         </tr></thead>
         <tbody>
           ${rows.map((file, index) => {
@@ -5153,7 +5190,7 @@ function renderNotCheckedFileTable(files) {
             const correctionMeta = correctionReason ? `<span class="subtext correction-reason-line">Correction Reason: ${escapeHtml(correctionReason)}</span><span class="subtext">Returned By: ${escapeHtml(correction?.returnedBy || correction?.returned_by_name || file.returnedBy || "-")} | Returned On: ${escapeHtml(fmt(correction?.returnedAt || correction?.returned_at || file.returnedDate) || "-")}</span>` : "";
             return `<tr class="file-row file-row-${checking.className || "approval"}">
               <td>${index + 1}</td>
-              <td><span class="client-name">${escapeHtml(file.name)}</span><span class="subtext">${escapeHtml(file.pan || "")}</span>${correctionMeta}</td>
+              <td class="client-details-cell">${clientDetailsCell(file)}${correctionMeta}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
               <td>${fmt(file.fileReceivedDate)}</td>
               <td>${fmt(workCompletedDate(file))}</td>
@@ -12148,11 +12185,13 @@ function fileSpName(file = {}) {
 
 function fileListReportRows(files) {
   const section = state.filters.listView || state.filters.dashboardKind || "files";
-  const sourceFiles = section === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files || []) : (files || []);
+  const sourceFiles = section === "feeReceived"
+    ? sortFilesByFeeReceivedNewestFirst(files || [])
+    : (section === "notChecked" ? sortFilesByCompletionNewestFirst(files || []) : (files || []));
   return sourceFiles.map((file, index) => {
     const base = {
       SN: index + 1,
-      "Client Name": filePdfText(file.name),
+      "Client Name": section === "notChecked" ? clientDetailsReportText(file) : filePdfText(file.name),
       "CR No.": fileCrNumber(file),
       "Service Type": filePdfText(file.serviceType),
       "C/o": filePdfText(file.careOf, "Direct"),

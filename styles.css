@@ -3485,6 +3485,24 @@ textarea {
   font-size: 10px;
 }
 
+.client-details-cell {
+  min-width: 180px;
+  white-space: normal;
+}
+
+.client-details-cell .client-name,
+.client-details-cell .subtext {
+  display: block;
+}
+
+.client-details-cell .subtext {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .file-table-compact .badge {
   padding: 3px 7px;
   font-size: 10px;
