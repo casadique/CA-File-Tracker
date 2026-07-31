@@ -935,12 +935,40 @@ body,
   overflow-y: auto !important;
   overflow-x: hidden !important;
   overscroll-behavior: contain;
+  scrollbar-gutter: auto;
   background: #f8fafc;
 }
 
 .content > .page {
   min-width: 0;
   max-width: 100%;
+}
+
+@media (min-width: 1025px) {
+  .app-shell {
+    display: block !important;
+  }
+
+  .sidebar,
+  .sidebar.collapsed,
+  .app-shell.sidebar-collapsed .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+  }
+
+  .content {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: var(--sidebar-width);
+  }
+
+  .app-shell.sidebar-collapsed .content {
+    left: var(--sidebar-collapsed-width);
+  }
 }
 
 @media (max-width: 1024px) {
@@ -986,6 +1014,8 @@ body,
   }
 
   .content {
+    position: relative;
+    inset: auto;
     width: 100% !important;
     height: 100dvh;
     max-height: 100dvh;
