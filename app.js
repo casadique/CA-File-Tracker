@@ -2809,7 +2809,7 @@ function renderLogin() {
       <div class="login-shell">
         <section class="login-brand-panel">
           <div class="login-brand-lockup">
-            <div class="brand-mark">CA</div>
+            <div class="brand-mark brand-mark-logo"><img src="assets/ca-india-logo.png" alt="CA India logo" /></div>
             <div>
               <strong>CA File Tracker</strong>
               <span>Muhammad & Associates</span>
@@ -2829,7 +2829,7 @@ function renderLogin() {
         </section>
         <section class="login-card">
           <div class="login-card-head">
-            <div class="brand-mark">CF</div>
+            <div class="brand-mark brand-mark-logo"><img src="assets/ca-india-logo.png" alt="CA India logo" /></div>
             <div>
               <span class="login-eyebrow">Welcome back</span>
               <h1>Sign in</h1>
@@ -2845,9 +2845,9 @@ function renderLogin() {
             <div class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
           </div>
           <button class="primary-button" id="loginButton">Login</button>
-          <p class="login-note">Access is restricted to authorised Admin, Manager and Staff users.</p>
         </section>
       </div>
+      <p class="login-credit">An app by CA Sadique</p>
     </div>
     <div class="toast" id="toast"></div>
   `;
