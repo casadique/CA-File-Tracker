@@ -4923,7 +4923,7 @@ function renderReAssignedFileTable(files) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>Received On</th><th>C/o</th><th>Status</th><th>Originally Allotted To</th><th>Reassigned From</th><th>Re Allotted To</th><th>Re Allot Date</th><th>Reassigned By</th><th>Actions</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>Received On</th><th>C/o</th><th>Status</th><th>First Allotted</th><th>Reassigned From</th><th>Re Allotted To</th><th>Re Allot Date</th><th>Reassigned By</th><th>Actions</th></tr></thead>
         <tbody>
           ${rows.map((file, index) => {
             const history = assignmentHistory(file)[0] || {};
