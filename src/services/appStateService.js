@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
 
 const APP_STATE_ID = "default";
@@ -81,9 +82,55 @@ function normalizeServerState(state) {
     chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
     chatGroups: Array.isArray(state.chatGroups) ? state.chatGroups : [],
     readChatMessages: Array.isArray(state.readChatMessages) ? [...new Set(state.readChatMessages.filter(Boolean))] : [],
+    fileNotifications: normalizeFileNotifications(state.fileNotifications || []),
     staffDetails: sortStaffDetailsNewestFirst(state.staffDetails || []),
     correctionHistory: sortCorrectionsNewestFirst(state.correctionHistory || []),
   };
+}
+
+function normalizeFileNotifications(rows = []) {
+  const map = new Map();
+  (rows || []).forEach((notice) => {
+    if (!notice) return;
+    const normalized = {
+      ...notice,
+      id: notice.id || crypto.randomUUID(),
+      dedupeKey: notice.dedupeKey || notificationDedupeKey(notice),
+    };
+    const key = normalized.dedupeKey || normalized.id;
+    const existing = map.get(key);
+    if (!existing || notificationCompleteness(normalized) >= notificationCompleteness(existing)) {
+      map.set(key, { ...existing, ...normalized });
+    }
+  });
+  return [...map.values()]
+    .sort((a, b) => notificationTime(b) - notificationTime(a))
+    .slice(0, 800);
+}
+
+function notificationDedupeKey(notice = {}) {
+  const recipient = String(notice.targetUserId || notice.targetUserEmail || notice.targetUserName || notice.user_id || notice.userId || "").trim().toLowerCase();
+  const type = String(notice.notification_type || notice.notificationType || notice.changeType || notice.type || "notification").trim().toLowerCase();
+  const record = String(notice.related_record_id || notice.relatedRecordId || notice.fileId || notice.file_id || notice.recordId || "").trim().toLowerCase();
+  const event = String(notice.event_id || notice.eventId || notice.dedupeKey || notice.changeKey || notice.created_at || notice.createdAt || notice.date || "").trim().toLowerCase();
+  return [recipient, type, record, event].filter(Boolean).join("|");
+}
+
+function notificationCompleteness(notice = {}) {
+  return [
+    notice.id,
+    notice.dedupeKey,
+    notice.fileId || notice.related_record_id,
+    notice.fileName,
+    notice.changeType || notice.notification_type,
+    notice.changeText,
+    notice.targetUserId || notice.targetUserEmail || notice.targetUserName || notice.user_id,
+    notice.createdAt || notice.created_at,
+  ].filter(Boolean).length;
+}
+
+function notificationTime(notice = {}) {
+  return dateOrNumber(notice.createdAt || notice.created_at || notice.date);
 }
 
 function sortStaffDetailsNewestFirst(rows) {
@@ -213,4 +260,5 @@ module.exports = {
   patchAppState,
   backupPayload,
   sortFilesNewestFirst,
+  normalizeFileNotifications,
 };

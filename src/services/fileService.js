@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { patchAppState, sortFilesNewestFirst } = require("./appStateService");
+const { patchAppState, sortFilesNewestFirst, normalizeFileNotifications } = require("./appStateService");
 
 async function listFiles(state, options = {}) {
   return sortFilesForRequest(state.files || [], options);
@@ -362,25 +362,29 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       task_activity_at: now.toISOString(),
     };
     state.correctionHistory = [...(state.correctionHistory || []), correction];
-    state.fileNotifications = [
-      ...(state.fileNotifications || []),
-      {
-        id: crypto.randomUUID(),
-        fileId,
-        fileName: file.name,
-        changeType: "Returned for Correction",
-        changeText: `Correction Reason: ${correction.correctionReason}`,
-        changedBy: correction.returnedBy,
-        changedByRole: profile?.role || "",
-        targetUserId: correction.returnedToId,
-        targetUserEmail: correction.returnedToEmail,
-        targetUserName: correction.returnedTo,
-        date: correction.returnedDate,
-        time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-        createdAt: now.getTime(),
-        tone: "overdue",
-      },
-    ].slice(-500);
+    const correctionEventId = `${fileId}|returned-for-correction|${correction.id || correction.returned_at || correction.returnedAt || correction.returnedDate || now.toISOString()}`;
+    appendUniqueFileNotifications(state, [{
+      id: crypto.randomUUID(),
+      dedupeKey: `${correction.returnedToId || correction.returnedToEmail || correction.returnedTo}|Returned for Correction|${fileId}|${correctionEventId}`,
+      fileId,
+      related_record_id: fileId,
+      event_id: correctionEventId,
+      notification_type: "Returned for Correction",
+      user_id: correction.returnedToId || correction.returnedToEmail || correction.returnedTo || "",
+      fileName: file.name,
+      changeType: "Returned for Correction",
+      changeText: `Correction Reason: ${correction.correctionReason}`,
+      changedBy: correction.returnedBy,
+      changedByRole: profile?.role || "",
+      targetUserId: correction.returnedToId,
+      targetUserEmail: correction.returnedToEmail,
+      targetUserName: correction.returnedTo,
+      date: correction.returnedDate,
+      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      createdAt: now.getTime(),
+      created_at: now.toISOString(),
+      tone: "overdue",
+    }], 500);
     state.auditLog = [
       ...(state.auditLog || []),
       {
@@ -437,13 +441,19 @@ function appendFileUpdateNotifications(state, before, after, profile = {}, now =
   const time = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
   const notices = [];
   for (const recipient of recipients) {
-    const dedupeKey = `${after.id}|${change.type}|${change.key}|${recipient.id || recipient.email || recipient.name}`;
+    const changeEventId = `${change.key}|${after.updatedAt || after.updated_at || after.taskActivityAt || after.task_activity_at || after.lastUpdatedDate || now.toISOString()}`;
+    const recipientId = recipient.id || recipient.email || recipient.name || "";
+    const dedupeKey = `${recipientId}|${change.type}|${after.id}|${changeEventId}`;
     if (existingKeys.has(dedupeKey)) continue;
     existingKeys.add(dedupeKey);
     notices.push({
       id: crypto.randomUUID(),
       dedupeKey,
       fileId: after.id,
+      related_record_id: after.id,
+      event_id: changeEventId,
+      notification_type: change.type,
+      user_id: recipientId,
       fileName: after.name || "File",
       changeType: change.type,
       changeText: change.text,
@@ -460,7 +470,11 @@ function appendFileUpdateNotifications(state, before, after, profile = {}, now =
       tone: change.tone,
     });
   }
-  if (notices.length) state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-800);
+  if (notices.length) appendUniqueFileNotifications(state, notices);
+}
+
+function appendUniqueFileNotifications(state, notices = [], limit = 800) {
+  state.fileNotifications = normalizeFileNotifications([...(state.fileNotifications || []), ...(notices || [])]).slice(0, limit);
 }
 
 function describeFileChange(before, after) {
@@ -625,6 +639,10 @@ async function deleteFile(fileId, userId, profile = {}) {
           id: crypto.randomUUID(),
           dedupeKey,
           fileId,
+          related_record_id: fileId,
+          event_id: "file-deleted",
+          notification_type: "File Deleted",
+          user_id: user.id || user.email || user.name || "",
           fileName: before.name || "File",
           changeType: "File Deleted",
           changeText: `${before.name || "File"} was deleted.`,
@@ -641,7 +659,7 @@ async function deleteFile(fileId, userId, profile = {}) {
           tone: "overdue",
         };
       }).filter(Boolean);
-      state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-800);
+      appendUniqueFileNotifications(state, notices);
     }
     return state;
   }, userId);

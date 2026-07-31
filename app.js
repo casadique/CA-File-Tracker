@@ -656,10 +656,13 @@ function normalizeState(appState) {
   appState.bulkFeeReceivedReports = appState.bulkFeeReceivedReports || null;
   appState.fileNotifications = (appState.fileNotifications || []).map((item) => ({
     ...item,
+    id: item.id || crypto.randomUUID(),
+    dedupeKey: item.dedupeKey || notificationDedupeKey(item),
     targetUserId: item.targetUserId || "",
     targetUserEmail: item.targetUserEmail || "",
     targetUserName: item.targetUserName || "",
   }));
+  appState.fileNotifications = dedupeFileNotifications(appState.fileNotifications);
   appState.chatGroups = (appState.chatGroups || []).map((group) => ({
     ...group,
     id: group.id || `group-${crypto.randomUUID()}`,
@@ -1007,7 +1010,7 @@ async function syncFileRecordToApi(file) {
   } else if (result?.files) {
     state.files = result.files;
   }
-  if (result?.fileNotifications) state.fileNotifications = result.fileNotifications;
+  if (result?.fileNotifications) state.fileNotifications = mergeFileNotifications(state.fileNotifications || [], result.fileNotifications).slice(0, 500);
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -1268,7 +1271,7 @@ function mergeLatestSharedStateBeforeSave() {
     );
     state.chatMessages = mergeById(latest.chatMessages || [], state.chatMessages || []).slice(-300);
     state.staffDetails = mergeStaffDetailsByLatestChange(latest.staffDetails || [], state.staffDetails || []);
-    state.fileNotifications = mergeById(latest.fileNotifications || [], state.fileNotifications || []).slice(-500);
+    state.fileNotifications = mergeFileNotifications(latest.fileNotifications || [], state.fileNotifications || []).slice(0, 500);
     state.auditLog = mergeById(latest.auditLog || [], state.auditLog || []).slice(-1000);
     state.revokedAccess = mergeRevokedAccess(latest.revokedAccess || [], state.revokedAccess || []);
     state.users = mergeUsers(latest.users || [], state.users || [], state.revokedAccess);
@@ -1287,6 +1290,58 @@ function mergeById(existingRows, currentRows) {
   existingRows.forEach((row) => map.set(row.id || crypto.randomUUID(), row));
   currentRows.forEach((row) => map.set(row.id || crypto.randomUUID(), row));
   return [...map.values()];
+}
+
+function notificationDedupeKey(notice = {}) {
+  const recipient = String(notice.targetUserId || notice.targetUserEmail || notice.targetUserName || notice.user_id || notice.userId || "").trim().toLowerCase();
+  const type = String(notice.notification_type || notice.notificationType || notice.changeType || notice.type || "notification").trim().toLowerCase();
+  const record = String(notice.related_record_id || notice.relatedRecordId || notice.fileId || notice.file_id || notice.recordId || "").trim().toLowerCase();
+  const event = String(notice.event_id || notice.eventId || notice.dedupeKey || notice.changeKey || notice.created_at || notice.createdAt || notice.date || "").trim().toLowerCase();
+  return [recipient, type, record, event].filter(Boolean).join("|");
+}
+
+function dedupeFileNotifications(rows = []) {
+  const map = new Map();
+  (rows || []).forEach((notice) => {
+    if (!notice) return;
+    const normalized = {
+      ...notice,
+      id: notice.id || crypto.randomUUID(),
+      dedupeKey: notice.dedupeKey || notificationDedupeKey(notice),
+    };
+    const key = normalized.dedupeKey || normalized.id;
+    const existing = map.get(key);
+    if (!existing || notificationCompleteness(normalized) >= notificationCompleteness(existing)) {
+      map.set(key, { ...existing, ...normalized });
+    }
+  });
+  return [...map.values()].sort((a, b) =>
+    (Number(b.createdAt || 0) || Date.parse(b.created_at || b.date || "") || 0)
+    - (Number(a.createdAt || 0) || Date.parse(a.created_at || a.date || "") || 0)
+  );
+}
+
+function mergeFileNotifications(existingRows = [], incomingRows = []) {
+  return dedupeFileNotifications([...(existingRows || []), ...(incomingRows || [])]);
+}
+
+function appendUniqueFileNotifications(notices = []) {
+  const before = state.fileNotifications || [];
+  state.fileNotifications = mergeFileNotifications(before, notices).slice(0, 500);
+  return state.fileNotifications.length !== before.length;
+}
+
+function notificationCompleteness(notice = {}) {
+  return [
+    notice.id,
+    notice.dedupeKey,
+    notice.fileId,
+    notice.fileName,
+    notice.changeType,
+    notice.changeText,
+    notice.targetUserId || notice.targetUserEmail || notice.targetUserName,
+    notice.createdAt || notice.created_at,
+  ].filter(Boolean).length;
 }
 
 function mergeInvitesByEmail(rows = []) {
@@ -2750,14 +2805,18 @@ function allNotificationItems() {
   const items = [];
   const user = loggedInUser();
   visibleFileNotifications(user).forEach((notice) => {
+    const file = files.find((row) => row.id === notice.fileId) || {};
     items.push({
       id: `file-change-${notice.id}`,
+      sourceKey: notice.dedupeKey || notificationDedupeKey(notice),
       type: notice.changeType || "File Update",
       category: notificationCategory(notice.changeType || "File Update"),
       tone: notice.tone || "progress",
       title: notice.fileName || "File Update",
       text: `${notice.changeText || "File updated"} by ${notice.changedBy || "Team"}.`,
       fileId: notice.fileId || "",
+      clientName: file.name || notice.fileName || "",
+      fy: file.fy || file.financialYear || file.financial_year || "",
       actor: notice.changedBy || "Team",
       date: notice.date || "",
       time: notice.time || "",
@@ -2807,9 +2866,28 @@ function allNotificationItems() {
     if (reportNotFiled(file)) items.push({ id: `${file.id}-workdone`, type: "Work done pending", category: "files", tone: "report", title: file.name, text: "Work is done, completion is still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
     if (completedNotBilled(file)) items.push({ id: `${file.id}-billing`, type: "Billing pending", category: "billing", tone: "filed", title: file.name, text: "Filing completed, billing still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
   });
-  return mergeById([], items)
+  return dedupeNotificationItems(items)
     .map((item) => ({ ...item, isRead: (state.readNotifications || []).includes(item.id) }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+function dedupeNotificationItems(items = []) {
+  const map = new Map();
+  items.forEach((item) => {
+    if (!item) return;
+    const key = [
+      item.sourceKey || "",
+      item.category || "",
+      item.type || "",
+      item.fileId || "",
+      item.clientName || item.title || "",
+      item.fy || "",
+      item.date || "",
+    ].filter(Boolean).join("|").toLowerCase() || item.id || crypto.randomUUID();
+    const existing = map.get(key);
+    if (!existing || (item.createdAt || 0) >= (existing.createdAt || 0)) map.set(key, item);
+  });
+  return [...map.values()];
 }
 
 function notifications() {
@@ -2827,7 +2905,7 @@ function notificationCategory(type = "") {
 
 function visibleFileNotifications(user = loggedInUser()) {
   if (!user) return [];
-  return (state.fileNotifications || [])
+  return dedupeFileNotifications(state.fileNotifications || [])
     .filter((notice) => ["Admin", "Manager", "Staff Manager"].includes(state.currentRole)
       || sameUserIdentity(user, notice.targetUserId, notice.targetUserEmail, notice.targetUserName)
       || sameStaffName(notice.targetUserName, state.currentUser))
@@ -5770,7 +5848,7 @@ async function returnFileForCorrection(fileId) {
       });
       if (result.files) state.files = result.files;
       if (result.correctionHistory) state.correctionHistory = result.correctionHistory;
-      if (result.fileNotifications) state.fileNotifications = result.fileNotifications;
+      if (result.fileNotifications) state.fileNotifications = mergeFileNotifications(state.fileNotifications || [], result.fileNotifications).slice(0, 500);
       saveState({ skipMerge: true, skipRemote: true });
       toast("File returned for correction and synced");
       renderAll();
@@ -6070,25 +6148,27 @@ function queueFileChangeNotification(file, changeText, changeType = "File Update
     || findUserByStaffIdentity(file.assignedStaffId);
   if (!targetUser || targetUser.name === "Not Assigned") return;
   const now = new Date();
-  state.fileNotifications = [
-    ...(state.fileNotifications || []),
-    {
-      id: crypto.randomUUID(),
-      fileId: file.id,
-      fileName: file.name,
-      changeType,
-      changeText,
-      changedBy: state.currentUser,
-      changedByRole: state.currentRole,
-      targetUserId: targetUser.id || file.assignedStaffId || "",
-      targetUserEmail: targetUser.email || file.assignedStaffEmail || "",
-      targetUserName: targetUser.name || file.assignedStaff || "",
-      date: todayDate(),
-      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-      createdAt: now.getTime(),
-      tone: changeType === "File Allotted" ? "approval" : "progress",
-    },
-  ].slice(-500);
+  const eventId = `${file.id}|${changeType}|${changeText}|${file.updatedAt || file.updated_at || file.lastUpdatedDate || todayDate()}|${targetUser.id || targetUser.email || targetUser.name}`;
+  appendUniqueFileNotifications([{
+    id: crypto.randomUUID(),
+    dedupeKey: `${targetUser.id || targetUser.email || targetUser.name}|${changeType}|${file.id}|${eventId}`,
+    event_id: eventId,
+    related_record_id: file.id,
+    notification_type: changeType,
+    fileId: file.id,
+    fileName: file.name,
+    changeType,
+    changeText,
+    changedBy: state.currentUser,
+    changedByRole: state.currentRole,
+    targetUserId: targetUser.id || file.assignedStaffId || "",
+    targetUserEmail: targetUser.email || file.assignedStaffEmail || "",
+    targetUserName: targetUser.name || file.assignedStaff || "",
+    date: todayDate(),
+    time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+    createdAt: now.getTime(),
+    tone: changeType === "File Allotted" ? "approval" : "progress",
+  }]);
 }
 
 function queueReassignmentNotifications(file, reassignedFrom = "") {
@@ -6134,7 +6214,7 @@ function queueReassignmentNotifications(file, reassignedFrom = "") {
       tone,
     };
   }).filter(Boolean);
-  if (notices.length) state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-500);
+  if (notices.length) appendUniqueFileNotifications(notices);
 }
 
 function checkedNotificationRecipients(file = {}) {
@@ -6199,7 +6279,7 @@ function queueFileCheckedNotification(file, beforeFile = {}) {
       tone: "filed",
     };
   }).filter(Boolean);
-  if (notices.length) state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-500);
+  if (notices.length) appendUniqueFileNotifications(notices);
 }
 
 function queueCheckingRequiredNotifications(file) {
@@ -6225,7 +6305,7 @@ function queueCheckingRequiredNotifications(file) {
     createdAt: now.getTime(),
     tone: "approval",
   }));
-  state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-500);
+  appendUniqueFileNotifications(notices);
 }
 
 function describeFileChanges(before, after) {
@@ -12859,24 +12939,6 @@ function openNotifications() {
       refreshNotificationsPanel();
     };
   });
-  document.querySelectorAll("[data-open-notification-file]").forEach((btn) => {
-    btn.onclick = () => {
-      const id = btn.dataset.openNotificationFile;
-      const itemId = btn.dataset.notificationId;
-      if (itemId) state.readNotifications = [...new Set([...(state.readNotifications || []), itemId])];
-      const file = state.files.find((row) => row.id === id);
-      if (!file) {
-        saveState();
-        mount();
-        openNotifications();
-        return toast("Referenced file is unavailable.");
-      }
-      activePage = "files";
-      saveState();
-      mount();
-      openFileDrawer(id);
-    };
-  });
 }
 
 function markNotificationItemsRead(items = []) {
@@ -12944,12 +13006,13 @@ function notificationCard(item) {
         <p>${escapeHtml(item.text || "")}</p>
         <div class="notification-meta">
           <span>${escapeHtml(item.type || "Update")}</span>
+          ${item.clientName ? `<span>${escapeHtml(item.clientName)}</span>` : ""}
+          ${item.fy ? `<span>FY ${escapeHtml(item.fy)}</span>` : ""}
           ${item.actor ? `<span>${escapeHtml(item.actor)}</span>` : ""}
           ${timeText ? `<time>${escapeHtml(timeText)}</time>` : ""}
         </div>
       </div>
       <div class="notification-actions">
-        ${item.fileId ? `<button class="mini-button" data-open-notification-file="${escapeHtml(item.fileId)}" data-notification-id="${escapeHtml(item.id)}">View File</button>` : ""}
         <button class="mini-button notification-read-button" data-mark-read="${escapeHtml(item.id)}" ${item.isRead ? "disabled" : ""}>Read</button>
       </div>
     </article>
