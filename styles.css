@@ -10257,3 +10257,62 @@ textarea,
     min-width: 680px;
   }
 }
+
+/* Final staff dashboard enforcement: exactly 8 compact cards, 4 per row on desktop. */
+.staff-modern-dashboard .staff-dashboard-kpi-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-card {
+  min-width: 0 !important;
+  min-height: 100px !important;
+  padding: 11px 12px !important;
+  border-radius: 12px !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-icon {
+  width: 32px !important;
+  height: 32px !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-icon svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-title {
+  min-width: 0;
+  font-size: 11px !important;
+  line-height: 1.2 !important;
+  white-space: normal !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-card > strong {
+  margin-top: 7px !important;
+  font-size: 22px !important;
+  line-height: 1 !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta {
+  margin-top: 5px !important;
+  gap: 6px !important;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta small {
+  font-size: 10px !important;
+  line-height: 1.15 !important;
+}
+
+@media (max-width: 1024px) {
+  .staff-modern-dashboard .staff-dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .staff-modern-dashboard .staff-dashboard-kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
