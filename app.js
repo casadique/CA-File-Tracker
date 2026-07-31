@@ -317,6 +317,15 @@ let chatSendInFlight = false;
 let chatFastSyncInFlight = false;
 let lastChatFastSyncAt = 0;
 let chatSearchTimer = null;
+const fileSaveRequests = new Set();
+const PERF_LOG_ENABLED = (() => {
+  try {
+    return new URLSearchParams(window.location.search).has("perf")
+      || localStorage.getItem(`${STORAGE_KEY}-perf`) === "1";
+  } catch {
+    return false;
+  }
+})();
 const chatUiState = {
   targetType: "group",
   recipientId: "team",
@@ -921,7 +930,17 @@ async function apiJson(path, options = {}) {
   return backendApiJson(path, options);
 }
 
+function perfStart() {
+  return PERF_LOG_ENABLED && window.performance ? performance.now() : 0;
+}
+
+function perfLog(label, startedAt, details = {}) {
+  if (!PERF_LOG_ENABLED || !startedAt || !window.performance) return;
+  console.info(`[perf] ${label}: ${Math.round(performance.now() - startedAt)}ms`, details);
+}
+
 async function backendApiJson(path, options = {}) {
+  const startedAt = perfStart();
   const { skipAuthRefresh = false, ...requestOptions } = options;
   const headers = {
     "Content-Type": "application/json",
@@ -939,6 +958,7 @@ async function backendApiJson(path, options = {}) {
     if (refreshed) return backendApiJson(path, { ...options, skipAuthRefresh: true });
   }
   if (!response.ok) throw new Error(payload.error || "Server request failed.");
+  perfLog("api", startedAt, { path, method: requestOptions.method || "GET" });
   return payload;
 }
 
@@ -1001,6 +1021,7 @@ async function deleteFileFromApi(fileId) {
 }
 
 async function syncFileRecordToApi(file) {
+  const startedAt = perfStart();
   const result = await saveFileToApi(file);
   if (result?.file) {
     const existingIndex = (state.files || []).findIndex((item) => item.id === result.file.id);
@@ -1012,6 +1033,7 @@ async function syncFileRecordToApi(file) {
   }
   if (result?.fileNotifications) state.fileNotifications = mergeFileNotifications(state.fileNotifications || [], result.fileNotifications).slice(0, 500);
   saveState({ skipMerge: true, skipRemote: true });
+  perfLog("file sync", startedAt, { fileId: file?.id, notifications: result?.fileNotifications?.length || 0 });
   return result;
 }
 
@@ -7122,6 +7144,13 @@ async function saveFileFromDrawer() {
       attachments: existingFile.attachments || [],
     });
   }
+  const saveKey = record.id || editingId || "new-file";
+  if (fileSaveRequests.has(saveKey)) {
+    restoreSaveFileButton(saveButton);
+    return toast("This file is already being saved. Please wait.");
+  }
+  fileSaveRequests.add(saveKey);
+  const saveStartedAt = perfStart();
   if (editingId) {
     state.files = state.files.map((file) => (file.id === editingId ? record : file));
   } else {
@@ -7206,23 +7235,33 @@ async function saveFileFromDrawer() {
       newCheckingRemarks: record.checkingRemarks || "",
     });
   }
-  saveState();
+  saveState({ skipMerge: true, skipRemote: true });
   try {
     await syncFileRecordToApi(record);
   } catch (error) {
     console.error("Central file update failed", error);
+    fileSaveRequests.delete(saveKey);
     restoreSaveFileButton(saveButton);
     return toast(`Central update failed: ${error.message || "Please retry."}`);
   }
   closeOverlays();
   toast("File record saved and synced");
-  renderAll();
+  fileSaveRequests.delete(saveKey);
+  renderAfterFileMutation();
+  perfLog("file save total", saveStartedAt, { fileId: record.id, mode: editingId ? "edit" : "add" });
 }
 
 function restoreSaveFileButton(button) {
   if (!button) return;
   button.disabled = false;
   button.textContent = button.dataset.originalText || "Save Record";
+}
+
+function renderAfterFileMutation() {
+  renderNav();
+  updateTopActionBadges();
+  renderActivePage();
+  enforceDateYearCap();
 }
 
 function renderStaffPage() {

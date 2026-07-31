@@ -2,15 +2,19 @@ const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
 
 const APP_STATE_ID = "default";
+const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
 
 async function getAppState() {
+  const startedAt = perfStart();
   const { data, error } = await supabaseAdmin
     .from("app_state")
     .select("state, updated_at")
     .eq("id", APP_STATE_ID)
     .maybeSingle();
   if (error) throw error;
-  return normalizeServerState(data?.state || emptyState());
+  const state = normalizeServerState(data?.state || emptyState());
+  perfLog("getAppState", startedAt, { files: state.files?.length || 0 });
+  return state;
 }
 
 async function getAppStateRecord() {
@@ -28,6 +32,7 @@ async function getAppStateRecord() {
 }
 
 async function saveAppState(state, updatedBy = null) {
+  const startedAt = perfStart();
   const normalized = normalizeServerState(state || emptyState());
   const { data, error } = await supabaseAdmin
     .from("app_state")
@@ -40,13 +45,26 @@ async function saveAppState(state, updatedBy = null) {
     .select("state")
     .single();
   if (error) throw error;
+  perfLog("saveAppState", startedAt, { files: normalized.files?.length || 0 });
   return data.state;
 }
 
 async function patchAppState(mutator, updatedBy = null) {
+  const startedAt = perfStart();
   const state = await getAppState();
   const next = await mutator(structuredClone(state));
-  return saveAppState(next || state, updatedBy);
+  const saved = await saveAppState(next || state, updatedBy);
+  perfLog("patchAppState", startedAt);
+  return saved;
+}
+
+function perfStart() {
+  return PERF_LOG_ENABLED ? Date.now() : 0;
+}
+
+function perfLog(label, startedAt, details = {}) {
+  if (!PERF_LOG_ENABLED || !startedAt) return;
+  console.info(`[perf] ${label}: ${Date.now() - startedAt}ms`, details);
 }
 
 function emptyState() {
