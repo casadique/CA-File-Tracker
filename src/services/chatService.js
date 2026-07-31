@@ -2,7 +2,8 @@ const crypto = require("crypto");
 const { patchAppState } = require("./appStateService");
 
 async function sendChatMessage(payload, authUserId, profile) {
-  return patchAppState((state) => {
+  let savedMessage = null;
+  const state = await patchAppState((state) => {
     const now = new Date();
     const sender = resolveUser(state, { id: profile?.id, authUserId, email: profile?.email, name: profile?.name }) || {};
     const targetType = payload.targetType === "personal" ? "personal" : "group";
@@ -29,7 +30,10 @@ async function sendChatMessage(payload, authUserId, profile) {
     const clientMessageId = String(payload.clientMessageId || payload.client_message_id || "").trim();
     if (clientMessageId) {
       const existing = (state.chatMessages || []).find((row) => row.client_message_id === clientMessageId || row.clientMessageId === clientMessageId);
-      if (existing) return state;
+      if (existing) {
+        savedMessage = existing;
+        return state;
+      }
     }
     const message = {
       id: crypto.randomUUID(),
@@ -66,8 +70,10 @@ async function sendChatMessage(payload, authUserId, profile) {
     state.chatMessages = [...(state.chatMessages || []), message]
       .sort((a, b) => chatTime(a) - chatTime(b))
       .slice(-1000);
+    savedMessage = message;
     return state;
   }, authUserId);
+  return { state, message: savedMessage };
 }
 
 async function markChatMessagesRead(payload, authUserId, profile) {

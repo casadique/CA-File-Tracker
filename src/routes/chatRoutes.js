@@ -8,7 +8,12 @@ const router = express.Router();
 router.get("/", requireAuth, async (req, res, next) => {
   try {
     const state = await getAppState();
-    res.json({ ok: true, chatMessages: visibleChatMessages(state, req.profile, req.user.id) });
+    res.json({
+      ok: true,
+      chatMessages: visibleChatMessages(state, req.profile, req.user.id),
+      chatGroups: state.chatGroups || [],
+      readChatMessages: state.readChatMessages || [],
+    });
   } catch (error) {
     next(error);
   }
@@ -16,8 +21,15 @@ router.get("/", requireAuth, async (req, res, next) => {
 
 router.post("/", requireAuth, async (req, res, next) => {
   try {
-    const state = await sendChatMessage(req.body || {}, req.user.id, req.profile);
-    res.json({ ok: true, chatMessages: visibleChatMessages(state, req.profile, req.user.id) });
+    const result = await sendChatMessage(req.body || {}, req.user.id, req.profile);
+    const message = result.message || null;
+    res.json({
+      ok: true,
+      message,
+      chatMessages: message ? [message] : visibleChatMessages(result.state, req.profile, req.user.id),
+      chatGroups: result.state.chatGroups || [],
+      readChatMessages: result.state.readChatMessages || [],
+    });
   } catch (error) {
     next(error);
   }

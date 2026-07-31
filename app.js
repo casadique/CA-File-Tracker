@@ -314,6 +314,8 @@ let lastCentralVersionCheckAt = 0;
 let lastDashboardScrollAt = 0;
 let dashboardRefreshRenderTimer = null;
 let chatSendInFlight = false;
+let chatFastSyncInFlight = false;
+let lastChatFastSyncAt = 0;
 let chatSearchTimer = null;
 const chatUiState = {
   targetType: "group",
@@ -371,10 +373,10 @@ setInterval(() => {
 }, 3000);
 
 setInterval(() => {
-  if (state.session?.loggedIn && isSupabaseMode() && document.querySelector("#teamChatPanel")?.classList.contains("open")) {
-    refreshCentralState({ force: true, preserveDraft: true });
+  if (state.session?.loggedIn && isSupabaseMode()) {
+    syncChatMessagesFast({ force: document.querySelector("#teamChatPanel")?.classList.contains("open") });
   }
-}, 1500);
+}, 1800);
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -1123,6 +1125,58 @@ async function refreshCentralState(options = {}) {
   } catch (error) {
     console.warn("Central refresh failed", error);
     return false;
+  }
+}
+
+function chatPanelIsOpen() {
+  return Boolean(document.querySelector("#teamChatPanel")?.classList.contains("open"));
+}
+
+function chatSyncSignature() {
+  return JSON.stringify({
+    messages: visibleChatMessages().map((message) => [
+      message.id,
+      message.client_message_id || message.clientMessageId || "",
+      message.status || "",
+      message.created_at || message.createdAt || "",
+      message.text || message.message || "",
+      (message.attachments || []).length,
+    ]),
+    groups: (state.chatGroups || []).map((group) => [group.id, group.name, (group.memberIds || []).join("|")]),
+    readCount: (state.readChatMessages || []).length,
+  });
+}
+
+async function syncChatMessagesFast(options = {}) {
+  if (!state.session?.loggedIn || !isSupabaseMode()) return false;
+  if (!options.force && document.hidden) return false;
+  if (chatFastSyncInFlight) return false;
+  if (!options.force && Date.now() - lastChatFastSyncAt < 1600) return false;
+  lastChatFastSyncAt = Date.now();
+  chatFastSyncInFlight = true;
+  try {
+    const before = chatSyncSignature();
+    const payload = await apiJson("/api/chat");
+    if (Array.isArray(payload.chatMessages)) {
+      state.chatMessages = mergeChatMessages(state.chatMessages || [], payload.chatMessages);
+    }
+    if (Array.isArray(payload.chatGroups)) {
+      state.chatGroups = mergeById(state.chatGroups || [], payload.chatGroups || []);
+    }
+    if (Array.isArray(payload.readChatMessages)) {
+      state.readChatMessages = mergeReadReceipts(state.readChatMessages, payload.readChatMessages);
+    }
+    const changed = before !== chatSyncSignature();
+    if (!changed) return false;
+    saveState({ skipMerge: true, skipRemote: true });
+    updateTopActionBadges();
+    if (chatPanelIsOpen()) refreshOpenChatFromState();
+    return true;
+  } catch (error) {
+    console.warn("Chat fast sync failed", error);
+    return false;
+  } finally {
+    chatFastSyncInFlight = false;
   }
 }
 
@@ -13656,7 +13710,10 @@ async function sendChatMessage() {
           attachments,
         }),
       });
-      state.chatMessages = mergeChatMessages(state.chatMessages || [], result.chatMessages || []);
+      const sentMessages = result.message ? [result.message] : (result.chatMessages || []);
+      state.chatMessages = mergeChatMessages(state.chatMessages || [], sentMessages);
+      if (Array.isArray(result.chatGroups)) state.chatGroups = mergeById(state.chatGroups || [], result.chatGroups);
+      if (Array.isArray(result.readChatMessages)) state.readChatMessages = mergeReadReceipts(state.readChatMessages, result.readChatMessages);
       const sent = state.chatMessages.find((message) => message.client_message_id === clientMessageId || message.clientMessageId === clientMessageId)
         || state.chatMessages[state.chatMessages.length - 1];
       if (sent?.id) markChatMessageRead(sent.id, sender);
@@ -13664,6 +13721,7 @@ async function sendChatMessage() {
       toast("Message sent");
       renderChatConversationListOnly();
       refreshActiveChatMessages(true);
+      syncChatMessagesFast({ force: true });
       input?.focus();
       return;
     } catch (error) {
