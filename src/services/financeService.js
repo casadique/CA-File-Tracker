@@ -36,7 +36,12 @@ async function saveCollection(payload, userId, profile) {
   return patchAppState((state) => {
     const now = new Date();
     const incoming = normalizeCollection(payload, now, profile);
-    const existing = (state.otherCashCollections || []).find((item) => item.id === incoming.id);
+    const existing = (state.otherCashCollections || []).find((item) => {
+      if (incoming.id && item.id === incoming.id) return true;
+      if (incoming.feeReceiptId && (item.feeReceiptId === incoming.feeReceiptId || item.fee_receipt_id === incoming.feeReceiptId)) return true;
+      if (incoming.sourceId && (item.sourceId === incoming.sourceId || item.source_id === incoming.sourceId) && (item.sourceType === "fee_receipt" || item.source_type === "fee_receipt")) return true;
+      return false;
+    });
     const record = {
       ...(existing || {}),
       ...incoming,
@@ -161,6 +166,21 @@ function normalizeCollection(payload = {}, now, profile = {}) {
     receivedFrom: String(payload.receivedFrom || payload.received_from || "").trim(),
     received_from: String(payload.receivedFrom || payload.received_from || "").trim(),
     remarks: String(payload.remarks || "").trim(),
+    fileId: payload.fileId || payload.file_id || "",
+    file_id: payload.fileId || payload.file_id || "",
+    feeReceiptId: payload.feeReceiptId || payload.fee_receipt_id || "",
+    fee_receipt_id: payload.feeReceiptId || payload.fee_receipt_id || "",
+    sourceType: payload.sourceType || payload.source_type || "",
+    source_type: payload.sourceType || payload.source_type || "",
+    sourceId: payload.sourceId || payload.source_id || payload.feeReceiptId || payload.fee_receipt_id || "",
+    source_id: payload.sourceId || payload.source_id || payload.feeReceiptId || payload.fee_receipt_id || "",
+    billNo: String(payload.billNo || payload.bill_no || payload.reference_number || "").trim(),
+    bill_no: String(payload.billNo || payload.bill_no || payload.reference_number || "").trim(),
+    billDate: normalizeDate(payload.billDate || payload.bill_date) || "",
+    bill_date: normalizeDate(payload.billDate || payload.bill_date) || "",
+    serviceType: String(payload.serviceType || payload.service_type || "").trim(),
+    service_type: String(payload.serviceType || payload.service_type || "").trim(),
+    fy: String(payload.fy || "").trim(),
     attachment: payload.attachment || null,
     attachmentName: payload.attachmentName || payload.attachment?.name || "",
     createdBy: profile.name || "",

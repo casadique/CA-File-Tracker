@@ -3853,7 +3853,7 @@ function dashboardFinancials() {
   const feeReceived = files.filter((file) => file.feeReceived).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
   const feePending = Math.max(totalBilled - feeReceived, 0);
   const collectionsToday = (state.otherCashCollections || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    + files.filter((file) => file.feeReceived && (file.feeReceivedDate || file.lastUpdatedDate) === today).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
+    + files.filter((file) => file.feeReceived && feeReceiptLinkedFilesHaveCollection(file) && (file.feeReceivedDate || file.lastUpdatedDate) === today).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
   const expensesToday = (state.expenses || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return { totalBilled, feeReceived, feePending, collectionsToday, expensesToday, cashBalance: cashBalanceForRange().closing };
 }
@@ -4903,12 +4903,8 @@ function staffReportRow(file, listView = "") {
       "Client Name": file.name,
       Service: file.serviceType,
       FY: file.fy || "NA",
-      "Invoice Number": file.invoiceNumber || file.invoiceNo || "-",
-      "Bill Amount": money(dashboardFileAmount(file, "billed")),
-      "Amount Received": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
-      "Fee Received Date": displayDate(file.feeReceivedDate || file.receivedOn),
+      ...feeReceiptReportFields(file),
       "Received By": file.feeReceivedBy || file.collectionStaff || "-",
-      Mode: file.paymentMode || file.receiptMode || "-",
     };
   }
   if (listView === "active") {
@@ -5244,22 +5240,241 @@ function renderFeeReceivedFileTable(files) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Amount</th><th>Amount Received</th><th>Fee Received Date</th><th>Received By</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th>Billed Amount</th><th>Received Amount</th><th>Balance</th><th>Received Date</th><th>Mode</th><th>Transaction</th></tr></thead>
         <tbody>
-          ${rows.map((file, index) => `<tr>
-            <td>${index + 1}</td>
-            <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}${file.careOf ? ` | C/o: ${escapeHtml(file.careOf)}` : ""}</span></td>
-            <td>${escapeHtml(file.serviceType || "")}</td>
-            <td>${escapeHtml(fileFy(file) || "-")}</td>
-            <td class="amount-cell">${rupee(dashboardFileAmount(file, "billed"))}</td>
-            <td class="amount-cell">${rupee(dashboardFileAmount(file, "received"))}</td>
-            <td>${fmt(file.feeReceivedDate || file.receivedOn || file.received_on)}</td>
-            <td>${escapeHtml(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy || "-")}</td>
-          </tr>`).join("")}
+          ${rows.map((file, index) => {
+            const linked = linkedFeeReceiptCollection(file);
+            return `<tr>
+              <td>${index + 1}</td>
+              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}${file.careOf ? ` | C/o: ${escapeHtml(file.careOf)}` : ""}</span></td>
+              <td>${escapeHtml(file.serviceType || "")}</td>
+              <td>${escapeHtml(fileFy(file) || "-")}</td>
+              <td>${fmt(file.billDate || file.bill_date || file.billedDate)}</td>
+              <td>${escapeHtml(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-")}</td>
+              <td class="amount-cell">${rupee(dashboardFileAmount(file, "billed"))}</td>
+              <td class="amount-cell">${rupee(dashboardFileAmount(file, "received"))}</td>
+              <td class="amount-cell">${rupee(filePendingAmount(file))}</td>
+              <td>${fmt(file.feeReceivedDate || file.receivedOn || file.received_on)}</td>
+              <td>${escapeHtml(file.paymentMode || file.receiptMode || "-")}</td>
+              <td>${linked ? `<span class="badge filed">Pushed</span>` : `<span class="badge pending">Receipt only</span>`}</td>
+            </tr>`;
+          }).join("")}
         </tbody>
       </table>
     </div>
   `;
+}
+
+function feeReceiptIdForFile(file = {}) {
+  return file.feeReceiptId || file.fee_receipt_id || file.receiptId || file.receipt_id || "";
+}
+
+function feeReceiptTransactionIdForFile(file = {}) {
+  return file.feeTransactionId || file.fee_transaction_id || file.transactionId || file.transaction_id || "";
+}
+
+function linkedFeeReceiptCollection(file = {}) {
+  const receiptId = feeReceiptIdForFile(file);
+  const transactionId = feeReceiptTransactionIdForFile(file);
+  return (state.otherCashCollections || []).find((item) => {
+    if (transactionId && item.id === transactionId) return true;
+    if (receiptId && (item.feeReceiptId === receiptId || item.fee_receipt_id === receiptId || item.sourceId === receiptId || item.source_id === receiptId)) return true;
+    return file.id && (item.fileId === file.id || item.file_id === file.id) && (item.sourceType === "fee_receipt" || item.source_type === "fee_receipt");
+  }) || null;
+}
+
+function feeReceiptIsPushed(file = {}) {
+  return Boolean(linkedFeeReceiptCollection(file));
+}
+
+function paymentModes() {
+  return ["Cash", "Bank", "UPI", "Cheque", "Other"];
+}
+
+function feeReceiptField(name, label, value, type = "text", attrs = "") {
+  return `<div class="field"><label>${escapeHtml(label)}</label><input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value || "")}" ${attrs}></div>`;
+}
+
+function feeReceiptSelect(name, label, options, selectedValue = "") {
+  return `<div class="field"><label>${escapeHtml(label)}</label><select name="${escapeHtml(name)}">${options.map((option) => `<option value="${escapeHtml(option)}" ${option === selectedValue ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></div>`;
+}
+
+function feeReceiptTextarea(name, label, value = "") {
+  return `<div class="field full-span"><label>${escapeHtml(label)}</label><textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value || "")}</textarea></div>`;
+}
+
+function updateFeeReceiptBalancePreview() {
+  const billed = Number(document.querySelector("[name='receiptBilledAmount']")?.value || 0);
+  const received = Number(document.querySelector("[name='receiptReceivedAmount']")?.value || 0);
+  const balance = billed - received;
+  const node = document.querySelector("#receiptBalancePreview");
+  if (node) node.textContent = money(balance);
+}
+
+function feeReceiptCollectionPayload(file = {}, receipt = {}, existing = null) {
+  const now = new Date();
+  const receiptId = receipt.feeReceiptId || feeReceiptIdForFile(file) || crypto.randomUUID();
+  const id = existing?.id || receipt.transactionId || crypto.randomUUID();
+  const billNo = receipt.billNo || "";
+  const particulars = `Fee Collection${file.serviceType ? ` - ${file.serviceType}` : ""}${fileFy(file) ? ` - FY ${fileFy(file)}` : ""}`;
+  return {
+    ...(existing || {}),
+    id,
+    date: receipt.receivedDate,
+    collection_date: receipt.receivedDate,
+    collectionType: "fee_collection",
+    collection_type: "fee_collection",
+    amount: Number(receipt.receivedAmount || 0),
+    mode: receipt.paymentMode || "Cash",
+    collection_mode: receipt.paymentMode || "Cash",
+    receivedFrom: file.name || "",
+    received_from: file.name || "",
+    particulars,
+    voucherNo: billNo,
+    reference_number: billNo,
+    remarks: receipt.remarks || "",
+    createdBy: existing?.createdBy || existing?.enteredBy || state.currentUser || "",
+    enteredBy: existing?.enteredBy || existing?.createdBy || state.currentUser || "",
+    fileId: file.id,
+    file_id: file.id,
+    feeReceiptId: receiptId,
+    fee_receipt_id: receiptId,
+    sourceType: "fee_receipt",
+    source_type: "fee_receipt",
+    sourceId: receiptId,
+    source_id: receiptId,
+    billNo,
+    bill_no: billNo,
+    billDate: receipt.billDate,
+    bill_date: receipt.billDate,
+    serviceType: file.serviceType || "",
+    service_type: file.serviceType || "",
+    fy: fileFy(file) || "",
+    createdAt: existing?.createdAt || existing?.created_at || now.toISOString(),
+    created_at: existing?.created_at || existing?.createdAt || now.toISOString(),
+    updatedAt: now.toISOString(),
+    updated_at: now.toISOString(),
+  };
+}
+
+async function saveFeeReceiptCollection(file = {}, receipt = {}) {
+  const existing = linkedFeeReceiptCollection({ ...file, feeReceiptId: receipt.feeReceiptId, fee_receipt_id: receipt.feeReceiptId, feeTransactionId: receipt.transactionId });
+  const record = feeReceiptCollectionPayload(file, receipt, existing);
+  if (isSupabaseMode()) {
+    await saveCashCollectionToApi(record);
+  } else {
+    state.otherCashCollections = existing
+      ? (state.otherCashCollections || []).map((item) => item.id === existing.id ? record : item)
+      : [record, ...(state.otherCashCollections || [])];
+  }
+  rememberCashReceivedFrom(record.receivedFrom);
+  return record;
+}
+
+function feeReceiptFromModal(file = {}) {
+  const billDate = normalizeImportDate(document.querySelector("[name='receiptBillDate']")?.value || "") || todayDate();
+  const billNo = String(document.querySelector("[name='receiptBillNo']")?.value || "").trim();
+  const billedAmount = Number(document.querySelector("[name='receiptBilledAmount']")?.value || 0);
+  const receivedAmount = Number(document.querySelector("[name='receiptReceivedAmount']")?.value || 0);
+  const receivedDate = normalizeImportDate(document.querySelector("[name='receiptReceivedDate']")?.value || "");
+  const paymentMode = document.querySelector("[name='receiptPaymentMode']")?.value || "Cash";
+  const remarks = String(document.querySelector("[name='receiptRemarks']")?.value || "").trim();
+  const existingLinked = linkedFeeReceiptCollection(file);
+  return {
+    billDate,
+    billNo,
+    billedAmount,
+    receivedAmount,
+    balanceAmount: billedAmount - receivedAmount,
+    receivedDate,
+    paymentMode,
+    remarks,
+    pushToTransactions: Boolean(document.querySelector("[name='receiptPushToTransactions']")?.checked) || Boolean(existingLinked),
+    feeReceiptId: feeReceiptIdForFile(file) || crypto.randomUUID(),
+    transactionId: existingLinked?.id || feeReceiptTransactionIdForFile(file) || "",
+  };
+}
+
+function validateFeeReceipt(receipt = {}) {
+  if (receipt.billNo && !/^[A-Za-z0-9/-]+$/.test(receipt.billNo)) return "Bill No. can contain only letters, numbers, slash and hyphen.";
+  if (!receipt.billedAmount || receipt.billedAmount <= 0) return "Please enter a valid billed amount.";
+  if (!receipt.receivedAmount || receipt.receivedAmount <= 0) return "Please enter a valid received amount.";
+  if (!receipt.receivedDate) return "Received Date is required.";
+  if (receipt.receivedAmount > receipt.billedAmount && !confirm("Received Amount is more than Billed Amount. Do you want to continue?")) return "Receipt save cancelled.";
+  return "";
+}
+
+function feeReceiptStatusLabel(file = {}) {
+  return feeReceiptIsPushed(file) ? "Already pushed to Transactions" : "Receipt not pushed to Transactions";
+}
+
+function feeReceiptDetails(file = {}) {
+  return {
+    billDate: file.billDate || file.bill_date || file.billedDate || todayDate(),
+    billNo: file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
+    billedAmount: file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || dashboardFileAmount(file, "billed") || "",
+    receivedAmount: file.feeReceivedAmount || file.amountReceived || file.amount_received || dashboardFileAmount(file, "received") || "",
+    receivedDate: file.feeReceivedDate || file.receivedOn || file.received_on || todayDate(),
+    paymentMode: file.paymentMode || file.receiptMode || "Cash",
+    remarks: file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || "",
+  };
+}
+
+function updateFeeReceiptTransactionStatus(file = {}, transaction = null) {
+  if (!transaction) return {};
+  return {
+    feeTransactionId: transaction.id,
+    fee_transaction_id: transaction.id,
+    transactionId: transaction.id,
+    transaction_id: transaction.id,
+    pushedToTransactions: true,
+    pushed_to_transactions: true,
+  };
+}
+
+function feeReceiptPushControl(file = {}) {
+  const pushed = feeReceiptIsPushed(file);
+  return `<label class="receipt-push-control ${pushed ? "is-pushed" : ""}">
+    <input type="checkbox" name="receiptPushToTransactions" ${pushed ? "checked disabled" : ""}>
+    <span>${pushed ? "Already pushed to Transactions" : "Push this receipt to Transactions"}</span>
+  </label>`;
+}
+
+function feeReceiptModalStatus(file = {}) {
+  return `<div class="receipt-status-row">
+    <span>Balance Amount</span>
+    <strong id="receiptBalancePreview">${money(filePendingAmount(file))}</strong>
+    <em>${escapeHtml(feeReceiptStatusLabel(file))}</em>
+  </div>`;
+}
+
+function feeReceiptLinkedFilesHaveCollection(file = {}) {
+  return !feeReceiptIsPushed(file);
+}
+
+function feeReceiptCollectionExists(file = {}) {
+  return Boolean(linkedFeeReceiptCollection(file));
+}
+
+function feeReceiptCashFilesForBalance() {
+  return visibleFiles().filter((file) => file.feeReceived && feeReceiptLinkedFilesHaveCollection(file));
+}
+
+function fileReceiptTransactionLabel(file = {}) {
+  return feeReceiptCollectionExists(file) ? "Pushed to Transactions" : "Receipt only";
+}
+
+function feeReceiptReportFields(file = {}) {
+  return {
+    "Bill Date": displayDate(file.billDate || file.bill_date || file.billedDate),
+    "Bill No.": file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-",
+    "Billed Amount": money(dashboardFileAmount(file, "billed")),
+    "Received Amount": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
+    "Balance Amount": money(filePendingAmount(file)),
+    "Received Date": displayDate(file.feeReceivedDate || file.receivedOn || file.received_on),
+    "Payment Mode": file.paymentMode || file.receiptMode || "-",
+    "Transaction Status": fileReceiptTransactionLabel(file),
+  };
 }
 
 function fileSerialNumber(file, fallbackIndex = 0) {
@@ -5588,12 +5803,12 @@ function openMarkReceivedModal(fileId) {
   if (!file) return toast("File record not found.");
   if (!rolePerm().assign) return toast("This role cannot update billing.");
   closeMarkReceivedModal();
-  const amountValue = Number(file.amount_received || file.amountReceived || file.feeAmount || file.billAmount || file.amount || 0) || "";
+  const receipt = feeReceiptDetails(file);
   const modal = document.createElement("div");
   modal.id = "markReceivedModal";
   modal.className = "simple-modal open";
   modal.innerHTML = `
-    <div class="simple-modal-card">
+    <div class="simple-modal-card receipt-modal-card">
       <div class="drawer-head">
         <div>
           <h3>Mark Fee Received</h3>
@@ -5602,14 +5817,17 @@ function openMarkReceivedModal(fileId) {
         <button class="icon-button" id="closeReceivedModal">X</button>
       </div>
       <div class="drawer-body">
-        <div class="two-col">
-          ${checkingDetailField("Billing Status", file.billed ? "Billed" : "Not Billed")}
-          ${checkingDetailField("Billed Date", file.billedDate ? displayDate(file.billedDate) : "-")}
+        <div class="receipt-form-grid">
+          ${feeReceiptField("receiptBillDate", "Bill Date", receipt.billDate, "date")}
+          ${feeReceiptField("receiptBillNo", "Bill No.", receipt.billNo, "text", "pattern='[A-Za-z0-9/-]*'")}
+          ${feeReceiptField("receiptBilledAmount", "Billed Amount", receipt.billedAmount, "number", "min='0.01' step='0.01'")}
+          ${feeReceiptField("receiptReceivedAmount", "Received Amount", receipt.receivedAmount, "number", "min='0.01' step='0.01'")}
+          ${feeReceiptField("receiptReceivedDate", "Received Date", receipt.receivedDate, "date")}
+          ${feeReceiptSelect("receiptPaymentMode", "Payment Mode", paymentModes(), receipt.paymentMode)}
+          ${feeReceiptTextarea("receiptRemarks", "Remarks", receipt.remarks)}
         </div>
-        <div class="two-col">
-          ${formField("receivedAmount", "Amount Received", amountValue, "number", false)}
-          ${formField("receivedOn", "Received On", file.received_on || file.receivedOn || file.feeReceivedDate || todayDate(), "date", false)}
-        </div>
+        ${feeReceiptModalStatus(file)}
+        ${feeReceiptPushControl(file)}
       </div>
       <div class="drawer-actions">
         <button class="secondary-button" id="cancelReceivedModal">Cancel</button>
@@ -5622,6 +5840,10 @@ function openMarkReceivedModal(fileId) {
   document.querySelector("#closeReceivedModal").onclick = closeMarkReceivedModal;
   document.querySelector("#cancelReceivedModal").onclick = closeMarkReceivedModal;
   document.querySelector("#saveReceivedModal").onclick = () => saveReceivedFromModal(fileId);
+  document.querySelectorAll("[name='receiptBilledAmount'], [name='receiptReceivedAmount']").forEach((input) => {
+    input.addEventListener("input", updateFeeReceiptBalancePreview);
+  });
+  updateFeeReceiptBalancePreview();
 }
 
 function closeMarkReceivedModal() {
@@ -5632,28 +5854,60 @@ function closeMarkReceivedModal() {
 }
 
 async function saveReceivedFromModal(fileId) {
-  const amount = Number(document.querySelector("[name='receivedAmount']")?.value || 0);
-  const receivedOn = normalizeImportDate(document.querySelector("[name='receivedOn']")?.value || "");
-  if (!amount) return toast("Please enter amount received.");
-  if (!receivedOn) return toast("Received On date is required.");
+  const file = state.files.find((item) => item.id === fileId) || {};
+  const receipt = feeReceiptFromModal(file);
+  const validationMessage = validateFeeReceipt(receipt);
+  if (validationMessage) return toast(validationMessage);
   const button = document.querySelector("#saveReceivedModal");
   if (button) button.disabled = true;
   const user = loggedInUser() || {};
-  const receivedAt = new Date().toISOString();
-  const file = state.files.find((item) => item.id === fileId) || {};
-  const billedAmount = dashboardFileAmount(file, "billed");
-  const balanceAmount = Math.max(Number(billedAmount || 0) - amount, 0);
+  const receivedAt = file.feeReceivedAt || file.fee_received_at || file.receivedAt || file.received_at || new Date().toISOString();
+  const balanceAmount = Math.max(Number(receipt.balanceAmount || 0), 0);
+  let linkedTransaction = null;
+  if (receipt.pushToTransactions) {
+    try {
+      linkedTransaction = await saveFeeReceiptCollection(file, receipt);
+      receipt.transactionId = linkedTransaction.id;
+    } catch (error) {
+      console.error("Fee receipt transaction push failed", error);
+      if (button) button.disabled = false;
+      return toast(`Receipt not pushed: ${error.message || "Please retry."}`);
+    }
+  }
   const ok = await updateFileBilling(fileId, {
     billed: true,
-    feeReceived: true,
-    feeReceivedDate: receivedOn,
-    feeReceivedAmount: amount,
-    amount_received: amount,
-    amountReceived: amount,
+    billingType: "Billable",
+    billedDate: receipt.billDate,
+    billDate: receipt.billDate,
+    bill_date: receipt.billDate,
+    billNo: receipt.billNo,
+    bill_number: receipt.billNo,
+    invoiceNumber: receipt.billNo,
+    invoiceNo: receipt.billNo,
+    billedAmount: receipt.billedAmount,
+    billed_amount: receipt.billedAmount,
+    billAmount: receipt.billedAmount,
+    feeAmount: receipt.billedAmount,
+    amount: receipt.billedAmount,
+    feeReceived: balanceAmount <= 0,
+    feeReceivedDate: receipt.receivedDate,
+    feeReceivedAmount: receipt.receivedAmount,
+    amount_received: receipt.receivedAmount,
+    amountReceived: receipt.receivedAmount,
     balanceAmount,
     balance_amount: balanceAmount,
-    received_on: receivedOn,
-    receivedOn,
+    received_date: receipt.receivedDate,
+    receivedDate: receipt.receivedDate,
+    received_on: receipt.receivedDate,
+    receivedOn: receipt.receivedDate,
+    paymentMode: receipt.paymentMode,
+    receiptMode: receipt.paymentMode,
+    feeCollectionMode: receipt.paymentMode,
+    feeReceiptRemarks: receipt.remarks,
+    receiptRemarks: receipt.remarks,
+    receipt_remarks: receipt.remarks,
+    feeReceiptId: receipt.feeReceiptId,
+    fee_receipt_id: receipt.feeReceiptId,
     received_by_user_id: user.id || state.session?.userId || "",
     received_by_user_name: user.name || state.currentUser || "",
     receivedByUserId: user.id || state.session?.userId || "",
@@ -5665,7 +5919,8 @@ async function saveReceivedFromModal(fileId) {
     feeReceivedBy: user.name || state.currentUser || "",
     payment_status: balanceAmount > 0 ? "Partly Received" : "Fee Received",
     paymentStatus: balanceAmount > 0 ? "Partly Received" : "Fee Received",
-  }, "Fee receipt saved");
+    ...updateFeeReceiptTransactionStatus(file, linkedTransaction),
+  }, "Fee receipt saved", balanceAmount > 0 ? "feePending" : "feeReceived");
   if (button) button.disabled = false;
   if (ok) closeMarkReceivedModal();
 }
@@ -11220,7 +11475,7 @@ function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.
   const mode = state.filters.balanceMode || "";
   const modeOk = (itemMode) => !mode || itemMode === mode;
   const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
-  const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0)
+  const feeCollections = feeReceiptCashFilesForBalance().filter((file) => String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0)
     + (state.otherCashCollections || []).filter((item) => isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const otherCollections = (state.otherCashCollections || []).filter((item) => !isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -11243,7 +11498,7 @@ function cashMovementRows() {
   const enteredByFilter = normalizeImportMatchText(state.filters.balanceEnteredBy || "");
   const typeFilter = state.filters.balanceType || "";
   const rows = [
-    ...visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).map((file) => ({
+    ...feeReceiptCashFilesForBalance().filter((file) => String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).map((file) => ({
       date: file.feeReceivedDate || file.lastUpdatedDate || "",
       time: "",
       type: "Collection",
@@ -12240,10 +12495,7 @@ function fileListReportRows(files) {
         "Client Name": base["Client Name"],
         "Service Type": base["Service Type"],
         "Completion Date": filePdfCompletionDate(file),
-        "Billed Date": filePdfDate(file.billedDate),
-        "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
-        "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
-        "Received On": filePdfDate(file.feeReceivedDate),
+        ...feeReceiptReportFields(file),
         "Payment Status": file.feeReceived ? "Received" : "Pending",
       };
     }
@@ -12265,9 +12517,7 @@ function fileListReportRows(files) {
         "Service Type": base["Service Type"],
         "Assigned Staff": base["Assigned Staff"],
         "Completion Date": filePdfCompletionDate(file),
-        "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
-        "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
-        "Pending Amount": filePdfAmount(filePendingAmount(file)),
+        ...feeReceiptReportFields(file),
         "Payment Status": file.feeReceived ? "Received" : "Pending",
       };
     }
@@ -12277,9 +12527,7 @@ function fileListReportRows(files) {
         "Client Name": base["Client Name"],
         "Service Type": base["Service Type"],
         FY: base.FY,
-        "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
-        "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
-        "Fee Received Date": filePdfDate(file.feeReceivedDate || file.receivedOn || file.received_on),
+        ...feeReceiptReportFields(file),
         "Received By": filePdfText(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy, "-"),
         "Payment Status": "Received",
       };
@@ -12419,8 +12667,16 @@ function flattenFile(file) {
     "Re Assigned Date": displayDate(file.reAssignedDate),
     "Due Date": displayDate(file.dueDate),
     "Billed Date": displayDate(file.billedDate),
+    "Bill Date": displayDate(file.billDate || file.bill_date || file.billedDate),
+    "Bill No.": file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
+    "Billed Amount": file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || "",
     "Fee Received Date": displayDate(file.feeReceivedDate),
     "Fee Received Amount": file.feeReceivedAmount || "",
+    "Received Date": displayDate(file.feeReceivedDate || file.receivedOn || file.received_on),
+    "Received Amount": file.feeReceivedAmount || file.amountReceived || file.amount_received || "",
+    "Balance Amount": filePendingAmount(file),
+    "Payment Mode": file.paymentMode || file.receiptMode || "",
+    "Transaction Status": fileReceiptTransactionLabel(file),
     Priority: file.priority,
     Status: statusOf(file).label,
     "Last Updated Date": displayDate(file.lastUpdatedDate),
