@@ -6249,7 +6249,7 @@ function renderStaffDetailsPage() {
           ${staffFilterInput("staffSearch", "Search", "Search by staff name, email, employee ID or position")}
           ${staffFilterSelect("staffDepartment", "Department", uniqueStaffValues("department"))}
           ${staffFilterSelect("staffPosition", "Position", uniqueStaffValues("position"))}
-          ${staffFilterSelect("staffStatus", "Employment Status", ["Active", "On Leave", "Resigned", "Terminated", "Inactive"])}
+          ${staffFilterSelect("staffStatus", "Status", ["Active", "On Leave", "Resigned", "Terminated", "Inactive"])}
           ${staffFilterSelect("staffBranch", "Branch", uniqueStaffValues("branch"))}
           ${staffFilterMonth("staffBirthdayMonth", "Birthday Month")}
           ${staffFilterMonth("staffJoiningMonth", "Joining Month")}
@@ -6306,7 +6306,7 @@ function renderStaffDetailsForm() {
       <div class="field"><label>Reporting to</label><select name="reportingManagerId"><option value="">Select Manager</option>${state.users.filter((u) => ["Admin", "Manager", "Staff Manager"].includes(u.role)).map((u) => `<option value="${escapeHtml(u.id)}" ${editing?.reportingManagerId === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`).join("")}</select></div>
       ${staffFormField("branch", "Branch or Office", "text", v("branch"))}
       ${staffSelectField("employmentType", "Employment Type", staffEmploymentTypeOptions, raw("employmentType"), "Select Employment Type")}
-      <div class="field"><label>Employment Status</label><select name="employmentStatus">${["Active", "On Leave", "Resigned", "Terminated", "Inactive"].map((item) => `<option ${((editing?.employmentStatus || "Active") === item) ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      <div class="field"><label>Status</label><select name="employmentStatus">${["Active", "On Leave", "Resigned", "Terminated", "Inactive"].map((item) => `<option ${((editing?.employmentStatus || "Active") === item) ? "selected" : ""}>${item}</option>`).join("")}</select></div>
       ${staffSelectField("gender", "Gender", staffGenderOptions, raw("gender"), "Select Gender")}
       ${staffFormField("emergencyContactName", "Emergency Contact Name", "text", v("emergencyContactName"))}
       ${staffFormField("emergencyContactNumber", "Emergency Contact Number", "tel", v("emergencyContactNumber"))}
@@ -6401,7 +6401,7 @@ function filteredStaffDetails() {
 
 function renderStaffDetailsTable(rows) {
   if (!rows.length) return empty("No staff records found.");
-  const headers = ["SN", "Profile", "Staff Name", "Employee ID", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting to", "Employment Status", "Actions"];
+  const headers = ["SN", "Profile", "Staff Name", "Employee ID", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting to", "Status", "Actions"];
   return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
     <td>${index + 1}</td>
     <td>${staffAvatar(row)}</td>
@@ -6634,7 +6634,7 @@ function staffDetailsReportRows(rows = filteredStaffDetails()) {
     Email: row.email,
     Mobile: row.mobile,
     "Reporting to": staffManagerName(row.reportingManagerId),
-    "Employment Status": row.employmentStatus,
+    Status: row.employmentStatus,
   }));
 }
 

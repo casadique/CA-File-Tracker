@@ -6096,54 +6096,55 @@ textarea {
 
 /* Staff dashboard: compact role-specific KPI cards. */
 .staff-modern-dashboard .staff-dashboard-kpi-grid {
-  grid-template-columns: repeat(auto-fill, minmax(112px, 128px));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 84px));
+  gap: 7px;
   justify-content: start;
 }
 
 .staff-modern-dashboard .dashboard-kpi-card {
   width: 100%;
-  min-height: 66px;
-  padding: 8px 10px;
+  min-height: 62px;
+  padding: 7px 8px;
   border-bottom-width: 3px;
 }
 
 .staff-modern-dashboard .dashboard-kpi-top {
-  gap: 7px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-icon svg {
-  width: 15px;
-  height: 15px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-title {
-  font-size: 10.5px;
-  line-height: 1.15;
-}
-
-.staff-modern-dashboard .dashboard-kpi-card > strong {
-  margin-top: 5px;
-  font-size: 19px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-meta {
-  margin-top: 3px;
   gap: 5px;
 }
 
+.staff-modern-dashboard .dashboard-kpi-icon {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-title {
+  font-size: 9px;
+  line-height: 1.1;
+}
+
+.staff-modern-dashboard .dashboard-kpi-card > strong {
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta {
+  margin-top: 2px;
+  gap: 4px;
+}
+
 .staff-modern-dashboard .dashboard-kpi-meta small {
-  font-size: 9.5px;
+  font-size: 8px;
+  line-height: 1.05;
 }
 
 .staff-modern-dashboard .dashboard-kpi-trend {
-  height: 12px;
+  height: 9px;
 }
 
 /* Notifications: keep per-item read actions visible and mobile-friendly. */
