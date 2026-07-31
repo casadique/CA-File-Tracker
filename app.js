@@ -2290,6 +2290,25 @@ function originalAllottedTo(file = {}) {
   return file.originallyAllottedTo || file.originalAssignedStaff || file.original_assigned_to || file.assignedStaff || "Not Assigned";
 }
 
+function firstAllottedAssignee(file = {}) {
+  return {
+    name: originalAllottedTo(file),
+    id: file.originalAssignedStaffId || file.original_assigned_to_id || file.assignedStaffId || "",
+    email: file.originalAssignedStaffEmail || file.original_assigned_to_email || file.assignedStaffEmail || "",
+  };
+}
+
+function reAllottedAssignee(file = {}) {
+  const current = currentFileAssignee(file);
+  if (hasAssignedStaffValue(file.reAssignedStaff) || file.reAssignedStaffId || file.reAssignedStaffEmail) return current;
+  const latest = assignmentHistory(file)[0] || {};
+  return {
+    name: latest.assignedTo || latest.assigned_to || "",
+    id: latest.assignedToId || latest.assigned_to_id || "",
+    email: latest.assignedToEmail || latest.assigned_to_email || "",
+  };
+}
+
 function assignmentHistory(file = {}) {
   const history = Array.isArray(file.assignmentHistory) ? file.assignmentHistory : [];
   return [...history].sort((a, b) => (Date.parse(b.assignedAt || b.assigned_at || "") || 0) - (Date.parse(a.assignedAt || a.assigned_at || "") || 0));
@@ -2301,15 +2320,16 @@ function isReassignedFile(file = {}) {
 
 function reassignmentVisibleToUser(file, user) {
   if (!user || !isReassignedFile(file)) return false;
-  const history = assignmentHistory(file);
-  return history.some((row) =>
-    staffNameBelongsToUser(row.assignedFrom || row.assigned_from, user)
-    || exactStaffIdentity(row.assignedFromId || row.assigned_from_id, user.id)
-    || exactStaffIdentity(row.assignedFromEmail || row.assigned_from_email, user.email)
-    || staffNameBelongsToUser(row.assignedTo || row.assigned_to, user)
-    || exactStaffIdentity(row.assignedToId || row.assigned_to_id, user.id)
-    || exactStaffIdentity(row.assignedToEmail || row.assigned_to_email, user.email)
-  ) || staffNameBelongsToUser(file.previousAllottedTo || file.reassigned_from || "", user);
+  const first = firstAllottedAssignee(file);
+  const reAllotted = reAllottedAssignee(file);
+  return staffNameBelongsToUser(first.name, user)
+    || exactStaffIdentity(first.id, user.id)
+    || exactStaffIdentity(first.id, user.authUserId)
+    || exactStaffIdentity(first.email, user.email)
+    || staffNameBelongsToUser(reAllotted.name, user)
+    || exactStaffIdentity(reAllotted.id, user.id)
+    || exactStaffIdentity(reAllotted.id, user.authUserId)
+    || exactStaffIdentity(reAllotted.email, user.email);
 }
 
 function staffNameBelongsToUser(staffName, user) {
@@ -4889,8 +4909,7 @@ function staffReportRow(file, listView = "") {
     return {
       "Client Name": clientDetailsReportText(file),
       Service: file.serviceType,
-      "Originally Allotted To": originalAllottedTo(file),
-      "Reassigned From": file.reassignedFrom || file.reassigned_from || file.previousAllottedTo || "-",
+      "First Allotted": originalAllottedTo(file),
       "Re Allotted To": currentFileAssignee(file).name || "-",
       "Re Allot Date": displayDate(file.reAssignedDate || file.reassigned_at),
       "Reassigned By": file.reassignedBy || file.reassigned_by || "-",
@@ -5221,11 +5240,10 @@ function renderReAssignedFileTable(files) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>Received On</th><th>C/o</th><th>Status</th><th>First Allotted</th><th>Reassigned From</th><th>Re Allotted To</th><th>Re Allot Date</th><th>Reassigned By</th><th>Actions</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>Received On</th><th>C/o</th><th>Status</th><th>First Allotted</th><th>Re Allotted To</th><th>Re Allot Date</th><th>Reassigned By</th><th>Actions</th></tr></thead>
         <tbody>
           ${rows.map((file, index) => {
             const history = assignmentHistory(file)[0] || {};
-            const reassignedFrom = history.assignedFrom || history.assigned_from || file.reassignedFrom || file.reassigned_from || file.previousAllottedTo || originalAllottedTo(file);
             const reassignedBy = history.assignedBy || history.assigned_by || file.reassignedBy || file.reassigned_by || "-";
             const reallotDate = normalizeImportDate(file.reAssignedDate || file.reassignedAt || file.reassigned_at || history.assignedAt || history.assigned_at || "");
             return `<tr>
@@ -5236,7 +5254,6 @@ function renderReAssignedFileTable(files) {
               <td>${escapeHtml(file.careOf || "Direct")}</td>
               <td><span class="badge ${statusOf(file).className}">${escapeHtml(statusOf(file).label)}</span></td>
               <td>${escapeHtml(originalAllottedTo(file))}</td>
-              <td>${escapeHtml(reassignedFrom || "-")}</td>
               <td>${escapeHtml(file.reAssignedStaff || currentFileAssignee(file).name || "-")}</td>
               <td>${fmt(reallotDate)}</td>
               <td>${escapeHtml(reassignedBy)}</td>
