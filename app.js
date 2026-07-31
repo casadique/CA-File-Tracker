@@ -4599,7 +4599,15 @@ function fileActualCompletionDate(file = {}) {
 }
 
 function fileCompletionSortTime(file = {}) {
-  return Date.parse(fileActualCompletionDate(file) || "") || 0;
+  return Date.parse(file.completed_at || file.completedAt || file.final_completed_at || file.finalCompletedAt || "")
+    || Date.parse(fileActualCompletionDate(file) || "")
+    || 0;
+}
+
+function fileCheckedSortTime(file = {}) {
+  return Date.parse(file.checked_at || file.checkedAt || "")
+    || Date.parse(normalizeImportDate(file.checkedDate || file.checked_date || "") || "")
+    || 0;
 }
 
 function sortFilesNewestFirst(files = []) {
@@ -4633,9 +4641,9 @@ function sortFilesByCompletionNewestFirst(files = []) {
     if (right && left && right !== left) return right - left;
     if (right && !left) return 1;
     if (!right && left) return -1;
-    const created = fileCreatedSortTime(b) - fileCreatedSortTime(a);
-    if (created) return created;
-    return String(b.id || "").localeCompare(String(a.id || ""));
+    const checked = fileCheckedSortTime(b) - fileCheckedSortTime(a);
+    if (checked) return checked;
+    return stableFileIdSortDesc(a, b);
   });
 }
 
@@ -4672,6 +4680,36 @@ function applyFeeReceivedTimestamp(record = {}, before = {}, fallbackIso = new D
   record.fee_received_at = receivedTimestamp;
   record.receivedAt = receivedTimestamp;
   record.received_at = receivedTimestamp;
+  return record;
+}
+
+function applyCompletionTimestamps(record = {}, before = {}, fallbackIso = new Date().toISOString()) {
+  const isCompleted = Boolean(record.filed || record.stages?.Completed);
+  const wasCompleted = Boolean(before?.filed || before?.stages?.Completed);
+  const existingCompletedAt = before?.completed_at || before?.completedAt || record.completed_at || record.completedAt || "";
+  const completedAt = isCompleted
+    ? (existingCompletedAt || (!wasCompleted ? fallbackIso : ""))
+    : existingCompletedAt;
+  if (completedAt) {
+    record.completed_at = completedAt;
+    record.completedAt = completedAt;
+  }
+
+  const existingCheckedAt = before?.checked_at || before?.checkedAt || record.checked_at || record.checkedAt || "";
+  const hasChecking = Boolean(record.checkedBy || record.checkedDate);
+  const hadChecking = Boolean(before?.checkedBy || before?.checkedDate);
+  const checkedAt = hasChecking
+    ? (existingCheckedAt || (!hadChecking ? fallbackIso : ""))
+    : "";
+  record.checked_at = checkedAt;
+  record.checkedAt = checkedAt;
+
+  if (hasChecking) {
+    const existingFinalAt = before?.final_completed_at || before?.finalCompletedAt || record.final_completed_at || record.finalCompletedAt || "";
+    const finalCompletedAt = existingFinalAt || checkedAt || fallbackIso;
+    record.final_completed_at = finalCompletedAt;
+    record.finalCompletedAt = finalCompletedAt;
+  }
   return record;
 }
 
@@ -5315,15 +5353,20 @@ async function checkCompletedFile(fileId) {
   if (completionDate && checkedDate < completionDate) return toast("Date of Checking cannot be earlier than Work Completion Date.");
   const checkingRemarks = prompt("Checking Remarks", file.checkingRemarks || "")?.trim() || "";
   if (!validCheckingRemark(checkingRemarks)) return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
+  const checkedAt = new Date().toISOString();
   const updated = {
     ...file,
     checkedBy,
     checkedDate,
+    checkedAt,
+    checked_at: checkedAt,
+    finalCompletedAt: file.finalCompletedAt || file.final_completed_at || checkedAt,
+    final_completed_at: file.final_completed_at || file.finalCompletedAt || checkedAt,
     checkingRemarks,
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
-    taskActivityAt: new Date().toISOString(),
-    task_activity_at: new Date().toISOString(),
+    taskActivityAt: checkedAt,
+    task_activity_at: checkedAt,
   };
   state.files[index] = updated;
   queueFileCheckedNotification(updated, file);
@@ -6494,7 +6537,9 @@ async function saveFileFromDrawer() {
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
   };
-  applyFeeReceivedTimestamp(record, existingFile);
+  const saveTimestamp = new Date().toISOString();
+  applyFeeReceivedTimestamp(record, existingFile, saveTimestamp);
+  applyCompletionTimestamps(record, existingFile, saveTimestamp);
   const existingAssignmentHistory = assignmentHistory(existingFile || {});
   if (assignedChanged && hasAssignedStaffValue(reAssignedStaff)) {
     const reassignedAtIso = new Date().toISOString();

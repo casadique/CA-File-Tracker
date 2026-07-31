@@ -18,8 +18,9 @@ function sortFilesForRequest(files, options = {}) {
   if (sortField === "assigned_at") return sortFilesByDate(rows, fileAssignmentDateValue, direction, fileReceivedDateValue);
   if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileCreatedTime);
   if (sortField === "file_received_date") return sortFilesByDate(rows, fileReceivedDateValue, direction, fileCreatedTime);
-  if (sortField === "completed_date") return sortFilesByDate(rows, fileCompletionDateValue, direction, fileCreatedTime);
+  if (sortField === "completed_date") return [...rows].sort((a, b) => direction === "asc" ? sortCompletedFilesAsc(a, b) : sortCompletedFilesDesc(a, b));
   if (sortField === "fee_received_at") return [...rows].sort((a, b) => direction === "asc" ? sortFeeReceivedAsc(a, b) : sortFeeReceivedDesc(a, b));
+  if (listView === "completed") return [...rows].sort(sortCompletedFilesDesc);
   if (listView === "feeReceived") return [...rows].sort(sortFeeReceivedDesc);
   return sortFilesNewestFirst(rows);
 }
@@ -45,7 +46,7 @@ function fileReceivedDateValue(file = {}) {
 }
 
 function fileCompletionDateValue(file = {}) {
-  return dateOrNumber(file.completed_date || file.completionDate || file.completedDate || file.workCompletedDate || file.work_completed_date || file.completed_at || file.completedAt);
+  return completionTime(file);
 }
 
 function fileAssignmentDateValue(file = {}) {
@@ -63,6 +64,15 @@ function fileCreatedTime(file = {}) {
 
 function feeReceivedTime(file = {}) {
   return dateOrNumber(file.fee_received_at || file.feeReceivedAt || file.received_at || file.receivedAt);
+}
+
+function completionTime(file = {}) {
+  return dateOrNumber(file.completed_at || file.completedAt || file.final_completed_at || file.finalCompletedAt)
+    || dateOrNumber(file.completed_date || file.completionDate || file.completedDate || file.workCompletedDate || file.work_completed_date);
+}
+
+function checkedTime(file = {}) {
+  return dateOrNumber(file.checked_at || file.checkedAt || file.checked_date || file.checkedDate);
 }
 
 function stableFileIdSortDesc(a = {}, b = {}) {
@@ -87,6 +97,21 @@ function sortFeeReceivedDesc(a = {}, b = {}) {
 
 function sortFeeReceivedAsc(a = {}, b = {}) {
   return -sortFeeReceivedDesc(a, b);
+}
+
+function sortCompletedFilesDesc(a = {}, b = {}) {
+  const leftTime = completionTime(a);
+  const rightTime = completionTime(b);
+  if (rightTime && leftTime && rightTime !== leftTime) return rightTime - leftTime;
+  if (rightTime && !leftTime) return 1;
+  if (!rightTime && leftTime) return -1;
+  const checked = checkedTime(b) - checkedTime(a);
+  if (checked) return checked;
+  return stableFileIdSortDesc(a, b);
+}
+
+function sortCompletedFilesAsc(a = {}, b = {}) {
+  return -sortCompletedFilesDesc(a, b);
 }
 
 function fileUpdatedTime(file = {}) {
@@ -143,7 +168,9 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
-    applyFeeReceivedTimestamp(record, before, new Date(now).toISOString());
+    const nowIso = new Date(now).toISOString();
+    applyFeeReceivedTimestamp(record, before, nowIso);
+    applyCompletionTimestamps(record, before, nowIso);
     const taskActivityAt = shouldBumpTaskActivity(before, record, profile)
       ? new Date(now).toISOString()
       : (before?.taskActivityAt || before?.task_activity_at || record.taskActivityAt || record.task_activity_at || record.assignedAt || record.assigned_at || record.workAllotmentDate || record.reAssignedDate || "");
@@ -182,6 +209,36 @@ function applyFeeReceivedTimestamp(record = {}, before = {}, fallbackIso = new D
   record.fee_received_at = receivedTimestamp;
   record.receivedAt = receivedTimestamp;
   record.received_at = receivedTimestamp;
+  return record;
+}
+
+function applyCompletionTimestamps(record = {}, before = {}, fallbackIso = new Date().toISOString()) {
+  const isCompleted = Boolean(record.filed || record.stages?.Completed);
+  const wasCompleted = Boolean(before?.filed || before?.stages?.Completed);
+  const existingCompletedAt = before?.completed_at || before?.completedAt || record.completed_at || record.completedAt || "";
+  const completedAt = isCompleted
+    ? (existingCompletedAt || (!wasCompleted ? fallbackIso : ""))
+    : existingCompletedAt;
+  if (completedAt) {
+    record.completed_at = completedAt;
+    record.completedAt = completedAt;
+  }
+
+  const existingCheckedAt = before?.checked_at || before?.checkedAt || record.checked_at || record.checkedAt || "";
+  const hasChecking = Boolean(record.checkedBy || record.checkedDate);
+  const hadChecking = Boolean(before?.checkedBy || before?.checkedDate);
+  const checkedAt = hasChecking
+    ? (existingCheckedAt || (!hadChecking ? fallbackIso : ""))
+    : "";
+  record.checked_at = checkedAt;
+  record.checkedAt = checkedAt;
+
+  if (hasChecking) {
+    const existingFinalAt = before?.final_completed_at || before?.finalCompletedAt || record.final_completed_at || record.finalCompletedAt || "";
+    const finalCompletedAt = existingFinalAt || checkedAt || fallbackIso;
+    record.final_completed_at = finalCompletedAt;
+    record.finalCompletedAt = finalCompletedAt;
+  }
   return record;
 }
 
