@@ -12,6 +12,16 @@ const ACTIVE_FILE_DATES_CLEAR_VERSION = "active-file-dates-cleared-2026-07-14";
 const MASTER_LIST_RESET_VERSION = "approved-master-users-2026-07-13";
 const MS_DAY = 86400000;
 
+const defaultDailyQuotes = [
+  { text: "Success comes from consistent small efforts.", author: "Robert Collier" },
+  { text: "Small progress each day adds up to big results.", author: "Satya Nani" },
+  { text: "Discipline is choosing what you want most over what you want now.", author: "Abraham Lincoln" },
+  { text: "Quality is never an accident; it is always the result of intelligent effort.", author: "John Ruskin" },
+  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { text: "Great things are done by a series of small things brought together.", author: "Vincent van Gogh" },
+  { text: "Well done is better than well said.", author: "Benjamin Franklin" },
+];
+
 const stages = [
   "Received",
   "Allotted",
@@ -379,6 +389,8 @@ function loadState() {
     otherCashCollectionSources: ["CA Sadique"],
     expenseItems: ["Office Expense", "Travelling", "Printing & Stationery", "Staff Welfare"],
     openingCashBalance: 0,
+    dailyQuotes: [],
+    dailyQuoteSettings: { enabled: true },
     deletedVisitorIds: [],
     auditLog: [],
     bulkBillingReports: null,
@@ -531,6 +543,12 @@ function normalizeState(appState) {
   appState.company = {
     name: appState.company?.name || "",
     address: appState.company?.address || "",
+  };
+  const dailyQuoteSettings = appState.dailyQuoteSettings || {};
+  appState.dailyQuotes = Array.isArray(appState.dailyQuotes) ? appState.dailyQuotes : [];
+  appState.dailyQuoteSettings = {
+    ...dailyQuoteSettings,
+    enabled: dailyQuoteSettings.enabled !== false,
   };
   appState.theme = "professional";
   appState.revokedAccess = appState.revokedAccess || [];
@@ -1768,6 +1786,8 @@ function sharedSnapshot(appState) {
     careOfList: appState.careOfList || [],
     deletedFileIds: appState.deletedFileIds || [],
     company: appState.company || {},
+    dailyQuotes: appState.dailyQuotes || [],
+    dailyQuoteSettings: appState.dailyQuoteSettings || {},
     fileDataResetVersion: appState.fileDataResetVersion || "",
     masterListResetVersion: appState.masterListResetVersion || "",
   });
@@ -2764,6 +2784,61 @@ function actionBadge(count) {
   return `<span class="top-action-badge">${total > 99 ? "99+" : total}</span>`;
 }
 
+function quoteIndexForDate(dateString, length) {
+  if (!length) return 0;
+  const key = String(dateString || indiaTodayDate()).replace(/\D/g, "");
+  const value = Number(key || 0);
+  return Math.abs(value) % length;
+}
+
+function quoteDateValue(quote = {}) {
+  return normalizeImportDate(quote.date || quote.quoteDate || quote.quote_date || quote.displayDate || "");
+}
+
+function quoteTextValue(quote = {}) {
+  return String(quote.text || quote.quote || quote.message || "").trim();
+}
+
+function quoteAuthorValue(quote = {}) {
+  return String(quote.author || quote.by || quote.source || "").trim();
+}
+
+function dailyQuoteForDate(dateString = indiaTodayDate()) {
+  if (state.dailyQuoteSettings?.enabled === false) return null;
+  const configuredQuotes = (state.dailyQuotes || [])
+    .filter((quote) => quote && quote.enabled !== false && quote.active !== false && quoteTextValue(quote));
+  const selectedForDate = configuredQuotes.find((quote) => quoteDateValue(quote) === dateString);
+  if (selectedForDate) return selectedForDate;
+  const pool = configuredQuotes.length ? configuredQuotes : defaultDailyQuotes;
+  if (!pool.length) return null;
+  let index = quoteIndexForDate(dateString, pool.length);
+  if (pool.length > 1) {
+    const [year, month, day] = dateString.split("-").map(Number);
+    const previousDate = new Date(Date.UTC(year, month - 1, day) - MS_DAY).toISOString().slice(0, 10);
+    const previousIndex = quoteIndexForDate(previousDate, pool.length);
+    if (index === previousIndex) index = (index + 1) % pool.length;
+  }
+  return pool[index];
+}
+
+function renderDailyQuoteBanner() {
+  if (activePage !== "dashboard") return "";
+  const quote = dailyQuoteForDate();
+  const text = quoteTextValue(quote);
+  if (!text) return "";
+  const author = quoteAuthorValue(quote);
+  return `
+    <div class="daily-quote-banner" role="note" aria-label="Thought for the day">
+      <span class="daily-quote-icon" aria-hidden="true">&#128161;</span>
+      <div class="daily-quote-copy">
+        <span class="daily-quote-title">Thought for the Day:</span>
+        <span class="daily-quote-text">"${escapeHtml(text)}"</span>
+        ${author ? `<span class="daily-quote-author">&mdash; ${escapeHtml(author)}</span>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 function topActionIconButton(id, type, icon, label, count = 0) {
   return `
     <button class="top-icon-action top-icon-${type}" id="${id}" type="button" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
@@ -2832,12 +2907,13 @@ function mount() {
       </aside>
       <main class="content">
         <header class="topbar">
-          <div>
+          <div class="topbar-title-block">
             <button class="icon-button mobile-menu" id="mobileMenu">Menu</button>
             <button class="mini-button hidden" id="topBackButton">Back</button>
             <h2 id="pageTitle">Dashboard</h2>
             <p id="pageSubtitle"></p>
           </div>
+          <div class="daily-quote-slot" id="dailyQuoteSlot">${renderDailyQuoteBanner()}</div>
           <div class="top-actions">
             ${topActionIconButton("chatButton", "chat", "chat", "Team Chat", unreadChatCount())}
             ${topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length)}
@@ -3234,6 +3310,12 @@ function renderAll() {
   const subtitle = document.querySelector("#pageSubtitle");
   subtitle.textContent = titles[activePage][1];
   subtitle.classList.toggle("hidden", !titles[activePage][1]);
+  const quoteSlot = document.querySelector("#dailyQuoteSlot");
+  if (quoteSlot) {
+    const quoteHtml = renderDailyQuoteBanner();
+    quoteSlot.innerHTML = quoteHtml;
+    quoteSlot.classList.toggle("hidden", !quoteHtml.trim());
+  }
   const topBackButton = document.querySelector("#topBackButton");
   if (topBackButton) {
     topBackButton.classList.toggle("hidden", !(activePage === "files" && state.filters.fromDashboard));
@@ -3262,7 +3344,20 @@ function renderActivePage() {
     verification: renderVerificationPage,
     backup: renderBackupPage,
   };
-  (renderers[activePage] || renderDashboard)();
+  try {
+    (renderers[activePage] || renderDashboard)();
+  } catch (error) {
+    console.error("Page render failed", error);
+    const target = document.querySelector(`#${activePage}`) || document.querySelector("#dashboard");
+    if (target) {
+      target.innerHTML = `
+        <div class="permission-note render-error-note">
+          <strong>Unable to load this page.</strong>
+          <span>Please refresh once. If it repeats, check the browser console and deployment logs.</span>
+        </div>
+      `;
+    }
+  }
 }
 
 function enforceDateYearCap() {
@@ -3286,6 +3381,8 @@ function renderDashboard() {
     bindStaffDashboardPerformance();
     return;
   }
+  const files = visibleFiles();
+  const s = stats(files);
   const dataNotice = !s.total ? `
     <div class="permission-note">
       No file data is loaded in this browser. Use Admin login > User Management > Restore Backup, or Pull Data from Site if site sync was previously saved.
@@ -3349,7 +3446,6 @@ function renderModernStaffDashboardShell(s, files = []) {
         ${dashboardKpiCard("Re-Allotted Files", s.reAllotted, "Re-allotted to me", "receivedfee", "users", "reallotted", staffTrendValues(files, "reallotted"))}
         ${dashboardKpiCard("My Completed Files", s.completed, "Completed by me", "completed", "check", "completed", staffTrendValues(files, "completed"))}
         ${dashboardKpiCard("My Not Checked", s.notChecked, "Awaiting checking", "notchecked", "report", "notChecked", staffTrendValues(files, "notChecked"), true)}
-        ${dashboardKpiCard("My Billed Files", s.billed, "Billed files", "billed", "invoice", "billed", staffTrendValues(files, "billed"))}
       </div>
     </section>
   `;
@@ -5662,14 +5758,14 @@ function openFileDrawer(id) {
         ${fyField(file.fy || "NA")}
         ${selectField("mode", "Mode", modes, file.mode || "Whatsapp")}
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
+        ${workflowStatusField(file)}
         ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile)}
-        ${formField("workAllotmentDate", "Work Allotment Date", file.workAllotmentDate || "", "date", false)}
+        ${formField("workAllotmentDate", "Allotted On", file.workAllotmentDate || "", "date", false)}
         ${formField("dueDate", "Due Date", file.dueDate, "date")}
         ${selectField("priority", "Priority", ["Low", "Medium", "High", "Urgent"], file.priority)}
         ${staffAssignField("reAssignedStaff", "Re Assigned", file.reAssignedStaff || "", !canAssignThisFile, true)}
         ${formField("reAssignedDate", "Re Assigned Date", file.reAssignedDate || "", "date", false)}
       </div>
-      ${workflowStatusField(file)}
       <div class="two-col">
         ${formField("completionDate", "Completed Date", file.completionDate || "", "date", false)}
       </div>
