@@ -12941,6 +12941,11 @@ async function sendChatMessage() {
     createdAt: new Date().toISOString(),
   };
   state.chatMessages = mergeChatMessages(state.chatMessages || [], [optimistic]);
+  if (input) input.value = "";
+  if (fileInput) fileInput.value = "";
+  renderChatAttachmentPreview();
+  resizeChatTextarea(input);
+  updateSendButtonState();
   renderChatConversationListOnly();
   refreshActiveChatMessages(true);
   if (isSupabaseMode()) {
@@ -12965,16 +12970,14 @@ async function sendChatMessage() {
       if (sent?.id) markChatMessageRead(sent.id, sender);
       saveState({ skipMerge: true, skipRemote: true });
       toast("Message sent");
-      if (input) input.value = "";
-      if (fileInput) fileInput.value = "";
-      renderChatAttachmentPreview();
-      resizeChatTextarea(input);
       renderChatConversationListOnly();
       refreshActiveChatMessages(true);
       input?.focus();
       return;
     } catch (error) {
       state.chatMessages = mergeChatMessages((state.chatMessages || []).filter((message) => message.id !== optimistic.id), [{ ...optimistic, status: "failed" }]);
+      if (input) input.value = text;
+      resizeChatTextarea(input);
       renderChatConversationListOnly();
       refreshActiveChatMessages(true);
       input?.focus();
@@ -13015,10 +13018,6 @@ async function sendChatMessage() {
   markChatMessageRead(messageId, sender);
   saveState();
   chatSendInFlight = false;
-  if (input) input.value = "";
-  if (fileInput) fileInput.value = "";
-  renderChatAttachmentPreview();
-  resizeChatTextarea(input);
   updateSendButtonState();
   renderChatConversationListOnly();
   refreshActiveChatMessages(true);
