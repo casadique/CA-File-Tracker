@@ -8775,27 +8775,39 @@ body,
 .expense-shell {
   max-width: 1540px;
   margin: 0 auto;
-  gap: 16px;
+  gap: 18px;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 #expenses {
-  background: #f6f8fc;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.07), transparent 28%),
+    radial-gradient(circle at 92% 12%, rgba(20, 184, 166, 0.06), transparent 24%),
+    #f6f8fc;
 }
 
 .transactions-page-head {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #d7e3f1;
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.07);
+}
+
+.transactions-page-head::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: linear-gradient(180deg, #2563eb, #14b8a6);
+  content: "";
 }
 
 .transactions-page-head h3 {
   color: #172554;
-  font-size: 26px;
+  font-size: 25px;
+  letter-spacing: 0;
 }
 
 .transactions-page-head p {
@@ -8819,13 +8831,14 @@ body,
 .expense-overview-card {
   position: relative;
   overflow: hidden;
-  min-height: 142px;
-  border-width: 1.5px;
-  border-radius: 14px;
+  min-height: 126px;
+  border-width: 1.8px;
+  border-radius: 16px;
   background:
     radial-gradient(circle at top right, rgba(37, 99, 235, 0.07), transparent 34%),
     linear-gradient(145deg, #ffffff, #fbfdff);
-  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.07);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
 
 .expense-overview-card:hover {
@@ -8850,10 +8863,11 @@ body,
 }
 
 .expense-card-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 13px;
-  font-size: 20px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 19px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
 }
 
 .expense-overview-card.balance .expense-card-icon {
@@ -8883,7 +8897,7 @@ body,
 
 .expense-overview-card strong {
   color: #0f172a;
-  font-size: 25px;
+  font-size: 24px;
   font-weight: 900;
 }
 
@@ -8919,9 +8933,9 @@ body,
   width: 100%;
   max-width: 760px;
   border: 1px solid #dbe4f0;
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.05);
+  border-radius: 16px;
+  background: linear-gradient(145deg, #ffffff, #f8fbff);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
 }
 
 .expense-tab-button,
@@ -8936,14 +8950,14 @@ body,
 }
 
 .expense-tab-button:hover {
-  background: #f8fafc;
+  background: #f1f7ff;
 }
 
 .expense-tab-button.active-tab,
 .expense-tab-button.tab-collections.active-tab,
 .expense-tab-button.tab-expenses.active-tab,
 .expense-tab-button.tab-balance.active-tab {
-  background: #eff6ff;
+  background: linear-gradient(135deg, #eff6ff, #eefdfb);
   color: #2563eb;
   border: 0;
   box-shadow: none;
@@ -8980,15 +8994,15 @@ body,
 .expense-form,
 .expense-tools-card,
 .transaction-side-card {
-  border: 1px solid #dbe4f0;
+  border: 1px solid #d7e3f1;
   border-radius: 16px;
-  background: #ffffff;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  background: linear-gradient(145deg, #ffffff 0%, #fbfdff 100%);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.07);
 }
 
 .expense-form {
   grid-template-columns: repeat(4, minmax(145px, 1fr));
-  gap: 14px;
+  gap: 15px 14px;
 }
 
 .expense-card-head h3 {
@@ -9023,9 +9037,10 @@ body,
 .expense-item-combo select {
   min-height: 44px;
   border: 1px solid #cbd5e1;
-  border-radius: 9px;
-  background: #ffffff;
+  border-radius: 12px;
+  background: #fbfdff;
   color: #0f172a;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
 .expense-form input:focus,
@@ -9038,6 +9053,7 @@ body,
 .expense-item-combo select:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.13);
+  background: #ffffff;
   outline: none;
 }
 
@@ -9074,8 +9090,9 @@ body,
 .upload-drop {
   min-height: 96px;
   border: 1.5px dashed #9db7d6;
-  border-radius: 14px;
-  background: #f8fbff;
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(239, 246, 255, 0.72), rgba(255, 255, 255, 0.95));
 }
 
 .upload-drop:hover {
@@ -9094,6 +9111,8 @@ body,
 .expense-form .action-row {
   justify-content: flex-end;
   gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #edf2f7;
 }
 
 .expense-form .primary-button {
@@ -9117,7 +9136,8 @@ body,
 }
 
 .transaction-side-card {
-  padding: 15px;
+  padding: 16px;
+  border-color: #cfe0f4;
 }
 
 .transaction-info-row,
@@ -9127,12 +9147,12 @@ body,
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   margin-top: 8px;
-  padding: 9px 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #f8fafc;
+  padding: 10px 11px;
+  border: 1px solid #d7e3f1;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #f8fafc, #ffffff);
 }
 
 .transaction-info-row span {
@@ -9157,9 +9177,11 @@ body,
   color: #172554;
   font-weight: 900;
   cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
 .transaction-quick-action:hover {
+  transform: translateX(2px);
   border-color: #93c5fd;
   background: #eff6ff;
 }
