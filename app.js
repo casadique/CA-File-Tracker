@@ -3449,14 +3449,14 @@ function renderModernStaffDashboardShell(s, files = []) {
         </div>
       </div>
       <div class="dashboard-kpi-grid staff-dashboard-kpi-grid">
-        ${dashboardKpiCard("My Total Files", s.total, "Files assigned to me", "active", "folder", "all", staffTrendValues(files, "total"))}
-        ${dashboardKpiCard("My Active Files", files.filter((f) => !isCheckedCompleted(f)).length, "Current work", "wip", "task", "active", staffTrendValues(files, "active"))}
-        ${dashboardKpiCard("My Overdue Files", s.overdue, "Need attention", "overdue", "pending", "overdue", staffTrendValues(files, "overdue"), true)}
-        ${dashboardKpiCard("My Approval Pending", s.sharedNotApproved, "Pending approval", "feepending", "report", "approval", staffTrendValues(files, "approval"), true)}
+        ${dashboardKpiCard("Total Assigned", s.total, "Files assigned to me", "active", "folder", "all", staffTrendValues(files, "total"))}
+        ${dashboardKpiCard("Not Started", s.notStarted, "Receipt only", "billed", "file", "notStarted", staffTrendValues(files, "notStarted"))}
+        ${dashboardKpiCard("WIP", s.workInProgress, "Work underway", "wip", "task", "wip", staffTrendValues(files, "wip"))}
+        ${dashboardKpiCard("Work Done", s.reportsPrepared, "Work marked done", "receivedfee", "check", "workDone", staffTrendValues(files, "workDone"))}
+        ${dashboardKpiCard("Approval Pending", s.sharedNotApproved, "Shared not approved", "feepending", "report", "approval", staffTrendValues(files, "approval"), true)}
         ${dashboardKpiCard("Correction Required", s.correctionRequired, "Needs correction", "collectiontoday", "pending", "correction", staffTrendValues(files, "correction"), true)}
-        ${dashboardKpiCard("Re-Allotted Files", s.reAllotted, "Re-allotted to me", "receivedfee", "users", "reallotted", staffTrendValues(files, "reallotted"))}
-        ${dashboardKpiCard("My Completed Files", s.completed, "Completed by me", "completed", "check", "completed", staffTrendValues(files, "completed"))}
-        ${dashboardKpiCard("My Not Checked", s.notChecked, "Awaiting checking", "notchecked", "report", "notChecked", staffTrendValues(files, "notChecked"), true)}
+        ${dashboardKpiCard("Completed", s.completed, "Completed by me", "completed", "check", "completed", staffTrendValues(files, "completed"))}
+        ${dashboardKpiCard("Overdue", s.overdue, "Need attention", "overdue", "pending", "overdue", staffTrendValues(files, "overdue"), true)}
       </div>
     </section>
   `;
@@ -3473,6 +3473,9 @@ function staffTrendMatches(file = {}, kind = "total", date = "") {
   const updated = normalizeImportDate(file.lastUpdatedDate || file.updatedAt || file.updated_at || "");
   if (kind === "completed") return isCheckedCompleted(file) && normalizeImportDate(workCompletedDate(file)) <= date;
   if (kind === "active") return !isCheckedCompleted(file) && (received <= date || updated <= date);
+  if (kind === "notStarted") return stageIndex(file) === 0 && (received <= date || updated <= date);
+  if (kind === "wip") return Boolean(file.stages?.WIP) && !isCheckedCompleted(file) && (received <= date || updated <= date);
+  if (kind === "workDone") return Boolean(file.stages?.["Work Done"] || file.reportPrepared || file.workDone) && (received <= date || updated <= date);
   if (kind === "overdue") return isOverdue(file) && (received <= date || updated <= date);
   if (kind === "approval") return Boolean(file.shared && !file.approved) && (received <= date || updated <= date);
   if (kind === "correction") return hasOpenCorrection(file) && (received <= date || updated <= date);

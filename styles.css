@@ -6230,48 +6230,51 @@ textarea {
 
 /* Staff dashboard: match the main admin KPI card rhythm. */
 .staff-modern-dashboard .staff-dashboard-kpi-grid {
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
-  gap: 12px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-card {
-  min-height: 126px;
-  padding: 14px;
-  border-bottom-width: 4px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-top {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
-.staff-modern-dashboard .dashboard-kpi-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
+.staff-modern-dashboard .dashboard-kpi-card {
+  min-height: 104px;
+  padding: 12px;
+  border-radius: 12px;
+  border-bottom-width: 3px;
 }
 
-.staff-modern-dashboard .dashboard-kpi-icon svg {
-  width: 19px;
-  height: 19px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-title {
-  font-size: 11.5px;
-  line-height: 1.25;
-}
-
-.staff-modern-dashboard .dashboard-kpi-card > strong {
-  margin-top: 10px;
-  font-size: 26px;
-}
-
-.staff-modern-dashboard .dashboard-kpi-meta {
-  margin-top: 6px;
+.staff-modern-dashboard .dashboard-kpi-top {
   gap: 8px;
 }
 
-.staff-modern-dashboard .dashboard-kpi-meta small {
+.staff-modern-dashboard .dashboard-kpi-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-title {
   font-size: 11px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.staff-modern-dashboard .dashboard-kpi-card > strong {
+  margin-top: 7px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta {
+  margin-top: 5px;
+  gap: 6px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta small {
+  font-size: 10px;
   line-height: 1.2;
 }
 
@@ -8889,16 +8892,15 @@ body,
 
   .staff-modern-dashboard .staff-dashboard-kpi-grid {
     grid-template-columns: repeat(4, minmax(130px, 1fr));
-    gap: 10px;
   }
 
   .staff-modern-dashboard .dashboard-kpi-card {
-    min-height: 118px;
-    padding: 12px;
+    min-height: 100px;
+    padding: 11px;
   }
 
   .staff-modern-dashboard .dashboard-kpi-card > strong {
-    font-size: 24px;
+    font-size: 21px;
   }
 
   .staff-modern-dashboard .dashboard-kpi-meta small {
