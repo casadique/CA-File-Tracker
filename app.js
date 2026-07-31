@@ -310,6 +310,8 @@ let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
+let lastDashboardScrollAt = 0;
+let dashboardRefreshRenderTimer = null;
 let chatSendInFlight = false;
 let chatSearchTimer = null;
 const chatUiState = {
@@ -354,6 +356,10 @@ window.addEventListener("focus", () => {
   if (isSupabaseMode()) refreshCentralState({ force: true });
   else syncSharedState(localStorage.getItem(STORAGE_KEY), true);
 });
+
+window.addEventListener("scroll", () => {
+  lastDashboardScrollAt = Date.now();
+}, { passive: true });
 
 setInterval(() => {
   if (state.session?.loggedIn && isSupabaseMode()) {
@@ -1105,7 +1111,9 @@ async function refreshCentralState(options = {}) {
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
     const chatOpen = options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open");
-    applyCentralState(payload.state, { rerender: !chatOpen });
+    const userIsScrollingDashboard = activePage === "dashboard" && Date.now() - lastDashboardScrollAt < 700;
+    applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard });
+    if (userIsScrollingDashboard && !chatOpen) scheduleDashboardRefreshRender();
     if (chatOpen) {
       refreshOpenChatFromState();
     }
@@ -1114,6 +1122,18 @@ async function refreshCentralState(options = {}) {
     console.warn("Central refresh failed", error);
     return false;
   }
+}
+
+function scheduleDashboardRefreshRender() {
+  clearTimeout(dashboardRefreshRenderTimer);
+  dashboardRefreshRenderTimer = setTimeout(() => {
+    if (activePage !== "dashboard") return;
+    if (Date.now() - lastDashboardScrollAt < 650) {
+      scheduleDashboardRefreshRender();
+      return;
+    }
+    if (document.querySelector(".app-shell")) renderAll();
+  }, 700);
 }
 
 async function checkCentralStateVersion() {

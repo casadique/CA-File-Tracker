@@ -304,3 +304,255 @@
     justify-content: flex-start;
   }
 }
+
+/* Dashboard scroll stability: loaded last so older dashboard rules cannot override it. */
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+.app-shell {
+  width: 100%;
+  max-width: 100%;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+.sidebar {
+  width: 286px;
+  min-width: 286px;
+  max-width: 286px;
+  flex-shrink: 0;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  scrollbar-gutter: stable;
+}
+
+.app-shell.sidebar-collapsed .sidebar,
+.sidebar.collapsed {
+  width: 82px;
+  min-width: 82px;
+  max-width: 82px;
+}
+
+.content,
+.page,
+.modern-dashboard,
+.dashboard-layout,
+.dashboard-single,
+.dashboard-topbar,
+.dashboard-topbar-card,
+.dashboard-kpi-grid,
+.dashboard-chart-grid,
+.dashboard-lower-grid,
+.dashboard-data-card,
+.dashboard-kpi-card,
+.staff-modern-dashboard,
+.staff-modern-performance-wrap,
+.staff-performance-panel,
+.staff-performance-section {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.content,
+.page,
+.modern-dashboard,
+.dashboard-layout,
+.staff-modern-dashboard,
+.staff-modern-performance-wrap,
+.staff-performance-panel {
+  overflow-x: clip;
+}
+
+.topbar,
+.dashboard-topbar {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  z-index: 20;
+}
+
+.dashboard-mode .page,
+.page.active {
+  width: 100%;
+}
+
+.dashboard-kpi-grid,
+.dashboard-chart-grid,
+.dashboard-lower-grid {
+  width: 100%;
+}
+
+.dashboard-kpi-card,
+.dashboard-data-card {
+  height: 100%;
+  overflow: hidden;
+  contain: layout paint;
+}
+
+.dashboard-data-card:hover,
+.dashboard-kpi-card:hover,
+.dashboard-topbar-card:hover,
+.staff-performance-panel:hover,
+.staff-performance-section:hover {
+  transform: none;
+}
+
+.dashboard-chart-grid,
+.dashboard-lower-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-chart-grid .dashboard-data-card {
+  min-height: 260px;
+}
+
+.dashboard-lower-grid .dashboard-data-card {
+  min-height: 248px;
+}
+
+.dashboard-donut-wrap,
+.status-legend,
+.fee-breakdown,
+.dashboard-card-head {
+  min-width: 0;
+}
+
+.dashboard-donut,
+.fee-gauge {
+  flex-shrink: 0;
+}
+
+.dashboard-line-chart {
+  display: block;
+  width: 100%;
+  height: 150px;
+  min-height: 150px;
+  max-height: 150px;
+}
+
+.recent-activity-list,
+.dashboard-activity-list,
+.upcoming-due-list,
+.staff-celebration-grid {
+  min-width: 0;
+  overscroll-behavior: contain;
+}
+
+.staff-modern-dashboard .staff-dashboard-kpi-grid,
+.staff-modern-dashboard .dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.staff-modern-dashboard .dashboard-kpi-card {
+  min-width: 0;
+  min-height: 96px;
+  padding: 10px 11px;
+  border-radius: 12px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-top {
+  gap: 7px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-title {
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.18;
+  white-space: normal;
+}
+
+.staff-modern-dashboard .dashboard-kpi-card > strong {
+  margin-top: 6px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta {
+  margin-top: 4px;
+  gap: 5px;
+}
+
+.staff-modern-dashboard .dashboard-kpi-meta small {
+  font-size: 9.5px;
+  line-height: 1.12;
+}
+
+.staff-modern-dashboard .dashboard-mini-trend {
+  height: 13px;
+  margin-top: 5px;
+}
+
+.staff-performance-section .file-table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 1360px) {
+  .dashboard-chart-grid,
+  .dashboard-lower-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-modern-dashboard .staff-dashboard-kpi-grid,
+  .staff-modern-dashboard .dashboard-kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1180px) {
+  .staff-modern-dashboard .staff-dashboard-kpi-grid,
+  .staff-modern-dashboard .dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1024px) {
+  .sidebar,
+  .sidebar.collapsed,
+  .app-shell.sidebar-collapsed .sidebar {
+    width: min(86vw, 320px);
+    min-width: 0;
+    max-width: min(86vw, 320px);
+  }
+}
+
+@media (max-width: 680px) {
+  .dashboard-chart-grid,
+  .dashboard-lower-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-modern-dashboard .staff-dashboard-kpi-grid,
+  .staff-modern-dashboard .dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .staff-modern-dashboard .staff-dashboard-kpi-grid,
+  .staff-modern-dashboard .dashboard-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
