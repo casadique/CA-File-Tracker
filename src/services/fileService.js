@@ -1,6 +1,21 @@
 const crypto = require("crypto");
 const { patchAppState, sortFilesNewestFirst, normalizeFileNotifications } = require("./appStateService");
 
+const WORKFLOW_STAGES = [
+  "Received",
+  "Allotted",
+  "WIP",
+  "Work Done",
+  "On Hold",
+  "Client Pending",
+  "Approval Pending",
+  "Approved",
+  "Completed",
+  "Correction Required",
+  "Corrected & Completed",
+  "Billed",
+];
+
 async function listFiles(state, options = {}) {
   return sortFilesForRequest(state.files || [], options);
 }
@@ -590,7 +605,10 @@ function statusLabel(file = {}) {
   if (file.feeReceived) return "Received";
   if (file.filed || stages.Completed) return "Completed";
   if (file.billed || stages.Billed) return "Billed";
-  if (stages.WIP) return "WIP";
+  for (let index = WORKFLOW_STAGES.length - 1; index >= 0; index -= 1) {
+    const stage = WORKFLOW_STAGES[index];
+    if (!["Billed", "Completed", "Correction Required", "Corrected & Completed"].includes(stage) && stages[stage]) return stage;
+  }
   if (stages.Allotted || hasAssignedStaffValue(currentFileAssignee(file).name)) return "Allotted";
   return "Received";
 }

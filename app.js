@@ -5706,7 +5706,7 @@ function bindFileActions() {
     btn.onclick = () => returnFileForCorrection(btn.dataset.returnCorrection);
   });
   document.querySelectorAll("[data-billable]").forEach((btn) => {
-    btn.onclick = () => updateFileBilling(btn.dataset.billable, { billingType: "Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as billable", "billed");
+    btn.onclick = () => updateFileBilling(btn.dataset.billable, { billingType: "Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as Billable successfully.");
   });
   document.querySelectorAll("[data-non-billable]").forEach((btn) => {
     btn.onclick = () => updateFileBilling(btn.dataset.nonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as non-billable");
@@ -6120,8 +6120,7 @@ async function updateFileBilling(fileId, updates, message, nextListView = "") {
     toast("Billing saved locally, but central sync failed. Please retry.");
     return false;
   }
-  if (nextListView) state.filters.listView = nextListView;
-  toast(`${message} and synced`);
+  toast(/successfully/i.test(message) ? message : `${message} and synced`);
   renderAll();
   return true;
 }
@@ -6319,7 +6318,9 @@ function describeFileChanges(before, after) {
   if (before.serviceType !== after.serviceType) changes.push(`Service changed to ${after.serviceType}`);
   if (before.dueDate !== after.dueDate) changes.push(`Due date changed to ${fmt(after.dueDate)}`);
   if (before.priority !== after.priority) changes.push(`Priority changed to ${after.priority}`);
-  if (statusOf(before).label !== statusOf(after).label) changes.push(`Status changed to ${statusOf(after).label}`);
+  const beforeWorkflow = currentWorkflowStage(before);
+  const afterWorkflow = currentWorkflowStage(after);
+  if (beforeWorkflow !== afterWorkflow) changes.push(`${after.name || "File"} changed from ${beforeWorkflow} to ${afterWorkflow}`);
   if (before.checkedBy !== after.checkedBy || before.checkedDate !== after.checkedDate) changes.push("Checking details updated");
   if (before.remarks !== after.remarks) changes.push("Remarks updated");
   return changes.join("; ");
@@ -6328,6 +6329,7 @@ function describeFileChanges(before, after) {
 function fileChangeType(before, after) {
   if (!before && hasAssignedStaffValue(currentFileAssignee(after).name)) return "File Allotted";
   if (before && !sameStaffName(currentFileAssignee(before).name, currentFileAssignee(after).name)) return hasAssignedStaffValue(after.reAssignedStaff) ? "File Reassigned" : "File Re-Allotted";
+  if (before && currentWorkflowStage(before) !== currentWorkflowStage(after)) return "Status Updated";
   return "File Update";
 }
 
