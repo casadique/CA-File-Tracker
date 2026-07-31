@@ -4495,6 +4495,7 @@ function staffFilePageTitle(listView) {
     "": "File List",
     active: "Active Files",
     completed: "Completed Files",
+    correctionRequired: "Correction Required Files",
     notChecked: "Not Checked Files",
     nonBilled: "Non-Billed Files",
     billed: "Billed Files",
@@ -4888,7 +4889,7 @@ function staffReportRow(file, listView = "") {
   const startedDate = file.workStartedDate || (file.stages?.WIP || file.stages?.["Work Done"] || file.stages?.Completed ? file.workAllotmentDate || file.fileReceivedDate : "");
   if (listView === "reAssigned") {
     return {
-      "Client Name": file.name,
+      "Client Name": clientDetailsReportText(file),
       Service: file.serviceType,
       "Originally Allotted To": originalAllottedTo(file),
       "Reassigned From": file.reassignedFrom || file.reassigned_from || file.previousAllottedTo || "-",
@@ -4909,7 +4910,7 @@ function staffReportRow(file, listView = "") {
   }
   if (listView === "active") {
     return {
-      Client: file.name,
+      "Client Name": clientDetailsReportText(file),
       Service: file.serviceType,
       "Received on": displayDate(file.fileReceivedDate),
       "Work Allotted": displayDate(file.workAllotmentDate || file.fileReceivedDate),
@@ -4932,8 +4933,22 @@ function staffReportRow(file, listView = "") {
       "Checking Status": checkingStatusOf(file).label || "-",
     };
   }
+  if (listView === "correctionRequired") {
+    const correction = latestCorrectionForFile(file) || {};
+    return {
+      "Client Name": clientDetailsReportText(file),
+      "CR No.": file.crNo || file.cr_no || file.pan || "-",
+      "Service Type": file.serviceType,
+      "Completed Date": displayDate(workCompletedDate(file)),
+      "Returned On": displayDate(correction.returnedAt || correction.returned_at || file.returnedAt || file.returned_at || file.returnedDate),
+      "Required By": correction.returnedBy || correction.returned_by_name || file.returnedBy || "-",
+      "Correction Reason": correction.correctionReason || correction.correction_reason || file.correctionRemarks || "-",
+      Status: file.correctionStatus || correction.status || "Correction Required",
+      Priority: file.priority || "Medium",
+    };
+  }
   return {
-    "Client Name": file.name,
+    "Client Name": clientDetailsReportText(file),
     Service: file.serviceType,
     "C/o": file.careOf || "Direct",
     "Received on": displayDate(file.fileReceivedDate),
@@ -4962,7 +4977,7 @@ function renderStaffFileTable(files, listView = "") {
               <td>${fileSerialNumber(file, index)}</td>
               ${headers.map((h) => {
                 if (h === "Checking Status") return `<td>${renderCheckingStatusBadge(file)}</td>`;
-                if (["completed", "notChecked"].includes(listView) && h === "Client Name") return `<td class="client-details-cell">${clientDetailsCell(file)}</td>`;
+                if (["active", "completed", "notChecked"].includes(listView) && h === "Client Name") return `<td class="client-details-cell">${clientDetailsCell(file)}</td>`;
                 return `<td>${escapeHtml(row[h] || "")}</td>`;
               }).join("")}
               ${showEditAction ? `<td><div class="action-row"><button class="mini-button" data-edit="${file.id}">Edit</button></div></td>` : ""}
@@ -5087,6 +5102,7 @@ function staffExportName(listView) {
     "": "file-list",
     active: "active-files",
     completed: "completed-files",
+    correctionRequired: "correction-required-files",
     notChecked: "not-checked-files",
     billed: "billed-files",
     nonBilled: "non-billable-files",
@@ -5216,7 +5232,7 @@ function renderReAssignedFileTable(files) {
             const reallotDate = normalizeImportDate(file.reAssignedDate || file.reassignedAt || file.reassigned_at || history.assignedAt || history.assigned_at || "");
             return `<tr>
               <td>${index + 1}</td>
-              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
+              <td class="client-details-cell">${clientDetailsCell(file)}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
               <td>${fmt(file.fileReceivedDate)}</td>
               <td>${escapeHtml(file.careOf || "Direct")}</td>
@@ -5778,7 +5794,7 @@ function renderCorrectionRequiredTable(files) {
             const status = file.correctionStatus || correction.status || "Correction Required";
             return `<tr class="file-row file-row-overdue">
               <td>${index + 1}</td>
-              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
+              <td class="client-details-cell">${clientDetailsCell(file)}</td>
               <td>${escapeHtml(file.crNo || file.cr_no || file.pan || "-")}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
               ${compactStaffCorrectionView ? "" : `<td>${fmt(file.fileReceivedDate)}</td><td>${escapeHtml(file.assignedStaff || file.returnedTo || "Not Assigned")}</td>`}
