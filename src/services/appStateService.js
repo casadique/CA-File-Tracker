@@ -76,7 +76,7 @@ function normalizeServerState(state) {
     files: sortFilesNewestFirst(state.files || []),
     visitors: sortVisitorsNewestFirst(state.visitors || []),
     expenses: sortFinanceRows(state.expenses || []),
-    otherCashCollections: sortFinanceRows(state.otherCashCollections || []),
+    otherCashCollections: sortFinanceRows((state.otherCashCollections || []).map(normalizeCollectionRow)),
     chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
     chatGroups: Array.isArray(state.chatGroups) ? state.chatGroups : [],
     staffDetails: sortStaffDetailsNewestFirst(state.staffDetails || []),
@@ -132,6 +132,31 @@ function sortFinanceRows(rows) {
     if (right !== left) return right - left;
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
+}
+
+function normalizeCollectionRow(row = {}) {
+  const collectionType = normalizeCollectionType(row.collectionType || row.collection_type);
+  return {
+    ...row,
+    collectionType,
+    collection_type: collectionType,
+  };
+}
+
+function normalizeCollectionType(value = "") {
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  const aliases = {
+    fee_collection: "fee_collection",
+    other_cash_collection: "other_cash_collection",
+    cash_collection: "other_cash_collection",
+    bank_collection: "other_bank_collection",
+    other_bank_collection: "other_bank_collection",
+    other_collection: "other",
+    refund: "refund",
+    other: "other",
+  };
+  return aliases[key] || "";
 }
 
 function sortVisitorsNewestFirst(rows) {

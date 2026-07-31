@@ -6575,6 +6575,7 @@ textarea {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
+  position: relative;
   padding: 0;
   border-right: 1px solid #d7e3f1;
   background: #f3f6fa;
@@ -6698,10 +6699,25 @@ textarea {
 .new-chat-panel {
   display: grid;
   gap: 10px;
+  position: absolute;
+  top: 138px;
+  left: 12px;
+  right: 12px;
+  z-index: 8;
   padding: 12px;
   border: 1px solid #d7e3f1;
   border-radius: 16px;
   background: #fbfdff;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+}
+
+.new-chat-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #0f172a;
+  font-weight: 900;
 }
 
 .new-chat-panel input {
@@ -6715,7 +6731,7 @@ textarea {
 .new-chat-user-list {
   display: grid;
   gap: 8px;
-  max-height: 220px;
+  max-height: min(330px, 46vh);
   overflow: auto;
 }
 

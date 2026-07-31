@@ -153,6 +153,8 @@ function normalizeCollection(payload = {}, now, profile = {}) {
     particulars: String(payload.particulars || "").trim(),
     voucherNo: String(payload.voucherNo || payload.reference_number || "").trim(),
     reference_number: String(payload.voucherNo || payload.reference_number || "").trim(),
+    collectionType: normalizeCollectionType(payload.collectionType || payload.collection_type),
+    collection_type: normalizeCollectionType(payload.collectionType || payload.collection_type),
     amount,
     mode: String(payload.mode || payload.collection_mode || "Cash").trim(),
     collection_mode: String(payload.mode || payload.collection_mode || "Cash").trim(),
@@ -166,6 +168,22 @@ function normalizeCollection(payload = {}, now, profile = {}) {
     updatedAt: now.toISOString(),
     updated_at: now.toISOString(),
   };
+}
+
+function normalizeCollectionType(value = "") {
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  const aliases = {
+    fee_collection: "fee_collection",
+    other_cash_collection: "other_cash_collection",
+    cash_collection: "other_cash_collection",
+    bank_collection: "other_bank_collection",
+    other_bank_collection: "other_bank_collection",
+    other_collection: "other",
+    refund: "refund",
+    other: "other",
+  };
+  return aliases[key] || "";
 }
 
 function normalizeOpeningBalance(payload = {}, now, profile = {}) {

@@ -109,6 +109,14 @@ const defaultCareOfList = sortList([
 const defaultFyList = ["2024-25", "2025-26", "2026-27", "2027-28", "NA"];
 
 const modes = ["Whatsapp", "Physical", "Email"];
+const collectionTypeLabels = {
+  fee_collection: "Fee Collection",
+  other_cash_collection: "Other Cash Collection",
+  other_bank_collection: "Other Bank Collection",
+  refund: "Refund",
+  other: "Other",
+};
+const collectionTypeOptions = Object.entries(collectionTypeLabels).map(([value, label]) => ({ value, label }));
 const approvedStaffNames = new Set(staff.map((user) => user.name.toLowerCase()));
 const approvedServices = new Set(defaultServices.map((item) => item.toLowerCase()));
 const approvedCareOfNames = new Set(defaultCareOfList.map((item) => item.toLowerCase()));
@@ -592,6 +600,8 @@ function normalizeState(appState) {
     voucherNo: item.voucherNo || item.referenceNo || "",
     amount: Number(item.amount || 0) || 0,
     mode: item.mode || "Cash",
+    collectionType: normalizeCollectionType(item.collectionType || item.collection_type),
+    collection_type: normalizeCollectionType(item.collectionType || item.collection_type),
     receivedFrom: properCaseName(item.receivedFrom || ""),
     remarks: item.remarks || "",
     attachmentName: item.attachmentName || "",
@@ -1075,9 +1085,10 @@ async function refreshCentralState(options = {}) {
     const payload = await apiJson("/api/state");
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
-    applyCentralState(payload.state, { rerender: true });
-    if (options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open")) {
-      openTeamChat(false);
+    const chatOpen = options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open");
+    applyCentralState(payload.state, { rerender: !chatOpen });
+    if (chatOpen) {
+      refreshOpenChatFromState();
     }
     return true;
   } catch (error) {
@@ -1839,11 +1850,16 @@ function activeUserList() {
 }
 
 function chatRecipientUsers() {
-  return (state.users || [])
+  const uniqueUsers = new Map();
+  (state.users || [])
     .filter((user) => user.id !== state.session?.userId)
     .filter((user) => !isRevokedAccess(user))
     .filter((user) => !isRemovedStaff(user.name))
-    .filter((user, index, list) => list.findIndex((item) => normalizeEmail(item.email) === normalizeEmail(user.email)) === index)
+    .forEach((user) => {
+      const key = String(user.id || user.authUserId || normalizeEmail(user.email) || user.name || "").trim().toLowerCase();
+      if (key && !uniqueUsers.has(key)) uniqueUsers.set(key, user);
+    });
+  return [...uniqueUsers.values()]
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 }
 
@@ -10022,6 +10038,36 @@ function rupee(value) {
   return `${amount < 0 ? "-" : ""}&#8377; ${formatted}`;
 }
 
+function normalizeCollectionType(value = "") {
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  const aliases = {
+    fee_collection: "fee_collection",
+    other_cash_collection: "other_cash_collection",
+    cash_collection: "other_cash_collection",
+    bank_collection: "other_bank_collection",
+    other_bank_collection: "other_bank_collection",
+    other_collection: "other",
+    refund: "refund",
+    other: "other",
+  };
+  return aliases[key] || "";
+}
+
+function collectionTypeLabel(value = "") {
+  const key = normalizeCollectionType(value);
+  return key ? collectionTypeLabels[key] : "Collection Type Not Available";
+}
+
+function collectionTypeSelect(id, label, selectedValue = "") {
+  const selected = normalizeCollectionType(selectedValue) || "other_cash_collection";
+  return `<div class="field"><label>${escapeHtml(label)}</label><select id="${escapeHtml(id)}">${collectionTypeOptions.map((option) => `<option value="${escapeHtml(option.value)}" ${selected === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>`;
+}
+
+function isCollectionType(item = {}, type) {
+  return normalizeCollectionType(item.collectionType || item.collection_type) === type;
+}
+
 function renderExpenseEntryTab() {
   const rows = filteredExpenses();
   return `
@@ -10090,7 +10136,7 @@ function renderCashCollectionsTab() {
             <p>Record cash, bank or other collections</p>
           </div>
           ${expenseDateField("cashDate", "Collection Date", editingCashCollection()?.date || todayDate())}
-          ${expenseSelect("cashCollectionType", "Collection Type", ["Other Cash Collection", "Fee Collection", "Bank Collection", "Other Collection"], editingCashCollection()?.collectionType || "Other Cash Collection")}
+          ${collectionTypeSelect("cashCollectionType", "Collection Type", editingCashCollection()?.collectionType || editingCashCollection()?.collection_type || "other_cash_collection")}
           ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
           ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01", "compact-field amount-field")}
           ${expenseSelect("cashModeEntry", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
@@ -10123,7 +10169,7 @@ function renderTransactionSidePanel(tab) {
   const todaysCollections = (state.otherCashCollections || []).filter((item) => item.date === today);
   const cashCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash");
   const bankCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Bank");
-  const otherCollections = (state.otherCashCollections || []).filter((item) => !["Cash", "Bank"].includes(item.mode));
+  const otherCollections = (state.otherCashCollections || []).filter((item) => !isCollectionType(item, "fee_collection"));
   return `<aside class="transaction-side-column">
     <section class="transaction-side-card">
       <div class="expense-card-head">
@@ -10254,7 +10300,7 @@ function renderCashFilters() {
       ${expenseFilterInput("cashFrom", "From Date", "date")}
       ${expenseFilterInput("cashTo", "To Date", "date")}
       ${expenseFilterSelect("cashMode", "Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
-      ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", "Other Cash Collection", "Fee Collection", "Bank Collection", "Other Collection"])}
+      ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", ...collectionTypeOptions.map((option) => option.label)])}
       ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
       <div class="field"><label>Apply</label><button class="secondary-button" id="cashSearch">Apply Filter</button></div>
       <div class="field"><label>Clear</label><button class="secondary-button" id="cashReset">Clear Filter</button></div>
@@ -10608,7 +10654,8 @@ async function saveCashCollectionEntry(event) {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
     date: document.querySelector("#cashDate").value || todayDate(),
-    collectionType: document.querySelector("#cashCollectionType")?.value || existing?.collectionType || "Other Cash Collection",
+    collectionType: normalizeCollectionType(document.querySelector("#cashCollectionType")?.value || existing?.collectionType || existing?.collection_type || ""),
+    collection_type: normalizeCollectionType(document.querySelector("#cashCollectionType")?.value || existing?.collectionType || existing?.collection_type || ""),
     particulars: document.querySelector("#cashParticularsEntry").value.trim(),
     voucherNo: document.querySelector("#cashVoucherNo").value.trim(),
     amount,
@@ -10683,7 +10730,7 @@ function handleExpenseItemAction(event) {
 function viewTransactionDetail(type, item) {
   if (!item) return toast("Transaction record not found.");
   const parts = [
-    `${type}: ${item.particulars || item.collectionType || ""}`,
+    `${type}: ${item.particulars || collectionTypeLabel(item.collectionType || item.collection_type) || ""}`,
     `Date: ${expenseDisplayDate(item.date)}`,
     `Amount: ${money(item.amount)}`,
     `Mode: ${item.mode || ""}`,
@@ -10777,7 +10824,7 @@ function filteredCashCollections() {
     if (state.filters.cashTo && item.date > state.filters.cashTo) return false;
     if (state.filters.cashParticulars && !item.particulars.toLowerCase().includes(state.filters.cashParticulars.toLowerCase())) return false;
     if (state.filters.cashMode && item.mode !== state.filters.cashMode) return false;
-    if (state.filters.cashCollectionTypeFilter && (item.collectionType || "Other Cash Collection") !== state.filters.cashCollectionTypeFilter) return false;
+    if (state.filters.cashCollectionTypeFilter && collectionTypeLabel(item.collectionType || item.collection_type) !== state.filters.cashCollectionTypeFilter) return false;
     if (state.filters.cashCollectedByFilter && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.cashCollectedByFilter.toLowerCase())) return false;
     return true;
   }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
@@ -10800,7 +10847,7 @@ function expenseAttachmentLink(item) {
 function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.collectionType || "Other Cash Collection")}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th>Attachment</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td>${expenseAttachmentLink(item) || ""}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function resetExpenseFilters() {
@@ -10834,8 +10881,9 @@ function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.
   const mode = state.filters.balanceMode || "";
   const modeOk = (itemMode) => !mode || itemMode === mode;
   const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
-  const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0);
-  const otherCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const feeCollections = visibleFiles().filter((file) => file.feeReceived && String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0)
+    + (state.otherCashCollections || []).filter((item) => isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const otherCollections = (state.otherCashCollections || []).filter((item) => !isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return { opening, feeCollections, otherCollections, cashExpenses, closing: opening + feeCollections + otherCollections - cashExpenses };
 }
@@ -10871,7 +10919,7 @@ function cashMovementRows() {
       date: item.date,
       time: item.time || "",
       type: "Collection",
-      particulars: item.particulars || item.receivedFrom || "",
+      particulars: `${collectionTypeLabel(item.collectionType || item.collection_type)} - ${item.particulars || item.receivedFrom || ""}`,
       reference: item.voucherNo || "",
       cashIn: Number(item.amount || 0),
       cashOut: 0,
@@ -10913,7 +10961,7 @@ function expenseReportRows(rows = filteredExpenses()) {
 }
 
 function cashReportRows(rows = filteredCashCollections()) {
-  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Collection Type": item.collectionType || "Other Cash Collection", "Received From": item.receivedFrom, Particulars: item.particulars, Mode: item.mode, "Reference No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Collection Type": collectionTypeLabel(item.collectionType || item.collection_type), "Received From": item.receivedFrom, Particulars: item.particulars, Mode: item.mode, "Reference No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
   return [...mapped, { SN: "", Date: "", Particulars: "", "V.No": "", "Received From": "", Mode: "Total", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), Remarks: "" }];
 }
 
@@ -12218,11 +12266,11 @@ function openTeamChat(clearDraft = false) {
           <div class="chat-filter-tabs" role="tablist" aria-label="Chat filters">
             ${["all", "private", "groups", "unread"].map((filter) => `<button class="chat-filter-chip ${chatUiState.filter === filter ? "active" : ""}" data-chat-filter="${filter}" type="button">${properCaseName(filter)}</button>`).join("")}
           </div>
-          ${renderNewChatPanel()}
         </div>
         <div class="chat-conversation-list" id="chatConversationList">
           ${renderChatConversationList()}
         </div>
+        ${renderNewChatPanel()}
       </aside>
       <section class="chat-conversation-panel" id="chatConversationPanel">
         ${renderActiveConversationPanel(previousText)}
@@ -12291,6 +12339,8 @@ function bindChatConversationClicks() {
     btn.addEventListener("click", () => {
       chatUiState.targetType = btn.dataset.chatType || "group";
       chatUiState.recipientId = btn.dataset.chatRecipient || (chatUiState.targetType === "group" ? "team" : "");
+      chatUiState.newChatOpen = false;
+      document.querySelector(".new-chat-panel")?.remove();
       document.querySelector("#teamChatPanel")?.classList.add("chat-mobile-open");
       document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
       renderChatConversationListOnly();
@@ -12303,7 +12353,6 @@ function bindChatConversationClicks() {
 
 function bindChatComposerEvents() {
   document.querySelector("#chatComposeForm")?.addEventListener("submit", handleChatSubmit);
-  document.querySelector("#sendChatMessage")?.addEventListener("click", handleChatSubmit);
   const textarea = document.querySelector("#chatText");
   if (textarea) {
     textarea.addEventListener("input", () => {
@@ -12336,6 +12385,10 @@ function resizeChatTextarea(textarea = document.querySelector("#chatText")) {
 }
 
 function bindNewChatEvents() {
+  document.querySelector("#closeNewChatPanel")?.addEventListener("click", () => {
+    chatUiState.newChatOpen = false;
+    renderChatSidebarContent();
+  });
   document.querySelectorAll("[data-new-chat-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       chatUiState.newChatMode = btn.dataset.newChatMode || "private";
@@ -12396,11 +12449,11 @@ function renderChatSidebarContent() {
       <div class="chat-filter-tabs" role="tablist" aria-label="Chat filters">
         ${["all", "private", "groups", "unread"].map((filter) => `<button class="chat-filter-chip ${chatUiState.filter === filter ? "active" : ""}" data-chat-filter="${filter}" type="button">${properCaseName(filter)}</button>`).join("")}
       </div>
-      ${renderNewChatPanel()}
     </div>
     <div class="chat-conversation-list" id="chatConversationList">
       ${renderChatConversationList()}
     </div>
+    ${renderNewChatPanel()}
   `;
   bindChatSidebarEvents();
   if (active === "chatSearch") {
@@ -12474,6 +12527,10 @@ function renderNewChatPanel() {
   if (chatUiState.newChatMode === "group") {
     return `
       <div class="new-chat-panel">
+        <div class="new-chat-panel-head">
+          <strong>New chat</strong>
+          <button class="chat-search-clear" id="closeNewChatPanel" type="button" aria-label="Close new chat selector">x</button>
+        </div>
         <div class="new-chat-mode">
           <button class="" data-new-chat-mode="private" type="button">Private</button>
           <button class="active" data-new-chat-mode="group" type="button">Group</button>
@@ -12488,6 +12545,10 @@ function renderNewChatPanel() {
   }
   return `
     <div class="new-chat-panel">
+      <div class="new-chat-panel-head">
+        <strong>New chat</strong>
+        <button class="chat-search-clear" id="closeNewChatPanel" type="button" aria-label="Close new chat selector">x</button>
+      </div>
       <div class="new-chat-mode">
         <button class="active" data-new-chat-mode="private" type="button">Private</button>
         <button data-new-chat-mode="group" type="button">Group</button>
@@ -12545,9 +12606,28 @@ function markActiveConversationRead() {
     .map((message) => message.id);
   if (unreadIds.length) {
     markChatMessagesRead(unreadIds);
-    saveTabSession();
+    saveState({ skipMerge: true, fullRemote: true });
     renderChatConversationListOnly();
+    updateTopActionBadges();
   }
+}
+
+function refreshOpenChatFromState() {
+  if (!document.querySelector("#teamChatPanel")?.classList.contains("open")) return;
+  ensureActiveChatConversation();
+  renderChatConversationListOnly();
+  refreshActiveChatMessages(false);
+  markActiveConversationRead();
+  updateTopActionBadges();
+}
+
+function refreshActiveChatMessages(forceScroll = false) {
+  const list = document.querySelector("#chatMessages");
+  if (!list) return;
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 90;
+  const messages = chatConversationMessages(chatUiState.targetType, chatUiState.recipientId).slice(-150);
+  list.innerHTML = renderChatMessages(messages);
+  if (forceScroll || nearBottom) scrollActiveChatToBottom();
 }
 
 function scrollActiveChatToBottom() {
@@ -12632,9 +12712,7 @@ function chatConversationTitle(targetType = "all", recipientId = "") {
 function chatConversationSummaries(activeType = "all", activeRecipient = "") {
   const recipients = chatRecipientUsers();
   const groups = chatGroups();
-  const allMessages = visibleChatMessages();
   const rows = [
-    chatConversationSummary("all", "", "All Conversations", "Group and personal messages", allMessages, activeType === "all"),
     ...groups.map((group) => {
       const messages = visibleChatMessages().filter((message) => (message.targetType || "group") === "group" && (message.groupId || message.group_id || "team") === group.id);
       const memberCount = group.id === "team" ? recipients.length + 1 : (group.memberIds || []).length + 1;
@@ -12645,11 +12723,14 @@ function chatConversationSummaries(activeType = "all", activeRecipient = "") {
       return chatConversationSummary("personal", user.id, chatDisplayName(user), user.role || user.email || "Team member", messages, activeType === "personal" && activeRecipient === user.id, user);
     }),
   ];
-  const pinned = rows.filter((row) => row.type === "all");
   const sorted = rows
-    .filter((row) => row.type !== "all")
-    .sort((a, b) => (b.latestAt || 0) - (a.latestAt || 0) || String(a.title).localeCompare(String(b.title)));
-  return [...pinned, ...sorted];
+    .sort((a, b) =>
+      (b.unread || 0) - (a.unread || 0) ||
+      Number(Boolean(b.latestAt)) - Number(Boolean(a.latestAt)) ||
+      (b.latestAt || 0) - (a.latestAt || 0) ||
+      String(a.title).localeCompare(String(b.title))
+    );
+  return sorted;
 }
 
 function chatConversationSummary(type, recipientId, title, subtitle, messages, active, user = null) {
@@ -12661,7 +12742,7 @@ function chatConversationSummary(type, recipientId, title, subtitle, messages, a
     recipientId,
     title: title || "Unknown User",
     subtitle,
-    latestText: latest?.text || (latest?.attachments?.length ? `Attachment: ${latest.attachments[0].name}` : "No messages yet"),
+    latestText: latest?.text || (latest?.attachments?.length ? `Attachment: ${latest.attachments[0].name}` : "Start a new conversation"),
     latestTime: latest ? formatChatListTime(latest) : "",
     latestAt,
     initials: userInitials(title),
@@ -12860,11 +12941,8 @@ async function sendChatMessage() {
     createdAt: new Date().toISOString(),
   };
   state.chatMessages = mergeChatMessages(state.chatMessages || [], [optimistic]);
-  if (input) input.value = "";
-  if (fileInput) fileInput.value = "";
-  document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
-  bindChatComposerEvents();
-  scrollActiveChatToBottom();
+  renderChatConversationListOnly();
+  refreshActiveChatMessages(true);
   if (isSupabaseMode()) {
     try {
       const result = await apiJson("/api/chat", {
@@ -12887,19 +12965,19 @@ async function sendChatMessage() {
       if (sent?.id) markChatMessageRead(sent.id, sender);
       saveState({ skipMerge: true, skipRemote: true });
       toast("Message sent");
-      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+      if (input) input.value = "";
+      if (fileInput) fileInput.value = "";
+      renderChatAttachmentPreview();
+      resizeChatTextarea(input);
       renderChatConversationListOnly();
-      bindChatComposerEvents();
-      scrollActiveChatToBottom();
-      document.querySelector("#chatText")?.focus();
+      refreshActiveChatMessages(true);
+      input?.focus();
       return;
     } catch (error) {
       state.chatMessages = mergeChatMessages((state.chatMessages || []).filter((message) => message.id !== optimistic.id), [{ ...optimistic, status: "failed" }]);
-      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel(text);
       renderChatConversationListOnly();
-      bindChatComposerEvents();
-      scrollActiveChatToBottom();
-      document.querySelector("#chatText")?.focus();
+      refreshActiveChatMessages(true);
+      input?.focus();
       console.error("Failed message insert", { targetType, targetUserId: targetUser?.id || "", message: error.message });
       return toast(`Message failed to send: ${error.message || "Please retry."}`);
     } finally {
@@ -12937,12 +13015,14 @@ async function sendChatMessage() {
   markChatMessageRead(messageId, sender);
   saveState();
   chatSendInFlight = false;
+  if (input) input.value = "";
+  if (fileInput) fileInput.value = "";
+  renderChatAttachmentPreview();
+  resizeChatTextarea(input);
   updateSendButtonState();
-  document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
   renderChatConversationListOnly();
-  bindChatComposerEvents();
-  scrollActiveChatToBottom();
-  document.querySelector("#chatText")?.focus();
+  refreshActiveChatMessages(true);
+  input?.focus();
 }
 
 function readChatAttachment(file) {
