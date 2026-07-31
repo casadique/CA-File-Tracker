@@ -8883,9 +8883,26 @@ body,
 }
 
 @media (max-width: 1360px) {
-  .dashboard-kpi-grid,
-  .staff-modern-dashboard .staff-dashboard-kpi-grid {
+  .dashboard-kpi-grid {
     grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
+  .staff-modern-dashboard .staff-dashboard-kpi-grid {
+    grid-template-columns: repeat(4, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .staff-modern-dashboard .dashboard-kpi-card {
+    min-height: 118px;
+    padding: 12px;
+  }
+
+  .staff-modern-dashboard .dashboard-kpi-card > strong {
+    font-size: 24px;
+  }
+
+  .staff-modern-dashboard .dashboard-kpi-meta small {
+    font-size: 10.5px;
   }
 
   .dashboard-chart-grid,
