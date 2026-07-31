@@ -2966,6 +2966,7 @@ function mount() {
     <div class="toast" id="toast"></div>
   `;
   bindShell();
+  bindMainContentScrollGuard();
   renderNav();
   renderAll();
 }
@@ -3207,6 +3208,15 @@ function bindShell() {
   document.onkeydown = (event) => {
     if (event.key === "Escape") closeOverlays();
   };
+}
+
+function bindMainContentScrollGuard() {
+  const content = document.querySelector(".content");
+  if (!content || content.dataset.scrollGuardBound === "Yes") return;
+  content.dataset.scrollGuardBound = "Yes";
+  content.addEventListener("scroll", () => {
+    lastDashboardScrollAt = Date.now();
+  }, { passive: true });
 }
 
 function isSidebarCollapsed() {

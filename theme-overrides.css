@@ -306,29 +306,56 @@
 }
 
 /* Dashboard scroll stability: loaded last so older dashboard rules cannot override it. */
-html {
+html,
+body,
+#app {
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
   scrollbar-gutter: stable;
 }
 
-body {
-  overflow-x: hidden;
-}
-
-.app-shell {
+.app-shell,
+.app-shell.sidebar-collapsed {
+  display: grid;
+  grid-template-columns: 286px minmax(0, 1fr);
   width: 100%;
   max-width: 100%;
+  height: 100dvh;
   min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 82px minmax(0, 1fr);
+}
+
+.login-page {
+  height: 100dvh;
+  overflow-y: auto;
   overflow-x: hidden;
 }
 
 .sidebar {
+  position: relative;
+  top: auto;
+  left: auto;
   width: 286px;
   min-width: 286px;
   max-width: 286px;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
   flex-shrink: 0;
   transform: translateZ(0);
   backface-visibility: hidden;
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .app-shell.sidebar-collapsed .sidebar,
@@ -336,6 +363,32 @@ body {
   width: 82px;
   min-width: 82px;
   max-width: 82px;
+}
+
+.sidebar .brand,
+.sidebar .current-user-card {
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.sidebar .nav,
+.nav {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.content {
+  width: 100%;
+  min-width: 0;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .content,
@@ -358,7 +411,6 @@ body {
   max-width: 100%;
 }
 
-.content,
 .page,
 .modern-dashboard,
 .dashboard-layout,
@@ -529,12 +581,42 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+    height: 100dvh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+
   .sidebar,
   .sidebar.collapsed,
   .app-shell.sidebar-collapsed .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 80;
     width: min(86vw, 320px);
     min-width: 0;
     max-width: min(86vw, 320px);
+    height: 100dvh;
+    max-height: 100dvh;
+    transform: translateX(-105%);
+    transition: transform 0.24s ease;
+  }
+
+  .sidebar.open,
+  .sidebar.collapsed.open,
+  .app-shell.sidebar-collapsed .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .content {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 }
 
