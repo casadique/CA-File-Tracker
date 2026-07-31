@@ -1311,7 +1311,7 @@ function normalizeStaffDetails(rows = [], users = state.users || []) {
     const normalized = {
       id: row.id || `staff-${crypto.randomUUID()}`,
       linkedUserId: row.linkedUserId || row.linked_user_id || "",
-      staffCode: String(row.staffCode || row.staff_code || row.employeeId || "").trim(),
+      staffCode: String(row.staffCode || row.staff_code || row.employeeId || row.employee_id || "").trim(),
       staffName: properCaseName(row.staffName || row.staff_name || row.name || linkedUser?.name || ""),
       dateOfJoining: normalizeImportDate(row.dateOfJoining || row.date_of_joining || row.doj) || "",
       dateOfBirth: normalizeImportDate(row.dateOfBirth || row.date_of_birth || row.dob) || "",
@@ -6246,7 +6246,7 @@ function renderStaffDetailsPage() {
       ${renderStaffDetailsForm()}
       <section class="panel staff-details-panel">
         <div class="staff-details-filter-grid">
-          ${staffFilterInput("staffSearch", "Search", "Search by staff name, email, code or position")}
+          ${staffFilterInput("staffSearch", "Search", "Search by staff name, email, employee ID or position")}
           ${staffFilterSelect("staffDepartment", "Department", uniqueStaffValues("department"))}
           ${staffFilterSelect("staffPosition", "Position", uniqueStaffValues("position"))}
           ${staffFilterSelect("staffStatus", "Employment Status", ["Active", "On Leave", "Resigned", "Terminated", "Inactive"])}
@@ -6271,6 +6271,11 @@ function staffSummaryCard(title, value, note, icon) {
   return `<div class="dashboard-kpi-card staff-summary-card"><div class="dashboard-kpi-top"><span class="dashboard-kpi-icon">${navIcon(icon)}</span><span class="dashboard-kpi-title">${escapeHtml(title)}</span></div><strong>${Number(value || 0).toLocaleString("en-IN")}</strong><div class="dashboard-kpi-meta"><small>${escapeHtml(note)}</small></div></div>`;
 }
 
+const staffPositionOptions = ["Assistant", "Manager"];
+const staffEmploymentTypeOptions = ["Permanent", "Temporary", "Contract", "Part-Time", "Intern", "CA Article", "CMA Article"];
+const staffGenderOptions = ["Male", "Female", "Transgender"];
+const staffDepartmentOptions = ["Accounts & Audit", "Audit", "Taxation", "Accounts", "Admin", "Other Operations", "Sales", "Marketing", "Other"];
+
 function renderStaffDetailsForm() {
   if (!canManageStaffDetails()) return "";
   const editing = state.staffDetails.find((row) => row.id === state.filters.staffEditingId) || null;
@@ -6280,6 +6285,7 @@ function renderStaffDetailsForm() {
   const userSearch = normalizeImportMatchText(state.filters.staffUserSearch || "");
   const selectableUsers = state.users.filter((user) => !userSearch || normalizeImportMatchText(`${user.name} ${user.email} ${user.id} ${user.role}`).includes(userSearch));
   const v = (key, fallback = "") => escapeHtml(editing?.[key] ?? fallback ?? "");
+  const raw = (key, fallback = "") => String(editing?.[key] ?? fallback ?? "");
   return `<section class="panel staff-form-panel ${visible ? "" : "hidden"}">
     <div class="staff-form-head"><div><h3>${editing ? "Edit Staff" : "Add Staff"}</h3><p>${mode === "existing" ? "Link to an existing app user without creating a duplicate login." : "Create a manual staff record without login access."}</p></div><button class="icon-button" id="closeStaffForm" type="button">X</button></div>
     <div class="staff-entry-tabs">
@@ -6290,18 +6296,18 @@ function renderStaffDetailsForm() {
       <input type="hidden" name="id" value="${v("id")}">
       ${mode === "existing" ? `<div class="field staff-user-search"><label>Search Existing Users</label><input id="staffUserSearch" value="${escapeHtml(state.filters.staffUserSearch || "")}" placeholder="Search by name, email, user ID or role"></div><div class="field staff-user-picker"><label>Linked User</label><select name="linkedUserId" id="staffLinkedUser"><option value="">Select existing user</option>${selectableUsers.map((user) => `<option value="${escapeHtml(user.id)}" ${(selectedUser?.id || editing?.linkedUserId) === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.email)} - ${escapeHtml(user.role)}</option>`).join("")}</select></div>` : `<input type="hidden" name="linkedUserId" value="${v("linkedUserId")}">`}
       ${staffFormField("staffName", "Staff Name", "text", v("staffName", selectedUser?.name || ""), true)}
-      ${staffFormField("staffCode", "Staff Code / Employee ID", "text", v("staffCode"))}
+      ${staffFormField("staffCode", "Employee ID", "text", v("staffCode"))}
       ${staffFormField("dateOfJoining", "DOJ", "date", v("dateOfJoining"), true)}
       ${staffFormField("dateOfBirth", "DOB", "date", v("dateOfBirth"))}
       ${staffFormField("email", "Email", "email", v("email", selectedUser?.email || ""))}
       ${staffFormField("mobile", "Mobile", "tel", v("mobile"))}
-      ${staffFormField("position", "Position", "text", v("position", selectedUser?.role || ""), true)}
-      ${staffFormField("department", "Department", "text", v("department"))}
+      ${staffSelectField("position", "Position", staffPositionOptions, raw("position", selectedUser?.role || ""), "Select Position", true)}
+      ${staffDepartmentField(raw("department"))}
       <div class="field"><label>Reporting Manager</label><select name="reportingManagerId"><option value="">Select Manager</option>${state.users.filter((u) => ["Admin", "Manager", "Staff Manager"].includes(u.role)).map((u) => `<option value="${escapeHtml(u.id)}" ${editing?.reportingManagerId === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`).join("")}</select></div>
       ${staffFormField("branch", "Branch or Office", "text", v("branch"))}
-      <div class="field"><label>Employment Type</label><select name="employmentType">${["", "Permanent", "Temporary", "Probation", "Intern", "Consultant", "Part-time"].map((item) => `<option ${editing?.employmentType === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      ${staffSelectField("employmentType", "Employment Type", staffEmploymentTypeOptions, raw("employmentType"), "Select Employment Type")}
       <div class="field"><label>Employment Status</label><select name="employmentStatus">${["Active", "On Leave", "Resigned", "Terminated", "Inactive"].map((item) => `<option ${((editing?.employmentStatus || "Active") === item) ? "selected" : ""}>${item}</option>`).join("")}</select></div>
-      ${staffFormField("gender", "Gender", "text", v("gender"))}
+      ${staffSelectField("gender", "Gender", staffGenderOptions, raw("gender"), "Select Gender")}
       ${staffFormField("emergencyContactName", "Emergency Contact Name", "text", v("emergencyContactName"))}
       ${staffFormField("emergencyContactNumber", "Emergency Contact Number", "tel", v("emergencyContactNumber"))}
       ${staffFormField("profilePhotoUrl", "Profile Photo URL", "url", v("profilePhotoUrl"))}
@@ -6315,6 +6321,41 @@ function renderStaffDetailsForm() {
 
 function staffFormField(name, label, type, value, required = false) {
   return `<div class="field"><label>${escapeHtml(label)}${required ? " *" : ""}</label><input name="${name}" type="${type}" value="${value}" ${required ? "required" : ""}></div>`;
+}
+
+function staffSelectField(name, label, options, currentValue = "", placeholder = "Select", required = false) {
+  const cleanValue = String(currentValue || "").trim();
+  const optionValues = staffOptionsWithLegacy(options, cleanValue);
+  return `<div class="field"><label>${escapeHtml(label)}${required ? " *" : ""}</label><select name="${escapeHtml(name)}" ${required ? "required" : ""}>
+    <option value="">${escapeHtml(placeholder)}</option>
+    ${optionValues.map((item) => `<option value="${escapeHtml(item)}" ${cleanValue === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+  </select></div>`;
+}
+
+function staffOptionsWithLegacy(options, currentValue = "") {
+  const cleanValue = String(currentValue || "").trim();
+  const values = [...options];
+  if (cleanValue && !values.some((item) => item.toLowerCase() === cleanValue.toLowerCase())) values.unshift(cleanValue);
+  return values;
+}
+
+function staffValueAllowed(value, options, legacyValue = "") {
+  const cleanValue = String(value || "").trim();
+  const cleanLegacy = String(legacyValue || "").trim();
+  if (!cleanValue) return true;
+  return options.includes(cleanValue) || cleanValue === cleanLegacy;
+}
+
+function staffDepartmentField(currentValue = "") {
+  const cleanValue = String(currentValue || "").trim();
+  const isStandard = staffDepartmentOptions.some((item) => item.toLowerCase() === cleanValue.toLowerCase());
+  const selected = cleanValue && !isStandard ? "Other" : cleanValue;
+  const otherValue = cleanValue && !isStandard ? cleanValue : "";
+  return `<div class="field"><label>Department</label><select name="departmentChoice" id="staffDepartmentSelect">
+    <option value="">Select Department</option>
+    ${staffDepartmentOptions.map((item) => `<option value="${escapeHtml(item)}" ${selected === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+  </select></div>
+  <div class="field staff-other-department ${selected === "Other" ? "" : "hidden"}" id="staffOtherDepartmentField"><label>Specify Department</label><input name="otherDepartment" type="text" value="${escapeHtml(otherValue)}" placeholder="Enter Department"></div>`;
 }
 
 function staffFilterInput(key, label, placeholder = "") {
@@ -6360,7 +6401,7 @@ function filteredStaffDetails() {
 
 function renderStaffDetailsTable(rows) {
   if (!rows.length) return empty("No staff records found.");
-  const headers = ["SN", "Profile", "Staff Name", "Staff Code", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting Manager", "Employment Status", "Actions"];
+  const headers = ["SN", "Profile", "Staff Name", "Employee ID", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting Manager", "Employment Status", "Actions"];
   return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
     <td>${index + 1}</td>
     <td>${staffAvatar(row)}</td>
@@ -6395,7 +6436,7 @@ function renderStaffProfile() {
   return `<div class="staff-profile">
     <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
     <div class="staff-profile-grid">
-      ${staffProfileBlock("Employment Information", [["Staff Code", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting Manager", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
+      ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting Manager", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
       ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber].filter(Boolean).join(" - ")]])}
       ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
       ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
@@ -6447,6 +6488,9 @@ function bindStaffDetailsPage() {
     renderStaffDetailsPage();
   });
   document.querySelector("#staffDetailsForm")?.addEventListener("submit", saveStaffDetailsForm);
+  document.querySelector("#staffDepartmentSelect")?.addEventListener("change", (event) => {
+    document.querySelector("#staffOtherDepartmentField")?.classList.toggle("hidden", event.target.value !== "Other");
+  });
   document.querySelectorAll("[data-view-staff]").forEach((btn) => btn.addEventListener("click", () => {
     state.filters.staffProfileId = btn.dataset.viewStaff;
     saveViewState();
@@ -6489,22 +6533,31 @@ function saveStaffDetailsForm(event) {
   const doj = normalizeImportDate(data.get("dateOfJoining"));
   const dob = normalizeImportDate(data.get("dateOfBirth"));
   const position = String(data.get("position") || "").trim();
+  const departmentChoice = String(data.get("departmentChoice") || "").trim();
+  const otherDepartment = String(data.get("otherDepartment") || "").trim();
+  const department = departmentChoice === "Other" ? (otherDepartment || "Other") : departmentChoice;
+  const employmentType = String(data.get("employmentType") || "").trim();
+  const gender = String(data.get("gender") || "").trim();
+  const old = state.staffDetails.find((row) => row.id === editingId) || {};
   if (!name) errors.push("Staff Name is required.");
   if (!doj) errors.push("DOJ is required.");
   if (!position) errors.push("Position is required.");
+  if (!staffValueAllowed(position, staffPositionOptions, old.position)) errors.push("Select a valid Position.");
+  if (!staffValueAllowed(employmentType, staffEmploymentTypeOptions, old.employmentType)) errors.push("Select a valid Employment Type.");
+  if (!staffValueAllowed(gender, staffGenderOptions, old.gender)) errors.push("Select a valid Gender.");
+  if (departmentChoice && !staffDepartmentOptions.includes(departmentChoice)) errors.push("Select a valid Department.");
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Please enter a valid Email.");
   if (data.get("mobile") && !/^[0-9+\-\s()]{6,20}$/.test(String(data.get("mobile")))) errors.push("Please enter a valid Mobile number.");
   if (dob && dob > indiaTodayDate()) errors.push("DOB cannot be a future date.");
   if (doj && doj > indiaTodayDate()) errors.push("DOJ cannot be a future date.");
   if (email && state.staffDetails.some((row) => row.id !== editingId && normalizeEmail(row.email) === email && !["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus))) errors.push("Email is already used by another active staff record.");
   if (linkedUserId && state.staffDetails.some((row) => row.id !== editingId && row.linkedUserId === linkedUserId && !["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus))) errors.push("This user is already linked to an active staff record.");
-  if (staffCode && state.staffDetails.some((row) => row.id !== editingId && String(row.staffCode || "").toLowerCase() === staffCode.toLowerCase())) errors.push("Staff Code must be unique.");
+  if (staffCode && state.staffDetails.some((row) => row.id !== editingId && String(row.staffCode || "").toLowerCase() === staffCode.toLowerCase())) errors.push("Employee ID must be unique.");
   if (errors.length) {
     document.querySelector("#staffFormErrors").innerHTML = errors.map((error) => `<p>${escapeHtml(error)}</p>`).join("");
     if (button) button.disabled = false;
     return;
   }
-  const old = state.staffDetails.find((row) => row.id === editingId) || {};
   const record = {
     ...old,
     id,
@@ -6516,12 +6569,12 @@ function saveStaffDetailsForm(event) {
     email,
     mobile: String(data.get("mobile") || "").trim(),
     position,
-    department: String(data.get("department") || "").trim(),
+    department,
     reportingManagerId: data.get("reportingManagerId") || "",
     branch: String(data.get("branch") || "").trim(),
-    employmentType: data.get("employmentType") || "",
+    employmentType,
     employmentStatus: data.get("employmentStatus") || "Active",
-    gender: String(data.get("gender") || "").trim(),
+    gender,
     address: String(data.get("address") || "").trim(),
     emergencyContactName: String(data.get("emergencyContactName") || "").trim(),
     emergencyContactNumber: String(data.get("emergencyContactNumber") || "").trim(),
@@ -6573,7 +6626,7 @@ function staffDetailsReportRows(rows = filteredStaffDetails()) {
   return rows.map((row, index) => ({
     SN: index + 1,
     "Staff Name": row.staffName,
-    "Staff Code": row.staffCode,
+    "Employee ID": row.staffCode,
     DOJ: displayDate(row.dateOfJoining),
     DOB: canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth),
     Position: row.position,
