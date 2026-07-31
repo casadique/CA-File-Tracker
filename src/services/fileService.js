@@ -10,7 +10,7 @@ function sortFilesForRequest(files, options = {}) {
   const direction = String(options.direction || options.sortDirection || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   const listView = String(options.listView || options.view || "").trim();
   let rows = [...files];
-  if (listView === "completed") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file));
+  if (listView === "completed") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !(isCorrectedCompleted(file) && !isCheckedFile(file)));
   if (listView === "active") rows = rows.filter((file) => !isCompletedFile(file) || hasOpenCorrection(file));
   if (listView === "correctionRequired") rows = rows.filter(hasOpenCorrection);
   if (listView === "notChecked") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !file.checkedBy);
@@ -106,8 +106,19 @@ function isCompletedFile(file = {}) {
 
 function hasOpenCorrection(file = {}) {
   const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
+  if (isCorrectedCompleted(file)) return false;
   return Boolean(file.stages?.["Correction Required"])
-    || ["correction required", "correction in progress", "resubmitted for checking", "returned again", "returned for correction"].includes(status);
+    || ["correction required", "correction in progress", "returned again", "returned for correction"].includes(status);
+}
+
+function isCorrectedCompleted(file = {}) {
+  const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
+  return Boolean(file.stages?.["Corrected & Completed"] || file.stages?.corrected_completed)
+    || ["corrected & completed", "corrected and completed", "corrected_completed", "resubmitted for checking"].includes(status);
+}
+
+function isCheckedFile(file = {}) {
+  return Boolean(file.checkedBy || file.checkedDate);
 }
 
 function latestCorrection(file = {}) {
@@ -218,7 +229,7 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       error.status = 400;
       throw error;
     }
-    const stages = { ...(file.stages || {}), "Correction Required": true, Completed: false };
+    const stages = { ...(file.stages || {}), "Correction Required": true, "Corrected & Completed": false, Completed: false };
     files[index] = {
       ...file,
       stages,
@@ -452,6 +463,7 @@ function shouldBumpTaskActivity(before, after, profile = {}) {
 function statusLabel(file = {}) {
   const stages = file.stages || {};
   if (stages["Correction Required"]) return "Correction Required";
+  if (isCorrectedCompleted(file) && !isCheckedFile(file)) return "Corrected & Completed";
   if (file.feeReceived) return "Received";
   if (file.filed || stages.Completed) return "Completed";
   if (file.billed || stages.Billed) return "Billed";

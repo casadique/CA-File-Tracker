@@ -34,6 +34,7 @@ const stages = [
   "Approved",
   "Completed",
   "Correction Required",
+  "Corrected & Completed",
   "Billed",
 ];
 
@@ -2105,6 +2106,7 @@ function normalizeStages(file) {
     "Correction Required": Boolean(old["Correction Required"]),
     Approved: Boolean(old.Approved),
     Completed: Boolean(old.Completed || old.Filed),
+    "Corrected & Completed": Boolean(old["Corrected & Completed"] || old.corrected_completed || file.correctedCompleted || file.corrected_completed),
     Billed: Boolean(old.Billed || old["Billed / Completed"] || file.billed),
   };
 }
@@ -2334,7 +2336,7 @@ function filteredFiles() {
   return visibleFiles().filter((file) => {
     const haystack = `${file.name} ${file.pan} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
     if (f.listView === "active" && isCheckedCompleted(file)) return false;
-    if (f.listView === "completed" && !isCheckedCompleted(file)) return false;
+    if (f.listView === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
     if (f.listView === "correctionRequired" && !hasOpenCorrection(file)) return false;
     if (f.listView === "completed" && f.checkingStatus && checkingStatusOf(file).label !== f.checkingStatus) return false;
@@ -2367,7 +2369,7 @@ function filteredFiles() {
     if (f.dashboardKind === "pending" && isCheckedCompleted(file)) return false;
     if (f.dashboardKind === "shared" && !file.shared) return false;
     if (f.dashboardKind === "reportsPrepared" && !file.reportPrepared) return false;
-    if (f.dashboardKind === "completed" && !isCheckedCompleted(file)) return false;
+    if (f.dashboardKind === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.dashboardKind === "correctionRequired" && !file.stages?.["Correction Required"]) return false;
     if (f.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
     return true;
@@ -2468,6 +2470,14 @@ function isNotCheckedFile(file) {
 
 function isCheckedFile(file) {
   return checkingStatusOf(file).label === "Checked";
+}
+
+function isBillingReadyFile(file) {
+  return Boolean(isCheckedCompleted(file) && isCheckedFile(file));
+}
+
+function isDisplayCompletedFile(file) {
+  return Boolean(isCheckedCompleted(file) && !(isCorrectedCompleted(file) && !isCheckedFile(file)));
 }
 
 function canManageChecking() {
@@ -2572,10 +2582,17 @@ function isCheckedCompleted(file) {
   return Boolean((file?.filed || file?.stages?.Completed) && !hasOpenCorrection(file));
 }
 
+function isCorrectedCompleted(file = {}) {
+  const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
+  return Boolean(file?.stages?.["Corrected & Completed"] || file?.stages?.corrected_completed)
+    || ["corrected & completed", "corrected and completed", "corrected_completed", "resubmitted for checking"].includes(status);
+}
+
 function hasOpenCorrection(file = {}) {
   const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
+  if (isCorrectedCompleted(file)) return false;
   return Boolean(file?.stages?.["Correction Required"])
-    || ["correction required", "correction in progress", "resubmitted for checking", "returned again", "returned for correction"].includes(status);
+    || ["correction required", "correction in progress", "returned again", "returned for correction"].includes(status);
 }
 
 function stageIndex(file) {
@@ -2588,6 +2605,7 @@ function stageIndex(file) {
 
 function statusOf(file) {
   if (file.stages?.["Correction Required"]) return { label: "Correction Required", className: "overdue" };
+  if (isCorrectedCompleted(file) && checkingStatusOf(file).label !== "Checked") return { label: "Corrected & Completed", className: "approval" };
   if (file.feeReceived) return { label: "Received", className: "filed" };
   if (isCheckedCompleted(file)) return { label: "Completed", className: "filed" };
   if (file.billed) return { label: "Billed", className: "billed" };
@@ -2613,7 +2631,7 @@ function stats(files = visibleFiles()) {
     correctionRequired: files.filter((f) => f.stages?.["Correction Required"]).length,
     reAllotted: files.filter((f) => f.reAssignedStaff && f.reAssignedStaff !== "Not Assigned").length,
     reportsPrepared: files.filter((f) => f.reportPrepared).length,
-    completed: files.filter(isCheckedCompleted).length,
+    completed: files.filter(isDisplayCompletedFile).length,
     notChecked: files.filter(isNotCheckedFile).length,
     billed: files.filter(isBilledFile).length,
     unbilled: files.filter(isNonBilledFile).length,
@@ -2629,7 +2647,7 @@ function staffStats(name) {
     notStarted: files.filter((f) => stageIndex(f) === 0).length,
     inProgress: files.filter((f) => stageIndex(f) > 0 && !isCheckedCompleted(f)).length,
     pending: files.filter((f) => !isCheckedCompleted(f)).length,
-    completed: files.filter(isCheckedCompleted).length,
+    completed: files.filter(isDisplayCompletedFile).length,
     overdue: files.filter(isOverdue).length,
     approvals: files.filter(pendingApproval).length,
     billed: files.filter(isBilledFile).length,
@@ -3442,7 +3460,7 @@ function renderDashboard() {
           ${dashboardStaffFilter("dashboardStaffName", "Staff Name", ["", ...state.users.map((u) => u.name)])}
           ${dashboardStaffInput("dashboardStaffFrom", "From Date", "date")}
           ${dashboardStaffInput("dashboardStaffTo", "To Date", "date")}
-          ${dashboardStaffFilter("dashboardStaffStatus", "File Status", ["", "Pending", "Not Started", "Work in Progress", "On Hold", "Client Pending", "Completed", "Not Checked", "Billed", "Non-Billed", "Overdue"])}
+          ${dashboardStaffFilter("dashboardStaffStatus", "File Status", ["", "Pending", "Not Started", "Work in Progress", "On Hold", "Client Pending", "Corrected & Completed", "Completed", "Not Checked", "Billed", "Non-Billed", "Overdue"])}
           ${dashboardStaffFilter("dashboardStaffService", "Service Type", ["", ...state.services])}
         </div>
         <div class="action-row dashboard-staff-actions">
@@ -3651,7 +3669,7 @@ function navBadgeCounts() {
     notChecked: currentFiles.filter(isNotCheckedFile).length,
     correctionRequired: currentFiles.filter(hasOpenCorrection).length,
     reAssigned: files.filter((file) => isReassignedFile(file) && (!isStaffLogin() || reassignmentVisibleToUser(file, loggedInUser()))).length,
-    completed: currentFiles.filter(isCheckedCompleted).length,
+    completed: currentFiles.filter(isDisplayCompletedFile).length,
     nonBilled: currentFiles.filter(isNonBilledFile).length,
     billed: currentFiles.filter(isBilledFile).length,
     feePending: currentFiles.filter(isFeePendingFile).length,
@@ -3893,7 +3911,7 @@ function dashboardStatusRows(files = visibleFiles()) {
   return [
     { label: "Received", count: files.filter((file) => stageIndex(file) === 0 && !isCheckedCompleted(file)).length, color: "#2563eb" },
     { label: "Work in Progress", count: files.filter((file) => stageIndex(file) > 0 && !isCheckedCompleted(file)).length, color: "#f59e0b" },
-    { label: "Completed", count: files.filter(isCheckedCompleted).length, color: "#3b82f6" },
+    { label: "Completed", count: files.filter(isDisplayCompletedFile).length, color: "#3b82f6" },
     { label: "Not Checked", count: files.filter(isNotCheckedFile).length, color: "#06b6d4" },
     { label: "Returned", count: files.filter((file) => file.stages?.["Correction Required"]).length, color: "#ef4444" },
   ];
@@ -4091,7 +4109,7 @@ function dashboardStatusCards() {
     { key: "onHold", label: "On Hold", count: count((f) => f.stages?.["On Hold"]), icon: "OH", tone: "tone-amber" },
     { key: "clientPending", label: "Client Pending", count: count((f) => f.stages?.["Client Pending"]), icon: "CP", tone: "tone-amber" },
     { key: "awaitingApproval", label: "Awaiting Approval", count: count(pendingApproval), icon: "AA", tone: "tone-amber" },
-    { key: "completed", label: "Completed", count: count(isCheckedCompleted), icon: "CP", tone: "tone-green" },
+    { key: "completed", label: "Completed", count: count(isDisplayCompletedFile), icon: "CP", tone: "tone-green" },
     { key: "notChecked", label: "Not Checked", count: count(isNotCheckedFile), icon: "NC", tone: "tone-amber" },
     { key: "correction", label: "Correction Required", count: count((f) => f.stages?.["Correction Required"]), icon: "CR", tone: "tone-red" },
     { key: "billed", label: "Billed", count: count(isBilledFile), icon: "BL", tone: "tone-cyan" },
@@ -4133,7 +4151,7 @@ function dashboardStaffSummaryRows() {
         Pending: rows.filter((f) => !isCheckedCompleted(f)).length,
         "Not Started": rows.filter((f) => stageIndex(f) === 0).length,
         WIP: rows.filter((f) => stageIndex(f) > 0 && !isCheckedCompleted(f)).length,
-        Completed: rows.filter(isCheckedCompleted).length,
+        Completed: rows.filter(isDisplayCompletedFile).length,
         Overdue: rows.filter(isOverdue).length,
       };
     })
@@ -4146,7 +4164,8 @@ function dashboardFileMatchesStatus(file, status) {
   if (status === "Work in Progress") return stageIndex(file) > 0 && !isCheckedCompleted(file);
   if (status === "On Hold") return Boolean(file.stages?.["On Hold"]);
   if (status === "Client Pending") return Boolean(file.stages?.["Client Pending"]);
-  if (status === "Completed") return isCheckedCompleted(file);
+  if (status === "Corrected & Completed") return isCorrectedCompleted(file) && !isCheckedFile(file);
+  if (status === "Completed") return isDisplayCompletedFile(file);
   if (status === "Not Checked") return isNotCheckedFile(file);
   if (status === "Billed") return isBilledFile(file);
   if (status === "Non-Billed") return isNonBilledFile(file);
@@ -4339,7 +4358,7 @@ function renderFilesPage() {
         ${comboFilter("careOfFilter", "C/o", careOfDropdownOptions(), "Search or select C/o")}
         ${selectFilter("service", "Service Type", ["", ...serviceDropdownOptions()])}
         ${selectFilter("workflow", "Workflow", ["", ...stages])}
-        ${selectFilter("status", "Status", ["", "Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Approved", "Completed", "Billed", "Overdue"])}
+        ${selectFilter("status", "Status", ["", "Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Corrected & Completed", "Approved", "Completed", "Billed", "Overdue"])}
         ${selectFilter("staff", "Staff", ["", ...assignableStaffNames()])}
         ${inputFilter("due", "Due Date", "", "date")}
         ${selectFilter("receivedSort", "Sort by Received Date", ["Oldest First", "Newest First"])}
@@ -4503,7 +4522,7 @@ function staffPageFiles(listView) {
     if (state.filters.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
     if (listView === "active") return !isCheckedCompleted(file);
     if (listView === "completed") {
-      if (!isCheckedCompleted(file)) return false;
+      if (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file))) return false;
       const completedDate = fileActualCompletionDate(file);
       if (state.filters.fileFrom && completedDate < state.filters.fileFrom) return false;
       if (state.filters.fileTo && completedDate > state.filters.fileTo) return false;
@@ -5170,7 +5189,7 @@ function fileSerialNumber(file, fallbackIndex = 0) {
 function fileRowActions(file) {
   const actions = [`<button class="mini-button" data-edit="${file.id}">Edit</button>`];
   const canManageBilling = rolePerm().assign;
-  if (canManageBilling && state.filters.listView === "completed" && isCheckedCompleted(file) && !isNonBilledFile(file)) {
+  if (canManageBilling && state.filters.listView === "completed" && isBillingReadyFile(file) && !isNonBilledFile(file)) {
     actions.push(`<button class="mini-button ${file.billingType === "Non-Billable" ? "success" : ""}" data-non-billable="${file.id}">Non-Billable</button>`);
     if (!file.billed) actions.push(`<button class="mini-button success" data-mark-billed="${file.id}">Billed</button>`);
   }
@@ -5392,6 +5411,7 @@ async function returnFileForCorrection(fileId) {
   };
   const stagesObj = { ...normalizeStages(file), ...(file.stages || {}) };
   stagesObj["Correction Required"] = true;
+  stagesObj["Corrected & Completed"] = false;
   stagesObj.Completed = false;
   stagesObj.Billed = Boolean(file.billed);
   const updated = {
@@ -6045,15 +6065,19 @@ function latestCorrectionForFile(file = {}) {
   return correctionHistoryForFile(file)[0] || null;
 }
 
-function markLatestCorrectionResubmitted(file = {}) {
+function markLatestCorrectionResubmitted(file = {}, status = "Resubmitted for Checking") {
   const history = correctionHistoryForFile(file);
   if (!history.length) return file.correctionHistory || [];
   const latestId = history[0].id;
   const now = new Date().toISOString();
   const updated = history.map((item) => (item.id === latestId ? {
     ...item,
-    status: "Resubmitted for Checking",
+    status,
     response: item.response || "Correction completed and resubmitted for checking.",
+    corrected_completed_by: status === "Corrected & Completed" ? (state.currentUser || "") : (item.corrected_completed_by || ""),
+    correctedCompletedBy: status === "Corrected & Completed" ? (state.currentUser || "") : (item.correctedCompletedBy || ""),
+    corrected_completed_at: status === "Corrected & Completed" ? now : (item.corrected_completed_at || ""),
+    correctedCompletedAt: status === "Corrected & Completed" ? now : (item.correctedCompletedAt || ""),
     resubmitted_at: now,
     resubmittedAt: now,
     updated_at: now,
@@ -6179,6 +6203,7 @@ function visibleWorkflowStages(file) {
 
 function currentWorkflowStage(file = {}) {
   const normalized = normalizeStages(file);
+  if (isCorrectedCompleted({ ...file, stages: normalized }) && !isCheckedFile(file)) return "Corrected & Completed";
   const selected = stages.filter((stage) => stage !== "Billed" && normalized[stage]).pop();
   return selected || "Received";
 }
@@ -6201,8 +6226,9 @@ function canEditStage(stage, file = {}) {
   if (stage === "Billed") return false;
   if (!isStaffLogin()) return true;
   if (isAuthorisedCheckingStaff() && !fileCreatedByCurrentUser(file) && !fileBelongsToUser(file, loggedInUser())) return false;
-  if (isSpecialFileCreator()) return ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required"].includes(stage);
-  return ["WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required"].includes(stage);
+  if (stage === "Corrected & Completed") return Boolean(file?.stages?.["Correction Required"]) || fileBelongsToUser(file, loggedInUser()) || fileCreatedByCurrentUser(file);
+  if (isSpecialFileCreator()) return ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required", "Corrected & Completed"].includes(stage);
+  return ["WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required", "Corrected & Completed"].includes(stage);
 }
 
 function stagesFromWorkflowSelection(selectedStage, existingStages = {}) {
@@ -6217,6 +6243,13 @@ function stagesFromWorkflowSelection(selectedStage, existingStages = {}) {
   }
   if (selectedStage === "Correction Required") {
     nextStages.Completed = false;
+    nextStages["Corrected & Completed"] = false;
+    nextStages.Billed = false;
+  }
+  if (selectedStage === "Corrected & Completed") {
+    nextStages.Completed = true;
+    nextStages["Correction Required"] = false;
+    nextStages["Corrected & Completed"] = true;
     nextStages.Billed = false;
   }
   if (!nextStages.Completed) nextStages.Billed = false;
@@ -6321,6 +6354,8 @@ async function saveFileFromDrawer() {
   const wasCompleted = isCheckedCompleted(existingFile);
   const wasReturned = Boolean(existingFile?.stages?.["Correction Required"]);
   const justCompleted = stagesObj.Completed && (!wasCompleted || wasReturned);
+  const justCorrectedCompleted = selectedWorkflowStatus === "Corrected & Completed" && workflowStatusChanged;
+  const correctedCompletedAt = justCorrectedCompleted ? new Date().toISOString() : (existingFile?.correctedCompletedAt || existingFile?.corrected_completed_at || "");
   let completionDate = normalizeImportDate(data.get("completionDate")) || existingFile?.completionDate || "";
   if (stagesObj.Completed && !completionDate) completionDate = todayDate();
   if (justCompleted && !normalizeImportDate(data.get("completionDate"))) completionDate = todayDate();
@@ -6332,6 +6367,7 @@ async function saveFileFromDrawer() {
     checkedDate = "";
     checkingRemarks = "";
     stagesObj["Correction Required"] = false;
+    if (justCorrectedCompleted) stagesObj["Corrected & Completed"] = true;
   }
   if (!stagesObj.Completed) {
     checkedBy = "";
@@ -6423,6 +6459,12 @@ async function saveFileFromDrawer() {
     completedBy: stagesObj.Completed ? (justCompleted ? (state.currentUser || "") : (existingFile?.completedBy || state.currentUser || "")) : (existingFile?.completedBy || ""),
     completedById: stagesObj.Completed ? (justCompleted ? (state.session?.userId || "") : (existingFile?.completedById || state.session?.userId || "")) : (existingFile?.completedById || ""),
     completedByEmail: stagesObj.Completed ? (justCompleted ? (state.session?.userEmail || "") : (existingFile?.completedByEmail || state.session?.userEmail || "")) : (existingFile?.completedByEmail || ""),
+    correctedCompletedBy: justCorrectedCompleted ? (state.currentUser || "") : (existingFile?.correctedCompletedBy || existingFile?.corrected_completed_by || ""),
+    correctedCompletedById: justCorrectedCompleted ? (state.session?.userId || "") : (existingFile?.correctedCompletedById || existingFile?.corrected_completed_by_id || ""),
+    correctedCompletedByEmail: justCorrectedCompleted ? (state.session?.userEmail || "") : (existingFile?.correctedCompletedByEmail || existingFile?.corrected_completed_by_email || ""),
+    correctedCompletedDate: justCorrectedCompleted ? todayDate() : (existingFile?.correctedCompletedDate || existingFile?.corrected_completed_date || ""),
+    correctedCompletedAt,
+    corrected_completed_at: correctedCompletedAt,
     checkedBy,
     checkedDate,
     checkingRemarks,
@@ -6440,8 +6482,8 @@ async function saveFileFromDrawer() {
     returnedToId: existingFile?.returnedToId || "",
     returnedToEmail: existingFile?.returnedToEmail || "",
     returnedDate: existingFile?.returnedDate || "",
-    correctionStatus: justCompleted && wasReturned ? "Resubmitted for Checking" : (existingFile?.correctionStatus || ""),
-    correctionHistory: justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || []),
+    correctionStatus: justCorrectedCompleted ? "Corrected & Completed" : (justCompleted && wasReturned ? "Resubmitted for Checking" : (existingFile?.correctionStatus || "")),
+    correctionHistory: justCorrectedCompleted ? markLatestCorrectionResubmitted(existingFile, "Corrected & Completed") : (justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || [])),
     remarks: data.get("remarks").trim(),
     attachments: JSON.parse(document.querySelector("#fileDrawer").dataset.attachments || "[]"),
     lastUpdatedDate: todayDate(),
@@ -7562,7 +7604,7 @@ function verificationTeamRows() {
         loginStatus: user.isActive === false ? "Inactive" : (user.authUserId || user.auth_user_id ? "Ready" : "No Auth ID"),
         assigned: files.length,
         active: active.length,
-        completed: files.filter(isCheckedCompleted).length,
+        completed: files.filter(isDisplayCompletedFile).length,
         notChecked: files.filter(isNotCheckedFile).length,
         overdue: files.filter(isOverdue).length,
         stale,
@@ -9586,6 +9628,11 @@ function stagesFromImport(status, flags) {
     stages.forEach((stage, stageIndex) => {
       if (stageIndex <= index) stageObj[stage] = true;
     });
+    if (matchedStage === "Corrected & Completed") {
+      stageObj["Correction Required"] = false;
+      stageObj.Completed = true;
+      stageObj.Billed = false;
+    }
   }
   if (yesValue(flags.workDone)) stageObj["Work Done"] = true;
   if (yesValue(flags.approvalPending)) stageObj["Approval Pending"] = true;
