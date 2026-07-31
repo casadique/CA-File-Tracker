@@ -3650,11 +3650,9 @@ function navItem(id, icon, label, countKey = "", adminOnly = false) {
 
 function navItemButton(item, fileViews, counts) {
   const active = navItemActive(item.id, fileViews);
-  const count = counts[item.countKey] || 0;
   return `<button data-page="${item.id}" class="nav-item ${active ? "active" : ""}" title="${escapeHtml(item.label)}">
     <span class="nav-icon">${navIcon(item.icon)}</span>
     <span class="nav-label">${escapeHtml(item.label)}</span>
-    ${count ? `<span class="nav-badge nav-badge-${item.countKey}">${count}</span>` : ""}
   </button>`;
 }
 
@@ -10746,6 +10744,7 @@ function renderCashCollectionsTab() {
           ${expenseInput("cashVoucherNo", "Ref No.", editingCashCollection()?.voucherNo || "", "text", "", "compact-field ref-field")}
           ${collectionParticularsSelect(editingCashCollection()?.particulars || "Fee Collection")}
           ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
+          ${expenseTextarea("cashRemarks", "Remarks", editingCashCollection()?.remarks || "")}
           ${cashAttachmentField(editingCashCollection())}
           <div class="action-row">
             <button class="secondary-button" type="button" id="resetCashForm">${state.filters.editCashId ? "Cancel" : "Reset"}</button>

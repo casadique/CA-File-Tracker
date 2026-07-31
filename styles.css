@@ -10449,3 +10449,55 @@ textarea,
     grid-template-columns: 1fr !important;
   }
 }
+
+/* Compact sidebar menu: no count badges, more room for readable labels. */
+.nav .nav-item,
+.sidebar.collapsed .nav .nav-item {
+  min-height: 42px !important;
+  grid-template-columns: 24px minmax(0, 1fr) !important;
+  gap: 9px !important;
+  margin: 1px 0 !important;
+  padding: 0 12px !important;
+  border-radius: 10px !important;
+}
+
+.nav .nav-icon {
+  width: 24px !important;
+  height: 24px !important;
+}
+
+.nav .nav-icon svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.nav .nav-label,
+.sidebar.collapsed .nav-label {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.nav-badge,
+.sidebar.collapsed .nav-badge {
+  display: none !important;
+}
+
+.nav-group {
+  margin-bottom: 10px !important;
+}
+
+.nav-group-items {
+  gap: 2px !important;
+}
+
+.nav-section-title {
+  min-height: 30px !important;
+  padding: 4px 12px 6px !important;
+  font-size: 12px !important;
+}
+
+.sidebar-menu {
+  padding: 10px 8px 12px !important;
+}
