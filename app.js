@@ -2286,6 +2286,14 @@ function currentFileAssignee(file = {}) {
   };
 }
 
+function staffAssigneeMatches(left = {}, right = {}) {
+  if (!left || !right) return false;
+  return (hasAssignedStaffValue(left.name) && hasAssignedStaffValue(right.name) && sameStaffName(left.name, right.name))
+    || exactStaffIdentity(left.id, right.id)
+    || exactStaffIdentity(left.id, right.authUserId)
+    || exactStaffIdentity(left.email, right.email);
+}
+
 function originalAllottedTo(file = {}) {
   return file.originallyAllottedTo || file.originalAssignedStaff || file.original_assigned_to || file.assignedStaff || "Not Assigned";
 }
@@ -6250,7 +6258,11 @@ function openFileDrawer(id) {
         ${formField("workAllotmentDate", "Allotted On", file.workAllotmentDate || "", "date", false)}
         ${formField("dueDate", "Due Date", file.dueDate, "date")}
         ${selectField("priority", "Priority", ["Low", "Medium", "High", "Urgent"], file.priority)}
-        ${staffAssignField("reAssignedStaff", "Re Assigned", file.reAssignedStaff || "", !canAssignThisFile, true)}
+        ${staffAssignField("reAssignedStaff", "Re Assigned", "", !canAssignThisFile, true, true, {
+          currentAssignee: currentFileAssignee(file),
+          disableCurrentAssignee: true,
+          allowNewStaff: false,
+        })}
         ${formField("reAssignedDate", "Re Assigned Date", file.reAssignedDate || "", "date", false)}
       </div>
       <div class="two-col">
@@ -6473,6 +6485,7 @@ function careOfDropdownOptions(currentValue = "") {
 function assignableStaffNames(currentValue = "") {
   const names = (state.users || [])
     .filter((user) => !isRevokedAccess(user))
+    .filter((user) => user.isActive !== false && user.is_active !== false)
     .filter((user) => !isRemovedStaff(user.name))
     .map((user) => user.name);
   return dedupeByNormalizedText([currentValue, ...names].filter((name) => name && String(name).trim().toLowerCase() !== "not assigned"));
@@ -6517,20 +6530,24 @@ function fyField(value) {
     </div>`;
 }
 
-function staffAssignField(name, label, value, disabled = false, allowBlank = false, includeNotAssigned = true) {
+function staffAssignField(name, label, value, disabled = false, allowBlank = false, includeNotAssigned = true, config = {}) {
+  const currentAssignee = config.currentAssignee || null;
+  const currentAssigneeName = currentAssignee?.name || "";
+  const disableCurrentAssignee = Boolean(config.disableCurrentAssignee && hasAssignedStaffValue(currentAssigneeName));
   const options = [
     ...(allowBlank ? [""] : []),
     ...(includeNotAssigned ? ["Not Assigned"] : []),
     ...assignableStaffNames(value),
-  ];
+  ].filter((staffName) => !disableCurrentAssignee || !staffAssigneeMatches({ name: staffName }, currentAssignee));
   const selectId = `${name}Select`;
   const inputId = `${name}NewInput`;
   return `
     <div class="field">
       <label>${label}</label>
       <select id="${selectId}" name="${name}" ${disabled ? "disabled" : ""}>
+        ${disableCurrentAssignee ? `<option value="" disabled>${escapeHtml(currentAssigneeName)} - Currently Assigned</option>` : ""}
         ${options.map((staffName) => `<option value="${escapeHtml(staffName)}" ${staffName === value ? "selected" : ""}>${escapeHtml(staffName || "Select Staff")}</option>`).join("")}
-        <option value="__new_staff">+ Add New Staff</option>
+        ${config.allowNewStaff === false ? "" : `<option value="__new_staff">+ Add New Staff</option>`}
       </select>
       <input id="${inputId}" class="hidden" placeholder="Enter new staff name">
     </div>`;
@@ -6697,9 +6714,27 @@ async function saveFileFromDrawer() {
     return toast("Please enter FY.");
   }
   const canAssignThisFile = canAssignFile(existingFile || {});
-  const reAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("reAssignedStaff"), "reAssignedStaffNewInput", "") : (existingFile?.reAssignedStaff || ""), "");
+  const previousCurrentAssignee = existingFile ? currentFileAssignee(existingFile).name : "";
+  const previousCurrentAssigneeIdentity = existingFile ? currentFileAssignee(existingFile) : {};
+  const selectedReAssignedStaff = canAssignThisFile ? resolveAssignedStaff(data.get("reAssignedStaff"), "reAssignedStaffNewInput", "") : "";
+  const selectedReAssignedUser = findUserByStaffIdentity(selectedReAssignedStaff) || {};
+  if (existingFile && hasAssignedStaffValue(selectedReAssignedStaff) && staffAssigneeMatches({
+    name: selectedReAssignedStaff,
+    id: selectedReAssignedUser.id || "",
+    email: selectedReAssignedUser.email || "",
+  }, previousCurrentAssigneeIdentity)) {
+    restoreSaveFileButton(saveButton);
+    return toast("This file is already assigned to this staff member. Please select a different staff member.");
+  }
+  const reAssignedStaff = canonicalStaffName(
+    canAssignThisFile
+      ? (hasAssignedStaffValue(selectedReAssignedStaff) ? selectedReAssignedStaff : (existingFile?.reAssignedStaff || ""))
+      : (existingFile?.reAssignedStaff || ""),
+    "",
+  );
   let reAssignedDate = canAssignThisFile ? data.get("reAssignedDate") : (existingFile?.reAssignedDate || "");
-  if (reAssignedStaff && reAssignedStaff !== "Not Assigned" && !reAssignedDate) reAssignedDate = todayDate();
+  if (hasAssignedStaffValue(selectedReAssignedStaff) && !reAssignedDate) reAssignedDate = todayDate();
+  if (!hasAssignedStaffValue(selectedReAssignedStaff)) reAssignedDate = existingFile?.reAssignedDate || "";
   const selectedAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("assignedStaff"), "assignedStaffNewInput", "Not Assigned") : (existingFile?.assignedStaff || state.currentUser), "Not Assigned");
   const originalAssignedStaff = existingFile && isReassignedFile(existingFile)
     ? originalAllottedTo(existingFile)
@@ -6712,7 +6747,6 @@ async function saveFileFromDrawer() {
   else stagesObj.Allotted = false;
   let workAllotmentDate = canAssignThisFile ? data.get("workAllotmentDate") : (existingFile?.workAllotmentDate || "");
   if (!workAllotmentDate) workAllotmentDate = data.get("fileReceivedDate") || todayDate();
-  const previousCurrentAssignee = existingFile ? currentFileAssignee(existingFile).name : "";
   const assignedChanged = existingFile ? !sameStaffName(previousCurrentAssignee, currentAssignedStaff) : hasAssignedStaffValue(currentAssignedStaff);
   const receivedMarked = stagesObj.Received && (!existingFile?.stages?.Received || !existingFile?.receivedBy);
   let workStartedDate = existingFile?.workStartedDate || "";

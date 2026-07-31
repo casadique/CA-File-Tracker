@@ -168,6 +168,7 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
+    validateReassignmentTarget(before, file);
     const nowIso = new Date(now).toISOString();
     applyFeeReceivedTimestamp(record, before, nowIso);
     applyCompletionTimestamps(record, before, nowIso);
@@ -191,6 +192,57 @@ async function upsertFile(file, userId, profile = {}) {
     state.files = sortFilesNewestFirst(files);
     return state;
   }, userId);
+}
+
+function validateReassignmentTarget(before = null, incoming = {}) {
+  if (!before || !hasAssignedStaffValue(incoming.reAssignedStaff)) return;
+  const current = currentFileAssignee(before);
+  const requested = {
+    name: incoming.reAssignedStaff || "",
+    id: incoming.reAssignedStaffId || incoming.re_assigned_staff_id || "",
+    email: incoming.reAssignedStaffEmail || incoming.re_assigned_staff_email || "",
+  };
+  if (!assigneeMatches(current, requested)) return;
+
+  const existingReassignment = {
+    name: before.reAssignedStaff || "",
+    id: before.reAssignedStaffId || before.re_assigned_staff_id || "",
+    email: before.reAssignedStaffEmail || before.re_assigned_staff_email || "",
+  };
+  const isExistingCurrentReassignment = hasAssignedStaffValue(existingReassignment.name)
+    && assigneeMatches(existingReassignment, requested)
+    && sameText(before.reAssignedDate || before.reassigned_at, incoming.reAssignedDate || incoming.reassigned_at)
+    && sameText(before.reassignedBy || before.reassigned_by, incoming.reassignedBy || incoming.reassigned_by);
+  if (isExistingCurrentReassignment) return;
+
+  const error = new Error("This file is already assigned to this staff member. Please select a different staff member.");
+  error.status = 400;
+  throw error;
+}
+
+function assigneeMatches(left = {}, right = {}) {
+  return (hasAssignedStaffValue(left.name) && hasAssignedStaffValue(right.name) && sameStaffIdentity(left.name, right.name))
+    || exactIdentity(left.id, right.id)
+    || exactIdentity(left.email, right.email);
+}
+
+function sameStaffIdentity(left, right) {
+  return normalizeStaffIdentity(left) === normalizeStaffIdentity(right);
+}
+
+function normalizeStaffIdentity(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function exactIdentity(left, right) {
+  const cleanLeft = String(left || "").trim().toLowerCase();
+  const cleanRight = String(right || "").trim().toLowerCase();
+  return Boolean(cleanLeft && cleanRight && cleanLeft === cleanRight);
 }
 
 function applyFeeReceivedTimestamp(record = {}, before = {}, fallbackIso = new Date().toISOString()) {
