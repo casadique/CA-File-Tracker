@@ -15,9 +15,9 @@ function sortFilesForRequest(files, options = {}) {
   if (listView === "correctionRequired") rows = rows.filter(hasOpenCorrection);
   if (listView === "notChecked") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !file.checkedBy);
   if (sortField === "assigned_at") return sortFilesByDate(rows, fileAssignmentDateValue, direction, fileReceivedDateValue);
-  if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileUpdatedTime);
+  if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileCreatedTime);
   if (sortField === "file_received_date") return sortFilesByDate(rows, fileReceivedDateValue, direction, fileCreatedTime);
-  if (sortField === "completed_date") return sortFilesByDate(rows, fileCompletionDateValue, direction, fileUpdatedTime);
+  if (sortField === "completed_date") return sortFilesByDate(rows, fileCompletionDateValue, direction, fileCreatedTime);
   return sortFilesNewestFirst(rows);
 }
 
@@ -46,7 +46,7 @@ function fileCompletionDateValue(file = {}) {
 }
 
 function fileAssignmentDateValue(file = {}) {
-  return dateOrNumber(file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date);
+  return dateOrNumber(file.task_activity_at || file.taskActivityAt || file.managerUpdatedAt || file.manager_updated_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date);
 }
 
 function fileCorrectionDateValue(file = {}) {
@@ -101,6 +101,11 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
+    const taskActivityAt = shouldBumpTaskActivity(before, record, profile)
+      ? new Date(now).toISOString()
+      : (before?.taskActivityAt || before?.task_activity_at || record.taskActivityAt || record.task_activity_at || record.assignedAt || record.assigned_at || record.workAllotmentDate || record.reAssignedDate || "");
+    record.taskActivityAt = taskActivityAt;
+    record.task_activity_at = taskActivityAt;
     if (index >= 0) {
       const merged = { ...files[index], ...record };
       if (!merged.createdAt) merged.createdAt = files[index].createdAt || files[index].created_at || new Date(now).toISOString();
@@ -182,6 +187,8 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       correctionHistory: [...(file.correctionHistory || []), correction],
       lastUpdatedDate: correction.returnedDate,
       updatedAt: now.getTime(),
+      taskActivityAt: now.toISOString(),
+      task_activity_at: now.toISOString(),
     };
     state.correctionHistory = [...(state.correctionHistory || []), correction];
     state.fileNotifications = [
@@ -236,7 +243,7 @@ function resolveFileAssignee(state, file) {
 function appendFileUpdateNotifications(state, before, after, profile = {}, now = new Date()) {
   const change = describeFileChange(before, after);
   if (!change) return;
-  const recipients = notificationRecipients(state, after);
+  const recipients = change.type === "File Checked" ? checkedNotificationRecipients(state, after) : notificationRecipients(state, after);
   if (!recipients.length) return;
   const existingKeys = new Set((state.fileNotifications || []).map((notice) => notice.dedupeKey).filter(Boolean));
   const date = now.toISOString().slice(0, 10);
@@ -279,6 +286,16 @@ function describeFileChange(before, after) {
   if (!sameText(before.assignedStaff, after.assignedStaff)) return { type: "Allotment Changed", text: `${after.name || "File"} was allotted to ${after.assignedStaff || "Not Assigned"}.`, key: `assigned-${after.assignedStaff || ""}`, tone: "approval" };
   if (!sameText(before.dueDate, after.dueDate)) return { type: "Due Date Changed", text: `${after.name || "File"} due date changed to ${displayDate(after.dueDate)}.`, key: `due-${after.dueDate || ""}`, tone: "pending" };
   if (!sameText(before.priority, after.priority)) return { type: "Priority Changed", text: `${after.name || "File"} priority changed to ${after.priority || "Normal"}.`, key: `priority-${after.priority || ""}`, tone: "overdue" };
+  if (checkingLabel(before) !== "Checked" && checkingLabel(after) === "Checked") {
+    const fy = after.fy || after.financialYear || after.financial_year || "";
+    const fyText = fy ? `, FY ${fy}` : "";
+    return {
+      type: "File Checked",
+      text: `${after.name || "File"} (${after.serviceType || "Service"}${fyText}) checked by ${after.checkedBy || "Team"} on ${displayDate(after.checkedDate)}.`,
+      key: `checked-${after.checkedDate || ""}-${after.checkedBy || ""}`,
+      tone: "filed",
+    };
+  }
   const beforeStatus = statusLabel(before);
   const afterStatus = statusLabel(after);
   if (beforeStatus !== afterStatus) return { type: "Status Updated", text: `${after.name || "File"} changed from ${beforeStatus} to ${afterStatus}.`, key: `status-${afterStatus}`, tone: afterStatus === "Completed" ? "filed" : "progress" };
@@ -286,6 +303,13 @@ function describeFileChange(before, after) {
   if (!before.feeReceived && after.feeReceived) return { type: "Payment Received", text: `Payment was received for ${after.name || "File"}.`, key: `fee-${after.feeReceivedDate || after.receivedOn || ""}`, tone: "filed" };
   if (!sameText(before.remarks, after.remarks)) return { type: "Remarks Updated", text: `Important remarks were updated for ${after.name || "File"}.`, key: `remarks-${after.updatedAt || ""}`, tone: "progress" };
   return null;
+}
+
+function checkingLabel(file = {}) {
+  if (file.checkedBy || file.checkedDate) return "Checked";
+  if (hasOpenCorrection(file)) return "Returned for Correction";
+  if (isCompletedFile(file)) return "Not Checked";
+  return "";
 }
 
 function notificationRecipients(state, file) {
@@ -300,6 +324,46 @@ function notificationRecipients(state, file) {
     if (key) map.set(key, user);
   });
   return [...map.values()];
+}
+
+function checkedNotificationRecipients(state, file) {
+  const users = state.users || [];
+  const identities = [
+    file.completedById,
+    file.completedByEmail,
+    file.completedBy,
+    file.workDoneById,
+    file.workDoneByEmail,
+    file.workDoneBy,
+    file.doneById,
+    file.doneByEmail,
+    file.doneBy,
+    file.assignedStaffId,
+    file.assignedStaffEmail,
+    file.assignedStaff,
+  ];
+  const map = new Map();
+  identities.forEach((identity) => {
+    const clean = String(identity || "").trim().toLowerCase();
+    if (!clean || clean === "not assigned") return;
+    const user = users.find((item) => sameText(item.id, identity))
+      || users.find((item) => sameText(item.email, identity))
+      || users.find((item) => sameText(item.name, identity));
+    if (!user) return;
+    const key = String(user.id || user.email || user.name || "").toLowerCase();
+    if (key) map.set(key, user);
+  });
+  return [...map.values()];
+}
+
+function shouldBumpTaskActivity(before, after, profile = {}) {
+  if (!before) return hasAssignedStaffValue(after.assignedStaff);
+  const role = String(profile?.role || "").trim();
+  if (!sameText(before.assignedStaff, after.assignedStaff)) return true;
+  if (!["Admin", "Manager", "Staff Manager"].includes(role)) return false;
+  if (statusLabel(before) !== statusLabel(after)) return true;
+  if (checkingLabel(before) !== checkingLabel(after)) return true;
+  return false;
 }
 
 function statusLabel(file = {}) {

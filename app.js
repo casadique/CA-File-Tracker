@@ -4354,8 +4354,8 @@ function sortFilesByCompletionNewestFirst(files = []) {
     if (right && left && right !== left) return right - left;
     if (right && !left) return 1;
     if (!right && left) return -1;
-    const updated = fileUpdatedSortTime(b) - fileUpdatedSortTime(a);
-    if (updated) return updated;
+    const created = fileCreatedSortTime(b) - fileCreatedSortTime(a);
+    if (created) return created;
     return String(b.id || "").localeCompare(String(a.id || ""));
   });
 }
@@ -4377,8 +4377,8 @@ function sortFilesByAssignmentNewestFirst(files = []) {
 }
 
 function fileAssignmentSortTime(file = {}) {
-  return fileDateSortValue(file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date)
-    || fileUpdatedSortTime(file);
+  return fileDateSortValue(file.task_activity_at || file.taskActivityAt || file.managerUpdatedAt || file.manager_updated_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date)
+    || fileCreatedSortTime(file);
 }
 
 function sortFilesByCorrectionNewestFirst(files = []) {
@@ -4479,6 +4479,21 @@ function workCompletedDate(file) {
   return file.completionDate || file.completedDate || file.lastUpdatedDate || file.workAllotmentDate || file.fileReceivedDate || "";
 }
 
+function fileFy(file = {}) {
+  return String(file.fy || file.financialYear || file.financial_year || "").trim();
+}
+
+function fileRegistrationNumber(file = {}) {
+  return String(file.pan || file.registrationNumber || file.registration_number || file.regnNo || file.regNo || file.crNo || file.cr_no || "").trim();
+}
+
+function staffCompletedClientCell(file = {}) {
+  const regn = fileRegistrationNumber(file) || "Regn No. Not Available";
+  const fy = fileFy(file);
+  const meta = fy ? `${regn} (FY ${fy})` : regn;
+  return `<span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(meta)}</span>`;
+}
+
 function staffReportRow(file, listView = "") {
   const startedDate = file.workStartedDate || (file.stages?.WIP || file.stages?.["Work Done"] || file.stages?.Completed ? file.workAllotmentDate || file.fileReceivedDate : "");
   if (listView === "active") {
@@ -4495,7 +4510,7 @@ function staffReportRow(file, listView = "") {
     };
   }
   return {
-    Client: file.name,
+    "Client Name": file.name,
     Service: file.serviceType,
     "C/o": file.careOf || "Direct",
     "Received on": displayDate(file.fileReceivedDate),
@@ -4520,7 +4535,11 @@ function renderStaffFileTable(files, listView = "") {
             const row = staffReportRow(file, listView);
             return `<tr>
               <td>${fileSerialNumber(file, index)}</td>
-              ${headers.map((h) => h === "Checking Status" ? `<td>${renderCheckingStatusBadge(file)}</td>` : `<td>${escapeHtml(row[h] || "")}</td>`).join("")}
+              ${headers.map((h) => {
+                if (h === "Checking Status") return `<td>${renderCheckingStatusBadge(file)}</td>`;
+                if (listView === "completed" && h === "Client Name") return `<td>${staffCompletedClientCell(file)}</td>`;
+                return `<td>${escapeHtml(row[h] || "")}</td>`;
+              }).join("")}
               ${showEditAction ? `<td><div class="action-row"><button class="mini-button" data-edit="${file.id}">Edit</button></div></td>` : ""}
             </tr>`;
           }).join("")}
@@ -4670,13 +4689,12 @@ function renderFileTable(files) {
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
-  const dateColumnLabel = isCompletedView ? "DOC ↓" : "Due";
-  const assignedColumnLabel = isCompletedView ? "Assigned to" : "Assigned Staff";
-  const finalInfoColumnLabel = isCompletedView ? "C/o" : "Priority";
+  const dateColumnLabel = isCompletedView ? "Completed Date" : "Due";
+  const assignedColumnLabel = isCompletedView ? "Done By" : "Assigned Staff";
   const managerCheckingColumns = canManageChecking() && isCompletedView;
   const headerRow = isCompletedView
-    ? `<th>SN</th><th>Client</th><th>Service</th><th>C/o</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>${finalInfoColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
-    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on ↓</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
+    ? `<th>SN</th><th>Client Name</th><th>FY</th><th>Service Type</th><th>${dateColumnLabel}</th><th>${assignedColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
+    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table${compactClass}">
@@ -4691,13 +4709,11 @@ function renderFileTable(files) {
             const receiptInfo = receiptSummary(file);
             const completedCells = `
               <td>${fileSerialNumber(file, index)}</td>
-              <td><span class="client-name">${file.name}</span><span class="subtext">${file.pan}</span></td>
-              <td>${file.serviceType}</td>
-              <td>${escapeHtml(file.careOf || "Direct")}</td>
-              <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}${receiptInfo}</td>
-              <td class="completed-staff-cell">${file.assignedStaff}</td>
+              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(fileRegistrationNumber(file) || "")}</span></td>
+              <td>${escapeHtml(fileFy(file) || "-")}</td>
+              <td>${escapeHtml(file.serviceType || "")}</td>
               <td class="completed-doc-cell">${fmt(dateValue)}</td>
-              <td class="completed-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
+              <td class="completed-staff-cell">${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}${receiptInfo}</td>
               ${managerCheckingColumns ? `<td>${renderCheckingStatusBadge(file)}</td><td>${escapeHtml(file.checkedBy || "-")}</td><td>${file.checkedDate ? fmt(file.checkedDate) : "-"}</td>` : ""}
               <td><div class="action-row">${fileRowActions(file)}</div></td>`;
             const activeCells = `
@@ -4888,9 +4904,11 @@ async function checkCompletedFile(fileId) {
     checkingRemarks,
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
+    taskActivityAt: new Date().toISOString(),
+    task_activity_at: new Date().toISOString(),
   };
   state.files[index] = updated;
-  queueFileChangeNotification(updated, `File checked by ${checkedBy} on ${fmt(checkedDate)}`, "File Checked");
+  queueFileCheckedNotification(updated, file);
   addAuditLog("File marked Checked", {
     fileId,
     fileName: file.name,
@@ -5001,6 +5019,8 @@ async function returnFileForCorrection(fileId) {
     correctionHistory: [...(file.correctionHistory || []), correction],
     lastUpdatedDate: returnedDate,
     updatedAt: Date.now(),
+    taskActivityAt: correction.returnedAt,
+    task_activity_at: correction.returnedAt,
   };
   state.files[index] = updated;
   state.correctionHistory = [...(state.correctionHistory || []), correction];
@@ -5186,7 +5206,7 @@ function receiptSummary(file = {}) {
 }
 
 function queueFileChangeNotification(file, changeText, changeType = "File Update") {
-  if (!["Admin", "Manager"].includes(state.currentRole)) return;
+  if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return;
   const targetUser = findUserByStaffIdentity(file.assignedStaff)
     || findUserByStaffIdentity(file.assignedStaffEmail)
     || findUserByStaffIdentity(file.assignedStaffId);
@@ -5211,6 +5231,71 @@ function queueFileChangeNotification(file, changeText, changeType = "File Update
       tone: changeType === "File Allotted" ? "approval" : "progress",
     },
   ].slice(-500);
+}
+
+function checkedNotificationRecipients(file = {}) {
+  const identities = [
+    file.completedById,
+    file.completedByEmail,
+    file.completedBy,
+    file.workDoneById,
+    file.workDoneByEmail,
+    file.workDoneBy,
+    file.doneById,
+    file.doneByEmail,
+    file.doneBy,
+    file.assignedStaffId,
+    file.assignedStaffEmail,
+    file.assignedStaff,
+  ];
+  const map = new Map();
+  identities.forEach((identity) => {
+    const user = findUserByStaffIdentity(identity);
+    if (!user || user.name === "Not Assigned") return;
+    const key = String(user.id || user.email || user.name || "").toLowerCase();
+    if (key) map.set(key, user);
+  });
+  return [...map.values()];
+}
+
+function fileCheckedNotificationText(file = {}, checkedBy = "", checkedDate = "") {
+  const fy = fileFy(file);
+  const fyText = fy ? `, FY ${fy}` : "";
+  return `${file.name || "File"} (${file.serviceType || "Service"}${fyText}) checked by ${checkedBy || state.currentUser || "Team"} on ${fmt(checkedDate || todayDate())}.`;
+}
+
+function queueFileCheckedNotification(file, beforeFile = {}) {
+  if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole) && !isAuthorisedCheckingStaff()) return;
+  if (checkingStatusOf(beforeFile).label === "Checked" || checkingStatusOf(file).label !== "Checked") return;
+  const recipients = checkedNotificationRecipients(file);
+  if (!recipients.length) return;
+  const now = new Date();
+  const checkedBy = file.checkedBy || state.currentUser || "";
+  const checkedDate = normalizeImportDate(file.checkedDate || todayDate()) || todayDate();
+  const existingKeys = new Set((state.fileNotifications || []).map((notice) => notice.dedupeKey).filter(Boolean));
+  const notices = recipients.map((targetUser) => {
+    const dedupeKey = `${file.id}|File Checked|${checkedDate}|${normalizePersonName(checkedBy)}|${targetUser.id || targetUser.email || targetUser.name}`;
+    if (existingKeys.has(dedupeKey)) return null;
+    existingKeys.add(dedupeKey);
+    return {
+      id: crypto.randomUUID(),
+      dedupeKey,
+      fileId: file.id,
+      fileName: file.name,
+      changeType: "File Checked",
+      changeText: fileCheckedNotificationText(file, checkedBy, checkedDate),
+      changedBy: checkedBy,
+      changedByRole: state.currentRole,
+      targetUserId: targetUser.id || "",
+      targetUserEmail: targetUser.email || "",
+      targetUserName: targetUser.name || "",
+      date: todayDate(),
+      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      createdAt: now.getTime(),
+      tone: "filed",
+    };
+  }).filter(Boolean);
+  if (notices.length) state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-500);
 }
 
 function queueCheckingRequiredNotifications(file) {
@@ -5256,6 +5341,23 @@ function fileChangeType(before, after) {
   if (!before && hasAssignedStaffValue(after.assignedStaff)) return "File Allotted";
   if (before && !sameStaffName(before.assignedStaff, after.assignedStaff)) return "File Re-Allotted";
   return "File Update";
+}
+
+function canBumpTaskActivity() {
+  return ["Admin", "Manager", "Staff Manager"].includes(state.currentRole);
+}
+
+function fileTaskActivityAt(file = {}) {
+  return file.taskActivityAt || file.task_activity_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date || "";
+}
+
+function shouldBumpTaskActivity(before, after, assignedChanged = false) {
+  if (!before) return hasAssignedStaffValue(after.assignedStaff);
+  if (assignedChanged) return true;
+  if (!canBumpTaskActivity()) return false;
+  if (currentWorkflowStage(before) !== currentWorkflowStage(after)) return true;
+  if (checkingStatusOf(before).label !== checkingStatusOf(after).label) return true;
+  return false;
 }
 
 function pipeline(file) {
@@ -5304,12 +5406,7 @@ function openFileDrawer(id) {
         ${staffAssignField("reAssignedStaff", "Re Assigned", file.reAssignedStaff || "", !canAssignThisFile, true)}
         ${formField("reAssignedDate", "Re Assigned Date", file.reAssignedDate || "", "date", false)}
       </div>
-      <div class="field">
-        <label>Status / Workflow</label>
-        <div class="checkbox-grid">
-          ${visibleWorkflowStages(file).map((stage) => `<label class="check-pill"><input type="checkbox" name="stage" value="${stage}" ${file.stages?.[stage] ? "checked" : ""} ${canEditStage(stage, file) ? "" : "disabled"}> ${stage}</label>`).join("")}
-        </div>
-      </div>
+      ${workflowStatusField(file)}
       <div class="two-col">
         ${formField("completionDate", "Completed Date", file.completionDate || "", "date", false)}
       </div>
@@ -5385,9 +5482,6 @@ function openFileDrawer(id) {
     drawer.dataset.attachments = JSON.stringify([...existing, ...added]);
     document.querySelector("#attachmentPreview").innerHTML = [...existing, ...added].map((a) => `<div class="attachment-card"><strong>${a.name}</strong><p>Uploaded ${fmt(a.uploadDate)} by ${a.uploadedBy}</p></div>`).join("");
   };
-  document.querySelectorAll("input[name='stage']").forEach((box) => {
-    box.onchange = (e) => cascadeStages(e.target.value, e.target.checked);
-  });
   bindCompletionDateDefault();
 }
 
@@ -5407,13 +5501,13 @@ function bindAllotmentDateDefaults() {
 }
 
 function bindCompletionDateDefault() {
-  const completedBox = [...document.querySelectorAll("input[name='stage']")].find((box) => box.value === "Completed");
+  const workflowSelect = document.querySelector("[name='workflowStatus']");
   const completedDateInput = document.querySelector("[name='completionDate']");
-  if (!completedBox || !completedDateInput) return;
+  if (!workflowSelect || !completedDateInput) return;
   const syncCompletedDate = () => {
-    if (completedBox.checked && !completedDateInput.value) completedDateInput.value = todayDate();
+    if (workflowSelect.value === "Completed" && !completedDateInput.value) completedDateInput.value = todayDate();
   };
-  completedBox.addEventListener("change", syncCompletedDate);
+  workflowSelect.addEventListener("change", syncCompletedDate);
   syncCompletedDate();
 }
 
@@ -5628,6 +5722,26 @@ function visibleWorkflowStages(file) {
   }).sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
 }
 
+function currentWorkflowStage(file = {}) {
+  const normalized = normalizeStages(file);
+  const selected = stages.filter((stage) => stage !== "Billed" && normalized[stage]).pop();
+  return selected || "Received";
+}
+
+function workflowStatusField(file = {}) {
+  const current = currentWorkflowStage(file);
+  const options = visibleWorkflowStages(file);
+  const optionRows = [...new Set([current, ...options].filter((stage) => stage && stage !== "Billed"))];
+  return `
+    <div class="field">
+      <label for="workflowStatus">STATUS / WORKFLOW</label>
+      <select id="workflowStatus" name="workflowStatus" class="workflow-status-select">
+        <option value="">Select Status / Workflow</option>
+        ${optionRows.map((stage) => `<option value="${escapeHtml(stage)}" ${stage === current ? "selected" : ""} ${canEditStage(stage, file) || stage === current ? "" : "disabled"}>${escapeHtml(stage)}</option>`).join("")}
+      </select>
+    </div>`;
+}
+
 function canEditStage(stage, file = {}) {
   if (stage === "Billed") return false;
   if (!isStaffLogin()) return true;
@@ -5636,23 +5750,22 @@ function canEditStage(stage, file = {}) {
   return ["WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Approved", "Completed", "Correction Required"].includes(stage);
 }
 
-function cascadeStages(stage, checked) {
-  const index = stages.indexOf(stage);
-  document.querySelectorAll("input[name='stage']").forEach((box) => {
-    const boxIndex = stages.indexOf(box.value);
-    if (checked && boxIndex <= index) box.checked = true;
-    if (!checked && boxIndex >= index) box.checked = false;
-  });
-  if (checked && stage === "Approval Pending") {
-    ["Approved", "Completed", "Billed"].forEach((later) => {
-      const box = [...document.querySelectorAll("input[name='stage']")].find((input) => input.value === later);
-      if (box) box.checked = false;
-    });
+function stagesFromWorkflowSelection(selectedStage, existingStages = {}) {
+  const selectedIndex = stages.indexOf(selectedStage);
+  const nextStages = Object.fromEntries(stages.map((stage, index) => [
+    stage,
+    selectedIndex >= 0 ? index <= selectedIndex : Boolean(existingStages[stage]),
+  ]));
+  if (selectedStage === "Approval Pending" && !nextStages.Approved) {
+    nextStages.Completed = false;
+    nextStages.Billed = false;
   }
-  if (checked && stage === "Correction Required") {
-    const billedBox = [...document.querySelectorAll("input[name='stage']")].find((input) => input.value === "Billed");
-    if (billedBox) billedBox.checked = false;
+  if (selectedStage === "Correction Required") {
+    nextStages.Completed = false;
+    nextStages.Billed = false;
   }
+  if (!nextStages.Completed) nextStages.Billed = false;
+  return nextStages;
 }
 
 async function saveFileFromDrawer() {
@@ -5668,14 +5781,13 @@ async function saveFileFromDrawer() {
   syncSharedState(localStorage.getItem(STORAGE_KEY), false);
   const existingFile = editingId ? state.files.find((file) => file.id === editingId) : null;
   const data = new FormData(form);
-  const visibleStageInputs = [...document.querySelectorAll("input[name='stage']")];
-  const visibleStageNames = new Set(visibleStageInputs.map((box) => box.value));
-  const checked = new Set(visibleStageInputs.filter((box) => box.checked).map((box) => box.value));
   const existingStages = normalizeStages(existingFile || {});
-  const stagesObj = Object.fromEntries(stages.map((stage) => [
-    stage,
-    visibleStageNames.has(stage) ? checked.has(stage) : Boolean(existingStages[stage]),
-  ]));
+  const originalWorkflowStatus = existingFile ? currentWorkflowStage(existingFile) : "Received";
+  const selectedWorkflowStatus = data.get("workflowStatus") || originalWorkflowStatus || "Received";
+  const workflowStatusChanged = !existingFile || selectedWorkflowStatus !== originalWorkflowStatus;
+  const stagesObj = workflowStatusChanged
+    ? stagesFromWorkflowSelection(selectedWorkflowStatus, existingStages)
+    : { ...existingStages };
   if (stagesObj["Approval Pending"] && !stagesObj.Approved) {
     stagesObj.Completed = false;
     stagesObj.Billed = false;
@@ -5858,6 +5970,11 @@ async function saveFileFromDrawer() {
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
   };
+  const taskActivityAt = shouldBumpTaskActivity(existingFile, record, assignedChanged)
+    ? new Date().toISOString()
+    : fileTaskActivityAt(existingFile || record);
+  record.taskActivityAt = taskActivityAt;
+  record.task_activity_at = taskActivityAt;
   const reviewOnlyChecker = isAuthorisedCheckingStaff()
     && existingFile
     && !fileCreatedByCurrentUser(existingFile)
@@ -5919,8 +6036,10 @@ async function saveFileFromDrawer() {
       serviceType: record.serviceType,
     });
   }
+  const becameChecked = existingFile && checkingStatusOf(existingFile).label !== "Checked" && checkingStatusOf(record).label === "Checked";
+  if (becameChecked) queueFileCheckedNotification(record, existingFile);
   const changeText = describeFileChanges(existingFile, record);
-  if (changeText) queueFileChangeNotification(record, changeText, fileChangeType(existingFile, record));
+  if (changeText && !becameChecked) queueFileChangeNotification(record, changeText, fileChangeType(existingFile, record));
   if (existingFile && changeText) {
     addAuditLog("File edited", {
       fileId: record.id,
@@ -11288,7 +11407,7 @@ function fileListReportRows(files) {
       "CR No.": fileCrNumber(file),
       "Service Type": filePdfText(file.serviceType),
       "C/o": filePdfText(file.careOf, "Direct"),
-      FY: filePdfText(file.fy, "NA"),
+      FY: filePdfText(fileFy(file), "NA"),
       "Received Date": filePdfDate(file.fileReceivedDate),
       "Work Allotted": filePdfDate(file.workAllotmentDate || file.fileReceivedDate),
       "Assigned Staff": filePdfText(file.assignedStaff, "Not Assigned"),
@@ -11303,10 +11422,13 @@ function fileListReportRows(files) {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
+        FY: base.FY,
         "Service Type": base["Service Type"],
-        "Assigned Staff": base["Assigned Staff"],
         "Completion Date": filePdfCompletionDate(file),
+        "Done By": filePdfText(file.completedBy || file.workDoneBy || file.assignedStaff, "Not Assigned"),
         "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
+        "Checked By": filePdfText(file.checkedBy, "-"),
+        "Checked Date": filePdfDate(file.checkedDate),
         "Billing Status": isBilledFile(file) ? "Billed" : isNonBilledFile(file) ? "Non-Billed" : "Pending",
         Remarks: base.Remarks,
       };
