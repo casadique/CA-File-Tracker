@@ -70,6 +70,22 @@ async function sendChatMessage(payload, authUserId, profile) {
   }, authUserId);
 }
 
+async function markChatMessagesRead(payload, authUserId, profile) {
+  return patchAppState((state) => {
+    const user = resolveUser(state, { id: profile?.id, authUserId, email: profile?.email, name: profile?.name }) || {};
+    const visibleIds = new Set(visibleChatMessages(state, profile, authUserId)
+      .filter((message) => !sameIdentity(user, message.userId, message.userEmail, message.user))
+      .map((message) => message.id)
+      .filter(Boolean));
+    const messageIds = (Array.isArray(payload.messageIds) ? payload.messageIds : [])
+      .map((id) => String(id || "").trim())
+      .filter((id) => id && visibleIds.has(id));
+    const keys = messageIds.map((id) => chatReadKey(id, user, authUserId));
+    state.readChatMessages = [...new Set([...(state.readChatMessages || []), ...keys])];
+    return state;
+  }, authUserId);
+}
+
 function visibleChatMessages(state, profile, authUserId) {
   const user = resolveUser(state, { id: profile?.id, authUserId, email: profile?.email, name: profile?.name }) || {};
   if (["Admin", "Manager", "Staff Manager"].includes(profile?.role)) return state.chatMessages || [];
@@ -83,6 +99,11 @@ function visibleChatMessages(state, profile, authUserId) {
     return sameIdentity(user, message.userId, message.userEmail, message.user)
       || sameIdentity(user, message.targetUserId, message.targetUserEmail, message.targetUserName);
   });
+}
+
+function chatReadKey(messageId, user = {}, authUserId = "") {
+  const reader = String(user.id || user.email || authUserId || user.authUserId || user.name || "guest").trim().toLowerCase();
+  return `${reader}::${messageId}`;
 }
 
 function resolveUser(state, identity = {}) {
@@ -109,4 +130,4 @@ function chatTime(message = {}) {
   return Number(message.createdAt || 0) || Date.parse(message.created_at || `${message.date || ""} ${message.time || ""}`) || 0;
 }
 
-module.exports = { sendChatMessage, visibleChatMessages };
+module.exports = { sendChatMessage, markChatMessagesRead, visibleChatMessages };

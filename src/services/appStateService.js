@@ -60,6 +60,7 @@ function emptyState() {
     openingBalances: [],
     chatMessages: [],
     chatGroups: [],
+    readChatMessages: [],
     staffDetails: [],
     fileNotifications: [],
     auditLog: [],
@@ -79,6 +80,7 @@ function normalizeServerState(state) {
     otherCashCollections: sortFinanceRows((state.otherCashCollections || []).map(normalizeCollectionRow)),
     chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
     chatGroups: Array.isArray(state.chatGroups) ? state.chatGroups : [],
+    readChatMessages: Array.isArray(state.readChatMessages) ? [...new Set(state.readChatMessages.filter(Boolean))] : [],
     staffDetails: sortStaffDetailsNewestFirst(state.staffDetails || []),
     correctionHistory: sortCorrectionsNewestFirst(state.correctionHistory || []),
   };

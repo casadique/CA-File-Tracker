@@ -1114,6 +1114,7 @@ async function refreshCentralState(options = {}) {
     const chatOpen = options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open");
     const userIsScrollingDashboard = activePage === "dashboard" && Date.now() - lastDashboardScrollAt < 700;
     applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard });
+    updateTopActionBadges();
     if (userIsScrollingDashboard && !chatOpen) scheduleDashboardRefreshRender();
     if (chatOpen) {
       refreshOpenChatFromState();
@@ -1169,12 +1170,14 @@ function applyCentralState(incomingState, options = {}) {
     readNotifications: state.readNotifications,
     readChatMessages: state.readChatMessages,
   };
+  const incoming = normalizeState(incomingState);
+  const mergedReadChatMessages = mergeReadReceipts(currentSession.readChatMessages, incoming.readChatMessages);
   state = {
-    ...normalizeState(incomingState),
+    ...incoming,
     ...currentSession,
     filters: currentSession.filters,
     readNotifications: currentSession.readNotifications,
-    readChatMessages: currentSession.readChatMessages,
+    readChatMessages: mergedReadChatMessages,
   };
   if (options.targetPage) activePage = options.targetPage;
   saveState({ skipMerge: true, skipRemote: true });
@@ -1495,7 +1498,6 @@ function sharedStateForStorage(appState) {
     currentRole,
     filters,
     readNotifications,
-    readChatMessages,
     ...shared
   } = appState;
   return sanitizeSharedState(shared);
@@ -1558,12 +1560,14 @@ function restoreSharedData(incomingState, message = "Data restored", options = {
     readNotifications: state.readNotifications,
     readChatMessages: state.readChatMessages,
   };
+  const incoming = normalizeState(incomingState);
+  const mergedReadChatMessages = mergeReadReceipts(currentSession.readChatMessages, incoming.readChatMessages);
   state = {
-    ...normalizeState(incomingState),
+    ...incoming,
     ...currentSession,
     filters: currentSession.filters,
     readNotifications: currentSession.readNotifications,
-    readChatMessages: currentSession.readChatMessages,
+    readChatMessages: mergedReadChatMessages,
   };
   saveState({ skipMerge: true, skipRemote: Boolean(options.skipRemote), fullRemote: Boolean(options.fullRemote) });
   toast(message);
@@ -2239,9 +2243,13 @@ function isChatMessageRead(message, user = loggedInUser()) {
   return (state.readChatMessages || []).includes(chatReadKey(message.id, user));
 }
 
+function mergeReadReceipts(first = [], second = []) {
+  return [...new Set([...(first || []), ...(second || [])].filter(Boolean))];
+}
+
 function markChatMessagesRead(messageIds, user = loggedInUser()) {
   const keys = (messageIds || []).filter(Boolean).map((id) => chatReadKey(id, user));
-  state.readChatMessages = [...new Set([...(state.readChatMessages || []), ...keys])];
+  state.readChatMessages = mergeReadReceipts(state.readChatMessages, keys);
 }
 
 function markChatMessageRead(messageId, user = loggedInUser()) {
@@ -2674,21 +2682,6 @@ function allNotificationItems() {
       createdAt: notice.createdAt || Date.parse(notice.created_at || "") || 0,
     });
   });
-  unreadChatMessages().forEach((message) => {
-    items.push({
-      id: `chat-${message.id}`,
-      type: message.targetType === "personal" ? "Personal Chat" : "Group Chat",
-      category: "chat",
-      tone: "progress",
-      title: message.user || "Team Member",
-      text: message.text || (message.attachments?.length ? `Attachment shared: ${message.attachments[0].name}` : ""),
-      chatId: message.id,
-      actor: message.user || "Team Member",
-      date: message.date || "",
-      time: message.time || "",
-      createdAt: chatMessageTime(message),
-    });
-  });
   if (["Admin", "Manager"].includes(state.currentRole)) {
     const { year } = currentIndiaYearMonth();
     staffBirthdaysThisMonth().forEach((row) => {
@@ -2808,13 +2801,22 @@ function unreadChatMessages() {
   );
 }
 
+function unreadChatConversations() {
+  return chatConversationSummaries().filter((conversation) => Number(conversation.unread || 0) > 0);
+}
+
+function unreadChatLabel() {
+  const count = unreadChatCount();
+  if (!count) return "Team Chat";
+  return count === 1 ? "Team Chat - 1 Chat" : `Team Chat - ${count} Chats`;
+}
+
 function chatButtonLabel() {
-  const unread = unreadChatMessages().length;
-  return `Team Chat${unread ? ` ${unread}` : ""}`;
+  return unreadChatLabel();
 }
 
 function unreadChatCount() {
-  return unreadChatMessages().length;
+  return unreadChatConversations().length;
 }
 
 function actionBadge(count) {
@@ -2892,6 +2894,9 @@ function topActionIconButton(id, type, icon, label, count = 0) {
 function updateTopActionBadges() {
   const chatButton = document.querySelector("#chatButton");
   if (chatButton) {
+    const label = unreadChatLabel();
+    chatButton.title = label;
+    chatButton.setAttribute("aria-label", label);
     chatButton.innerHTML = `${navIcon("chat")}${actionBadge(unreadChatCount())}`;
   }
   const notifyButton = document.querySelector("#notifyButton");
@@ -2956,7 +2961,7 @@ function mount() {
           </div>
           <div class="daily-quote-slot" id="dailyQuoteSlot">${renderDailyQuoteBanner()}</div>
           <div class="top-actions">
-            ${topActionIconButton("chatButton", "chat", "chat", "Team Chat", unreadChatCount())}
+            ${topActionIconButton("chatButton", "chat", "chat", unreadChatLabel(), unreadChatCount())}
             ${topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length)}
             ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download</button><button class="top-action-button top-action-import" id="importFileButton">Import</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
             ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
@@ -12873,7 +12878,21 @@ function markActiveConversationRead() {
     .map((message) => message.id);
   if (unreadIds.length) {
     markChatMessagesRead(unreadIds);
-    saveState({ skipMerge: true, fullRemote: true });
+    if (isSupabaseMode()) {
+      apiJson("/api/chat/read", {
+        method: "POST",
+        body: JSON.stringify({ messageIds: unreadIds }),
+      }).then((result) => {
+        if (Array.isArray(result.readChatMessages)) {
+          state.readChatMessages = mergeReadReceipts(state.readChatMessages, result.readChatMessages);
+          saveState({ skipMerge: true, skipRemote: true });
+          updateTopActionBadges();
+          renderChatConversationListOnly();
+        }
+      }).catch((error) => console.warn("Chat read receipt sync failed", error));
+    } else {
+      saveState({ skipMerge: true });
+    }
     renderChatConversationListOnly();
     updateTopActionBadges();
   }
