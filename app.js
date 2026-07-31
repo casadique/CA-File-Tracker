@@ -2845,9 +2845,9 @@ function renderLogin() {
             <div class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
           </div>
           <button class="primary-button" id="loginButton">Login</button>
+          <p class="login-credit">An app by CA Sadique</p>
         </section>
       </div>
-      <p class="login-credit">An app by CA Sadique</p>
     </div>
     <div class="toast" id="toast"></div>
   `;
