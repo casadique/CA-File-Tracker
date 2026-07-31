@@ -4871,6 +4871,23 @@ textarea {
 .nav-badge-nonBilled { background: #ffedd5; color: #c2410c; }
 .nav-badge-billed { background: #ccfbf1; color: #0f766e; }
 .nav-badge-feePending { background: #fee2e2; color: #b91c1c; }
+.nav-badge-feeReceived { background: #dcfce7; color: #166534; }
+.nav-badge-reAssigned { background: #ede9fe; color: #6d28d9; }
+
+.reassigned-inline-label {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 
 .current-user-card {
   margin: 0;

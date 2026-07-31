@@ -46,7 +46,7 @@ function fileCompletionDateValue(file = {}) {
 }
 
 function fileAssignmentDateValue(file = {}) {
-  return dateOrNumber(file.task_activity_at || file.taskActivityAt || file.managerUpdatedAt || file.manager_updated_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date);
+  return dateOrNumber(file.task_activity_at || file.taskActivityAt || file.managerUpdatedAt || file.manager_updated_at || file.reAssignedDate || file.re_assigned_date || file.reassigned_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date);
 }
 
 function fileCorrectionDateValue(file = {}) {
@@ -234,10 +234,26 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
 
 function resolveFileAssignee(state, file) {
   const users = state.users || [];
-  return users.find((user) => user.id && user.id === file.assignedStaffId)
-    || users.find((user) => user.email && user.email === file.assignedStaffEmail)
-    || users.find((user) => String(user.name || "").toLowerCase() === String(file.assignedStaff || "").toLowerCase())
+  const assignee = currentFileAssignee(file);
+  return users.find((user) => user.id && user.id === assignee.id)
+    || users.find((user) => user.email && user.email === assignee.email)
+    || users.find((user) => String(user.name || "").toLowerCase() === String(assignee.name || "").toLowerCase())
     || {};
+}
+
+function currentFileAssignee(file = {}) {
+  if (hasAssignedStaffValue(file.reAssignedStaff) || file.reAssignedStaffId || file.reAssignedStaffEmail) {
+    return {
+      name: file.reAssignedStaff || "",
+      id: file.reAssignedStaffId || "",
+      email: file.reAssignedStaffEmail || "",
+    };
+  }
+  return {
+    name: file.assignedStaff || "",
+    id: file.assignedStaffId || "",
+    email: file.assignedStaffEmail || "",
+  };
 }
 
 function appendFileUpdateNotifications(state, before, after, profile = {}, now = new Date()) {
@@ -278,12 +294,25 @@ function appendFileUpdateNotifications(state, before, after, profile = {}, now =
 
 function describeFileChange(before, after) {
   if (!before) {
-    if (hasAssignedStaffValue(after.assignedStaff)) {
-      return { type: "File Allotted", text: `${after.name || "File"} was allotted to ${after.assignedStaff}.`, key: `new-assigned-${after.assignedStaff || ""}`, tone: "approval" };
+    const assignee = currentFileAssignee(after);
+    if (hasAssignedStaffValue(assignee.name)) {
+      return { type: "File Allotted", text: `${after.name || "File"} was allotted to ${assignee.name}.`, key: `new-assigned-${assignee.name || ""}`, tone: "approval" };
     }
     return { type: "New File Added", text: `${after.name || "File"} was added.`, key: "new", tone: "progress" };
   }
-  if (!sameText(before.assignedStaff, after.assignedStaff)) return { type: "Allotment Changed", text: `${after.name || "File"} was allotted to ${after.assignedStaff || "Not Assigned"}.`, key: `assigned-${after.assignedStaff || ""}`, tone: "approval" };
+  const beforeAssignee = currentFileAssignee(before);
+  const afterAssignee = currentFileAssignee(after);
+  if (!sameText(beforeAssignee.name, afterAssignee.name) || !sameText(beforeAssignee.id, afterAssignee.id) || !sameText(beforeAssignee.email, afterAssignee.email)) {
+    const isReassigned = hasAssignedStaffValue(after.reAssignedStaff);
+    return {
+      type: isReassigned ? "File Reassigned" : "Allotment Changed",
+      text: isReassigned
+        ? `${after.name || "File"} was reassigned from ${beforeAssignee.name || "Not Assigned"} to ${afterAssignee.name || "Not Assigned"}.`
+        : `${after.name || "File"} was allotted to ${afterAssignee.name || "Not Assigned"}.`,
+      key: `${isReassigned ? "reassigned" : "assigned"}-${afterAssignee.name || ""}-${after.reAssignedDate || after.reassigned_at || ""}`,
+      tone: "approval",
+    };
+  }
   if (!sameText(before.dueDate, after.dueDate)) return { type: "Due Date Changed", text: `${after.name || "File"} due date changed to ${displayDate(after.dueDate)}.`, key: `due-${after.dueDate || ""}`, tone: "pending" };
   if (!sameText(before.priority, after.priority)) return { type: "Priority Changed", text: `${after.name || "File"} priority changed to ${after.priority || "Normal"}.`, key: `priority-${after.priority || ""}`, tone: "overdue" };
   if (checkingLabel(before) !== "Checked" && checkingLabel(after) === "Checked") {
@@ -328,6 +357,7 @@ function notificationRecipients(state, file) {
 
 function checkedNotificationRecipients(state, file) {
   const users = state.users || [];
+  const assignee = currentFileAssignee(file);
   const identities = [
     file.completedById,
     file.completedByEmail,
@@ -338,9 +368,9 @@ function checkedNotificationRecipients(state, file) {
     file.doneById,
     file.doneByEmail,
     file.doneBy,
-    file.assignedStaffId,
-    file.assignedStaffEmail,
-    file.assignedStaff,
+    assignee.id,
+    assignee.email,
+    assignee.name,
   ];
   const map = new Map();
   identities.forEach((identity) => {
@@ -357,9 +387,11 @@ function checkedNotificationRecipients(state, file) {
 }
 
 function shouldBumpTaskActivity(before, after, profile = {}) {
-  if (!before) return hasAssignedStaffValue(after.assignedStaff);
+  if (!before) return hasAssignedStaffValue(currentFileAssignee(after).name);
   const role = String(profile?.role || "").trim();
-  if (!sameText(before.assignedStaff, after.assignedStaff)) return true;
+  const beforeAssignee = currentFileAssignee(before);
+  const afterAssignee = currentFileAssignee(after);
+  if (!sameText(beforeAssignee.name, afterAssignee.name) || !sameText(beforeAssignee.id, afterAssignee.id) || !sameText(beforeAssignee.email, afterAssignee.email)) return true;
   if (!["Admin", "Manager", "Staff Manager"].includes(role)) return false;
   if (statusLabel(before) !== statusLabel(after)) return true;
   if (checkingLabel(before) !== checkingLabel(after)) return true;
@@ -373,7 +405,7 @@ function statusLabel(file = {}) {
   if (file.filed || stages.Completed) return "Completed";
   if (file.billed || stages.Billed) return "Billed";
   if (stages.WIP) return "WIP";
-  if (stages.Allotted || hasAssignedStaffValue(file.assignedStaff)) return "Allotted";
+  if (stages.Allotted || hasAssignedStaffValue(currentFileAssignee(file).name)) return "Allotted";
   return "Received";
 }
 

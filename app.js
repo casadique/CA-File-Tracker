@@ -2190,15 +2190,59 @@ function markChatMessageRead(messageId, user = loggedInUser()) {
 }
 
 function fileBelongsToUser(file, user) {
+  return currentFileBelongsToUser(file, user);
+}
+
+function currentFileBelongsToUser(file, user) {
   if (!user) return false;
-  return staffNameBelongsToUser(file.assignedStaff, user)
-    || exactStaffIdentity(file.assignedStaffEmail, user.email)
-    || exactStaffIdentity(file.assignedStaffId, user.id)
-    || exactStaffIdentity(file.assignedStaffId, user.authUserId)
-    || staffNameBelongsToUser(file.reAssignedStaff, user)
-    || exactStaffIdentity(file.reAssignedStaffEmail, user.email)
-    || exactStaffIdentity(file.reAssignedStaffId, user.id)
-    || exactStaffIdentity(file.reAssignedStaffId, user.authUserId);
+  const assignee = currentFileAssignee(file);
+  return staffNameBelongsToUser(assignee.name, user)
+    || exactStaffIdentity(assignee.email, user.email)
+    || exactStaffIdentity(assignee.id, user.id)
+    || exactStaffIdentity(assignee.id, user.authUserId);
+}
+
+function currentFileAssignee(file = {}) {
+  if (hasAssignedStaffValue(file.reAssignedStaff) || file.reAssignedStaffId || file.reAssignedStaffEmail) {
+    return {
+      name: file.reAssignedStaff || "",
+      id: file.reAssignedStaffId || "",
+      email: file.reAssignedStaffEmail || "",
+      date: file.reAssignedDate || file.reassigned_at || "",
+    };
+  }
+  return {
+    name: file.assignedStaff || "",
+    id: file.assignedStaffId || "",
+    email: file.assignedStaffEmail || "",
+    date: file.workAllotmentDate || file.assigned_at || "",
+  };
+}
+
+function originalAllottedTo(file = {}) {
+  return file.originallyAllottedTo || file.originalAssignedStaff || file.original_assigned_to || file.assignedStaff || "Not Assigned";
+}
+
+function assignmentHistory(file = {}) {
+  const history = Array.isArray(file.assignmentHistory) ? file.assignmentHistory : [];
+  return [...history].sort((a, b) => (Date.parse(b.assignedAt || b.assigned_at || "") || 0) - (Date.parse(a.assignedAt || a.assigned_at || "") || 0));
+}
+
+function isReassignedFile(file = {}) {
+  return hasAssignedStaffValue(file.reAssignedStaff) || assignmentHistory(file).some((row) => String(row.actionType || row.action_type || "").toLowerCase().includes("reassignment"));
+}
+
+function reassignmentVisibleToUser(file, user) {
+  if (!user || !isReassignedFile(file)) return false;
+  const history = assignmentHistory(file);
+  return history.some((row) =>
+    staffNameBelongsToUser(row.assignedFrom || row.assigned_from, user)
+    || exactStaffIdentity(row.assignedFromId || row.assigned_from_id, user.id)
+    || exactStaffIdentity(row.assignedFromEmail || row.assigned_from_email, user.email)
+    || staffNameBelongsToUser(row.assignedTo || row.assigned_to, user)
+    || exactStaffIdentity(row.assignedToId || row.assigned_to_id, user.id)
+    || exactStaffIdentity(row.assignedToEmail || row.assigned_to_email, user.email)
+  ) || staffNameBelongsToUser(file.previousAllottedTo || file.reassigned_from || "", user);
 }
 
 function staffNameBelongsToUser(staffName, user) {
@@ -2225,13 +2269,13 @@ function visibleFiles() {
 }
 
 function staffOwnedFiles(user = loggedInUser()) {
-  return (state.files || []).filter((file) => fileBelongsToUser(file, user));
+  return (state.files || []).filter((file) => currentFileBelongsToUser(file, user) || reassignmentVisibleToUser(file, user));
 }
 
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const haystack = `${file.name} ${file.pan} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.remarks}`.toLowerCase();
+    const haystack = `${file.name} ${file.pan} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
     if (f.listView === "active" && isCheckedCompleted(file)) return false;
     if (f.listView === "completed" && !isCheckedCompleted(file)) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
@@ -2240,6 +2284,10 @@ function filteredFiles() {
     if (f.listView === "billed" && !isBilledFile(file)) return false;
     if (f.listView === "nonBilled" && !isNonBilledFile(file)) return false;
     if (f.listView === "feePending" && !isFeePendingFile(file)) return false;
+    if (f.listView === "feeReceived" && !isFeeReceivedFile(file)) return false;
+    if (f.listView === "reAssigned" && !isReassignedFile(file)) return false;
+    if (isStaffLogin() && f.listView === "reAssigned" && !reassignmentVisibleToUser(file, loggedInUser())) return false;
+    if (isStaffLogin() && f.listView !== "reAssigned" && !currentFileBelongsToUser(file, loggedInUser())) return false;
     if (f.search && !haystack.includes(f.search.toLowerCase())) return false;
     if (f.client && !file.name.toLowerCase().includes(f.client.toLowerCase())) return false;
     if (f.pan && !file.pan.toLowerCase().includes(f.pan.toLowerCase())) return false;
@@ -2351,6 +2399,10 @@ function isNonBilledFile(file) {
 
 function isFeePendingFile(file) {
   return Boolean(isBilledFile(file) && !file?.feeReceived);
+}
+
+function isFeeReceivedFile(file) {
+  return Boolean(isBilledFile(file) && file?.feeReceived);
 }
 
 function isNotCheckedFile(file) {
@@ -3064,9 +3116,11 @@ function renderNav() {
     "completed-files": "completed",
     "not-checked-files": "notChecked",
     "correction-required-files": "correctionRequired",
+    "re-assigned-files": "reAssigned",
     "non-billed-files": "nonBilled",
     "billed-files": "billed",
     "fee-pending": "feePending",
+    "fee-received": "feeReceived",
   };
   const counts = navBadgeCounts();
   const groups = navGroupDefinitions()
@@ -3129,7 +3183,7 @@ function renderAll() {
   if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
   if (activePage === "staffDetails" && !canUseStaffDetails()) activePage = "dashboard";
   if (isStaffLogin() && !["dashboard", "files", "staffDetails"].includes(activePage)) activePage = "dashboard";
-  if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "correctionRequired", "nonBilled", "billed", "feePending"].includes(state.filters.listView) && !state.filters.fromDashboard) {
+  if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "billed", "feePending", "feeReceived"].includes(state.filters.listView) && !state.filters.fromDashboard) {
     state.filters.listView = "active";
   }
   saveTabSession();
@@ -3155,9 +3209,11 @@ function renderAll() {
   if (activePage === "files" && state.filters.listView === "active") titles.files[0] = "Active Files";
   if (activePage === "files" && state.filters.listView === "completed") titles.files[0] = "Completed Files";
   if (activePage === "files" && state.filters.listView === "notChecked") titles.files[0] = "Not Checked Files";
+  if (activePage === "files" && state.filters.listView === "reAssigned") titles.files[0] = "Re Assigned Files";
   if (activePage === "files" && state.filters.listView === "nonBilled") titles.files[0] = "Non-Billed Files";
   if (activePage === "files" && state.filters.listView === "billed") titles.files[0] = "Billed Files";
   if (activePage === "files" && state.filters.listView === "feePending") titles.files[0] = "Fee Pending";
+  if (activePage === "files" && state.filters.listView === "feeReceived") titles.files[0] = "Fee Received";
   document.querySelector("#pageTitle").textContent = titles[activePage][0];
   const subtitle = document.querySelector("#pageSubtitle");
   subtitle.textContent = titles[activePage][1];
@@ -3200,9 +3256,9 @@ function enforceDateYearCap() {
 }
 
 function renderDashboard() {
-  const s = stats();
   if (isStaffLogin()) {
-    const myFiles = staffOwnedFiles();
+    const myFiles = visibleFiles().filter((file) => currentFileBelongsToUser(file, loggedInUser()));
+    const s = stats(myFiles);
     document.querySelector("#dashboard").innerHTML = `
       ${renderModernStaffDashboardShell(s, myFiles)}
       <div class="dashboard-layout dashboard-single staff-modern-performance-wrap">
@@ -3365,11 +3421,13 @@ function navGroupDefinitions() {
         navItem("active-files", "folder", "Active Files", "active"),
         ...notCheckedItem,
         navItem("correction-required-files", "pending", "Correction Required", "correctionRequired"),
+        navItem("re-assigned-files", "users", "Re Assigned Files", "reAssigned"),
         navItem("completed-files", "check", "Completed Files", "completed"),
       ] },
       { key: "billing", label: "Billing Status", collapsible: true, items: [
         navItem("billed-files", "invoice", "Billed Files", "billed"),
         navItem("fee-pending", "rupee", "Fee Pending Files", "feePending"),
+        navItem("fee-received", "rupee", "Fee Received", "feeReceived"),
         navItem("non-billed-files", "receipt", "Non Billed Files", "nonBilled"),
       ] },
     ];
@@ -3383,12 +3441,14 @@ function navGroupDefinitions() {
       navItem("active-files", "folder", "Active Files", "active"),
       navItem("not-checked-files", "pending", "Not Checked Files", "notChecked"),
       navItem("correction-required-files", "pending", "Correction Required", "correctionRequired"),
+      navItem("re-assigned-files", "users", "Re Assigned Files", "reAssigned"),
       navItem("completed-files", "check", "Completed Files", "completed"),
     ] },
     { key: "billing", label: "Billing Status", collapsible: true, items: [
       navItem("non-billed-files", "receipt", "Non-Billed Files", "nonBilled"),
       navItem("billed-files", "invoice", "Billed Files", "billed"),
       navItem("fee-pending", "rupee", "Fee Pending", "feePending"),
+      navItem("fee-received", "rupee", "Fee Received", "feeReceived"),
     ] },
     { key: "reports", label: "Reports & Operations", collapsible: true, items: [
       navItem("dailyReport", "report", "Daily Report M&A"),
@@ -3428,15 +3488,18 @@ function navItemActive(id, fileViews) {
 
 function navBadgeCounts() {
   const files = visibleFiles();
+  const currentFiles = isStaffLogin() ? files.filter((file) => currentFileBelongsToUser(file, loggedInUser())) : files;
   return {
-    myTask: files.filter((file) => !isCheckedCompleted(file)).length,
-    active: files.filter((file) => !isCheckedCompleted(file)).length,
-    notChecked: files.filter(isNotCheckedFile).length,
-    correctionRequired: files.filter(hasOpenCorrection).length,
-    completed: files.filter(isCheckedCompleted).length,
-    nonBilled: files.filter(isNonBilledFile).length,
-    billed: files.filter(isBilledFile).length,
-    feePending: files.filter(isFeePendingFile).length,
+    myTask: currentFiles.filter((file) => !isCheckedCompleted(file)).length,
+    active: currentFiles.filter((file) => !isCheckedCompleted(file)).length,
+    notChecked: currentFiles.filter(isNotCheckedFile).length,
+    correctionRequired: currentFiles.filter(hasOpenCorrection).length,
+    reAssigned: files.filter((file) => isReassignedFile(file) && (!isStaffLogin() || reassignmentVisibleToUser(file, loggedInUser()))).length,
+    completed: currentFiles.filter(isCheckedCompleted).length,
+    nonBilled: currentFiles.filter(isNonBilledFile).length,
+    billed: currentFiles.filter(isBilledFile).length,
+    feePending: currentFiles.filter(isFeePendingFile).length,
+    feeReceived: currentFiles.filter(isFeeReceivedFile).length,
   };
 }
 
@@ -4245,6 +4308,8 @@ function staffFilePageTitle(listView) {
     nonBilled: "Non-Billed Files",
     billed: "Billed Files",
     feePending: "Fee Pending Files",
+    feeReceived: "Fee Received Files",
+    reAssigned: "Re Assigned Files",
   };
   return titleMap[listView] || "My Files";
 }
@@ -4299,6 +4364,8 @@ function staffPageFiles(listView) {
     if (listView === "billed") return isBilledFile(file);
     if (listView === "nonBilled") return isNonBilledFile(file);
     if (listView === "feePending") return isFeePendingFile(file);
+    if (listView === "feeReceived") return isFeeReceivedFile(file);
+    if (listView === "reAssigned") return isReassignedFile(file) && (!isStaffLogin() || reassignmentVisibleToUser(file, loggedInUser()));
     return true;
   });
   const filteredRows = ["", "active"].includes(listView) ? filterStaffActiveRows(rows) : rows;
@@ -4527,6 +4594,31 @@ function staffCompletedClientCell(file = {}) {
 
 function staffReportRow(file, listView = "") {
   const startedDate = file.workStartedDate || (file.stages?.WIP || file.stages?.["Work Done"] || file.stages?.Completed ? file.workAllotmentDate || file.fileReceivedDate : "");
+  if (listView === "reAssigned") {
+    return {
+      "Client Name": file.name,
+      Service: file.serviceType,
+      "Originally Allotted To": originalAllottedTo(file),
+      "Reassigned From": file.reassignedFrom || file.reassigned_from || file.previousAllottedTo || "-",
+      "Re Allotted To": currentFileAssignee(file).name || "-",
+      "Re Allot Date": displayDate(file.reAssignedDate || file.reassigned_at),
+      "Reassigned By": file.reassignedBy || file.reassigned_by || "-",
+      Status: statusOf(file).label,
+    };
+  }
+  if (listView === "feeReceived") {
+    return {
+      "Client Name": file.name,
+      Service: file.serviceType,
+      FY: file.fy || "NA",
+      "Invoice Number": file.invoiceNumber || file.invoiceNo || "-",
+      "Bill Amount": money(dashboardFileAmount(file, "billed")),
+      "Amount Received": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
+      "Fee Received Date": displayDate(file.feeReceivedDate || file.receivedOn),
+      "Received By": file.feeReceivedBy || file.collectionStaff || "-",
+      Mode: file.paymentMode || file.receiptMode || "-",
+    };
+  }
   if (listView === "active") {
     return {
       Client: file.name,
@@ -4553,6 +4645,8 @@ function staffReportRow(file, listView = "") {
 }
 
 function renderStaffFileTable(files, listView = "") {
+  if (listView === "reAssigned") return renderReAssignedFileTable(files);
+  if (listView === "feeReceived") return renderFeeReceivedFileTable(files);
   if (!files.length) return empty("No files found.");
   const rows = files.map((file) => staffReportRow(file, listView));
   const headers = Object.keys(rows[0] || {});
@@ -4678,6 +4772,9 @@ function staffExportTitle(listView) {
     notChecked: "Not Checked Files",
     billed: "Billed Files",
     nonBilled: "Non-Billed Files",
+    feePending: "Fee Pending Files",
+    feeReceived: "Fee Received Files",
+    reAssigned: "Re Assigned Files",
   };
   return titles[listView] || "Staff Files";
 }
@@ -4693,6 +4790,9 @@ function staffExportName(listView) {
     notChecked: "not-checked-files",
     billed: "billed-files",
     nonBilled: "non-billable-files",
+    feePending: "fee-pending-files",
+    feeReceived: "fee-received-files",
+    reAssigned: "re-assigned-files",
   };
   return names[listView] || "staff-files";
 }
@@ -4717,6 +4817,8 @@ function activeFileExportRow(file) {
 
 function renderFileTable(files) {
   if (!files.length) return empty("No files match these filters.");
+  if (state.filters.listView === "reAssigned") return renderReAssignedFileTable(files);
+  if (state.filters.listView === "feeReceived") return renderFeeReceivedFileTable(files);
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
@@ -4749,7 +4851,7 @@ function renderFileTable(files) {
               <td><div class="action-row">${fileRowActions(file)}</div></td>`;
             const activeCells = `
               <td>${fileSerialNumber(file, index)}</td>
-              <td><span class="client-name">${file.name}</span><span class="subtext">${file.pan}</span></td>
+              <td><span class="client-name">${escapeHtml(file.name || "")}${isReassignedFile(file) ? ` <span class="reassigned-inline-label">(Re Assigned)</span>` : ""}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
               <td>${file.serviceType}</td>
               <td>${fmt(file.fileReceivedDate)}</td>
               <td>${fmt(file.workAllotmentDate || file.fileReceivedDate)}</td>
@@ -4800,6 +4902,66 @@ function renderNotCheckedFileTable(files) {
   `;
 }
 
+function renderReAssignedFileTable(files) {
+  const rows = sortFilesByAssignmentNewestFirst(files);
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact">
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>Received On</th><th>C/o</th><th>Status</th><th>Originally Allotted To</th><th>Reassigned From</th><th>Re Allotted To</th><th>Re Allot Date</th><th>Reassigned By</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${rows.map((file, index) => {
+            const history = assignmentHistory(file)[0] || {};
+            const reassignedFrom = history.assignedFrom || history.assigned_from || file.reassignedFrom || file.reassigned_from || file.previousAllottedTo || originalAllottedTo(file);
+            const reassignedBy = history.assignedBy || history.assigned_by || file.reassignedBy || file.reassigned_by || "-";
+            const reallotDate = normalizeImportDate(file.reAssignedDate || file.reassignedAt || file.reassigned_at || history.assignedAt || history.assigned_at || "");
+            return `<tr>
+              <td>${index + 1}</td>
+              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
+              <td>${escapeHtml(file.serviceType || "")}</td>
+              <td>${fmt(file.fileReceivedDate)}</td>
+              <td>${escapeHtml(file.careOf || "Direct")}</td>
+              <td><span class="badge ${statusOf(file).className}">${escapeHtml(statusOf(file).label)}</span></td>
+              <td>${escapeHtml(originalAllottedTo(file))}</td>
+              <td>${escapeHtml(reassignedFrom || "-")}</td>
+              <td>${escapeHtml(file.reAssignedStaff || currentFileAssignee(file).name || "-")}</td>
+              <td>${fmt(reallotDate)}</td>
+              <td>${escapeHtml(reassignedBy)}</td>
+              <td><div class="action-row"><button class="mini-button" data-edit="${file.id}">View File</button></div></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderFeeReceivedFileTable(files) {
+  const rows = sortFilesByCompletionNewestFirst(files);
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact">
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Invoice Number</th><th>Bill Amount</th><th>Amount Received</th><th>Fee Received Date</th><th>Received By</th><th>Payment Mode</th><th>Receipt Number</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${rows.map((file, index) => `<tr>
+            <td>${index + 1}</td>
+            <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}${file.careOf ? ` | C/o: ${escapeHtml(file.careOf)}` : ""}</span></td>
+            <td>${escapeHtml(file.serviceType || "")}</td>
+            <td>${escapeHtml(fileFy(file) || "-")}</td>
+            <td>${escapeHtml(file.invoiceNumber || file.invoice_number || "-")}</td>
+            <td class="amount-cell">${rupee(dashboardFileAmount(file, "billed"))}</td>
+            <td class="amount-cell">${rupee(dashboardFileAmount(file, "received"))}</td>
+            <td>${fmt(file.feeReceivedDate || file.receivedOn || file.received_on)}</td>
+            <td>${escapeHtml(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy || "-")}</td>
+            <td>${escapeHtml(file.paymentMode || file.feeCollectionMode || "-")}</td>
+            <td>${escapeHtml(file.receiptNumber || file.receipt_number || "-")}</td>
+            <td><div class="action-row">${fileRowActions(file)}</div></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function fileSerialNumber(file, fallbackIndex = 0) {
   return fallbackIndex + 1;
 }
@@ -4822,14 +4984,14 @@ function fileRowActions(file) {
     actions.push(`<button class="mini-button" data-fee-non-billable="${file.id}">Non-Billable</button>`);
     if (file.billed && !file.feeReceived) actions.push(`<button class="mini-button success" data-mark-received="${file.id}">Mark Received</button>`);
   }
-  if (canManageBilling && state.filters.listView === "billed" && file.billed && file.feeReceived) {
+  if (canManageBilling && ["billed", "feeReceived"].includes(state.filters.listView) && file.billed && file.feeReceived) {
     actions.push(`<button class="mini-button" data-mark-not-received="${file.id}">Not Received</button>`);
   }
   if (canManageBilling && state.filters.listView === "feePending" && isFeePendingFile(file)) {
     actions.push(`<button class="mini-button" data-fee-non-billable="${file.id}">Non-Billable</button>`);
     actions.push(`<button class="mini-button success" data-mark-received="${file.id}">Mark Received</button>`);
   }
-  if (file.feeReceived && state.filters.listView === "billed") {
+  if (file.feeReceived && ["billed", "feeReceived"].includes(state.filters.listView)) {
     actions.push(`<span class="badge filed">Received</span>`);
   }
   if (rolePerm().delete) actions.push(`<button class="mini-button danger" data-delete="${file.id}">Delete</button>`);
@@ -4864,7 +5026,7 @@ function bindFileActions() {
     btn.onclick = () => updateFileBilling(btn.dataset.nonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as non-billable");
   });
   document.querySelectorAll("[data-fee-non-billable]").forEach((btn) => {
-    btn.onclick = () => updateFileBilling(btn.dataset.feeNonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as non-billable", "nonBilled");
+    btn.onclick = () => updateFileBilling(btn.dataset.feeNonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as Non Billable.");
   });
   document.querySelectorAll("[data-mark-billed]").forEach((btn) => {
     btn.onclick = () => {
@@ -5172,11 +5334,18 @@ async function saveReceivedFromModal(fileId) {
   if (button) button.disabled = true;
   const user = loggedInUser() || {};
   const receivedAt = new Date().toISOString();
+  const file = state.files.find((item) => item.id === fileId) || {};
+  const billedAmount = dashboardFileAmount(file, "billed");
+  const balanceAmount = Math.max(Number(billedAmount || 0) - amount, 0);
   const ok = await updateFileBilling(fileId, {
+    billed: true,
     feeReceived: true,
     feeReceivedDate: receivedOn,
+    feeReceivedAmount: amount,
     amount_received: amount,
     amountReceived: amount,
+    balanceAmount,
+    balance_amount: balanceAmount,
     received_on: receivedOn,
     receivedOn,
     received_by_user_id: user.id || state.session?.userId || "",
@@ -5185,8 +5354,9 @@ async function saveReceivedFromModal(fileId) {
     receivedByUserName: user.name || state.currentUser || "",
     received_at: receivedAt,
     receivedAt,
-    payment_status: "Received",
-    paymentStatus: "Received",
+    feeReceivedBy: user.name || state.currentUser || "",
+    payment_status: balanceAmount > 0 ? "Partly Received" : "Fee Received",
+    paymentStatus: balanceAmount > 0 ? "Partly Received" : "Fee Received",
   }, "Fee receipt saved");
   if (button) button.disabled = false;
   if (ok) closeMarkReceivedModal();
@@ -5262,6 +5432,52 @@ function queueFileChangeNotification(file, changeText, changeType = "File Update
       tone: changeType === "File Allotted" ? "approval" : "progress",
     },
   ].slice(-500);
+}
+
+function queueReassignmentNotifications(file, reassignedFrom = "") {
+  if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return;
+  const fromUser = findUserByStaffIdentity(reassignedFrom);
+  const toUser = findUserByStaffIdentity(file.reAssignedStaff)
+    || findUserByStaffIdentity(file.reAssignedStaffEmail)
+    || findUserByStaffIdentity(file.reAssignedStaffId);
+  const recipients = [
+    toUser && {
+      user: toUser,
+      text: `File Reassigned: ${file.name || "File"} - ${file.serviceType || "Service"}${file.fy ? ` - ${file.fy}` : ""} has been reassigned to you by ${state.currentUser || "Team"}.`,
+      tone: "approval",
+    },
+    fromUser && {
+      user: fromUser,
+      text: `File Reassigned: ${file.name || "File"} - ${file.serviceType || "Service"}${file.fy ? ` - ${file.fy}` : ""} has been reassigned from you to ${file.reAssignedStaff || "new staff"} by ${state.currentUser || "Team"}.`,
+      tone: "pending",
+    },
+  ].filter(Boolean);
+  if (!recipients.length) return;
+  const now = new Date();
+  const existingKeys = new Set((state.fileNotifications || []).map((notice) => notice.dedupeKey).filter(Boolean));
+  const notices = recipients.map(({ user, text, tone }) => {
+    const dedupeKey = `${file.id}|file_reassigned|${file.reAssignedDate || todayDate()}|${user.id || user.email || user.name}`;
+    if (existingKeys.has(dedupeKey)) return null;
+    existingKeys.add(dedupeKey);
+    return {
+      id: crypto.randomUUID(),
+      dedupeKey,
+      fileId: file.id,
+      fileName: file.name,
+      changeType: "file_reassigned",
+      changeText: text,
+      changedBy: state.currentUser,
+      changedByRole: state.currentRole,
+      targetUserId: user.id || "",
+      targetUserEmail: user.email || "",
+      targetUserName: user.name || "",
+      date: todayDate(),
+      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      createdAt: now.getTime(),
+      tone,
+    };
+  }).filter(Boolean);
+  if (notices.length) state.fileNotifications = [...(state.fileNotifications || []), ...notices].slice(-500);
 }
 
 function checkedNotificationRecipients(file = {}) {
@@ -5356,9 +5572,13 @@ function queueCheckingRequiredNotifications(file) {
 }
 
 function describeFileChanges(before, after) {
-  if (!before) return hasAssignedStaffValue(after.assignedStaff) ? "New file allotted" : "New file created";
+  if (!before) return hasAssignedStaffValue(currentFileAssignee(after).name) ? "New file allotted" : "New file created";
   const changes = [];
-  if (!sameStaffName(before.assignedStaff, after.assignedStaff)) changes.push(`Assigned staff changed from ${before.assignedStaff || "Not Assigned"} to ${after.assignedStaff || "Not Assigned"}`);
+  const beforeAssignee = currentFileAssignee(before);
+  const afterAssignee = currentFileAssignee(after);
+  if (!sameStaffName(beforeAssignee.name, afterAssignee.name)) {
+    changes.push(`${hasAssignedStaffValue(after.reAssignedStaff) ? "Re assigned" : "Assigned staff changed"} from ${beforeAssignee.name || "Not Assigned"} to ${afterAssignee.name || "Not Assigned"}`);
+  }
   if (before.serviceType !== after.serviceType) changes.push(`Service changed to ${after.serviceType}`);
   if (before.dueDate !== after.dueDate) changes.push(`Due date changed to ${fmt(after.dueDate)}`);
   if (before.priority !== after.priority) changes.push(`Priority changed to ${after.priority}`);
@@ -5369,8 +5589,8 @@ function describeFileChanges(before, after) {
 }
 
 function fileChangeType(before, after) {
-  if (!before && hasAssignedStaffValue(after.assignedStaff)) return "File Allotted";
-  if (before && !sameStaffName(before.assignedStaff, after.assignedStaff)) return "File Re-Allotted";
+  if (!before && hasAssignedStaffValue(currentFileAssignee(after).name)) return "File Allotted";
+  if (before && !sameStaffName(currentFileAssignee(before).name, currentFileAssignee(after).name)) return hasAssignedStaffValue(after.reAssignedStaff) ? "File Reassigned" : "File Re-Allotted";
   return "File Update";
 }
 
@@ -5379,11 +5599,11 @@ function canBumpTaskActivity() {
 }
 
 function fileTaskActivityAt(file = {}) {
-  return file.taskActivityAt || file.task_activity_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || file.reAssignedDate || file.re_assigned_date || "";
+  return file.taskActivityAt || file.task_activity_at || file.reAssignedDate || file.re_assigned_date || file.reassigned_at || file.assigned_at || file.assignedAt || file.workAllotmentDate || file.work_allotment_date || "";
 }
 
 function shouldBumpTaskActivity(before, after, assignedChanged = false) {
-  if (!before) return hasAssignedStaffValue(after.assignedStaff);
+  if (!before) return hasAssignedStaffValue(currentFileAssignee(after).name);
   if (assignedChanged) return true;
   if (!canBumpTaskActivity()) return false;
   if (currentWorkflowStage(before) !== currentWorkflowStage(after)) return true;
@@ -5873,14 +6093,19 @@ async function saveFileFromDrawer() {
   let reAssignedDate = canAssignThisFile ? data.get("reAssignedDate") : (existingFile?.reAssignedDate || "");
   if (reAssignedStaff && reAssignedStaff !== "Not Assigned" && !reAssignedDate) reAssignedDate = todayDate();
   const selectedAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("assignedStaff"), "assignedStaffNewInput", "Not Assigned") : (existingFile?.assignedStaff || state.currentUser), "Not Assigned");
-  const assigned = canAssignThisFile
-    ? (reAssignedStaff && reAssignedStaff !== "Not Assigned" ? reAssignedStaff : selectedAssignedStaff)
-    : (existingFile?.assignedStaff || state.currentUser);
-  if (hasAssignedStaffValue(assigned)) stagesObj.Allotted = true;
+  const originalAssignedStaff = existingFile && isReassignedFile(existingFile)
+    ? originalAllottedTo(existingFile)
+    : selectedAssignedStaff;
+  const currentAssignedStaff = canAssignThisFile
+    ? (hasAssignedStaffValue(reAssignedStaff) ? reAssignedStaff : selectedAssignedStaff)
+    : currentFileAssignee(existingFile || { assignedStaff: state.currentUser }).name;
+  const assigned = originalAssignedStaff;
+  if (hasAssignedStaffValue(currentAssignedStaff)) stagesObj.Allotted = true;
   else stagesObj.Allotted = false;
   let workAllotmentDate = canAssignThisFile ? data.get("workAllotmentDate") : (existingFile?.workAllotmentDate || "");
   if (!workAllotmentDate) workAllotmentDate = data.get("fileReceivedDate") || todayDate();
-  const assignedChanged = existingFile ? !sameStaffName(existingFile.assignedStaff, assigned) : hasAssignedStaffValue(assigned);
+  const previousCurrentAssignee = existingFile ? currentFileAssignee(existingFile).name : "";
+  const assignedChanged = existingFile ? !sameStaffName(previousCurrentAssignee, currentAssignedStaff) : hasAssignedStaffValue(currentAssignedStaff);
   const receivedMarked = stagesObj.Received && (!existingFile?.stages?.Received || !existingFile?.receivedBy);
   let workStartedDate = existingFile?.workStartedDate || "";
   if (stagesObj.WIP && !workStartedDate) workStartedDate = todayDate();
@@ -5955,6 +6180,11 @@ async function saveFileFromDrawer() {
     assignedStaff: assigned,
     assignedStaffId: assignedUser.id || "",
     assignedStaffEmail: assignedUser.email || "",
+    originallyAllottedTo: existingFile?.originallyAllottedTo || existingFile?.original_assigned_to || assigned,
+    originalAssignedStaff: existingFile?.originalAssignedStaff || existingFile?.original_assigned_to || assigned,
+    originalAllottedDate: existingFile?.originalAllottedDate || existingFile?.original_assigned_at || workAllotmentDate,
+    currentAssignedStaff,
+    current_assigned_to: currentAssignedStaff,
     workAllotmentDate,
     receivedBy: receivedMarked ? (state.currentUser || "") : (existingFile?.receivedBy || ""),
     receivedById: receivedMarked ? (state.session?.userId || "") : (existingFile?.receivedById || ""),
@@ -5962,12 +6192,20 @@ async function saveFileFromDrawer() {
     allottedBy: (assignedChanged || (!existingFile && hasAssignedStaffValue(assigned))) ? (state.currentUser || "") : (existingFile?.allottedBy || ""),
     allottedById: (assignedChanged || (!existingFile && hasAssignedStaffValue(assigned))) ? (state.session?.userId || "") : (existingFile?.allottedById || ""),
     allottedByEmail: (assignedChanged || (!existingFile && hasAssignedStaffValue(assigned))) ? (state.session?.userEmail || "") : (existingFile?.allottedByEmail || ""),
-    previousAllottedTo: assignedChanged ? (existingFile?.assignedStaff || "") : (existingFile?.previousAllottedTo || ""),
+    previousAllottedTo: assignedChanged ? (previousCurrentAssignee || "") : (existingFile?.previousAllottedTo || ""),
     workStartedDate,
     reAssignedStaff,
     reAssignedStaffId: reAssignedUser.id || "",
     reAssignedStaffEmail: reAssignedUser.email || "",
     reAssignedDate,
+    reassignedFrom: assignedChanged && hasAssignedStaffValue(reAssignedStaff) ? (previousCurrentAssignee || assigned || "") : (existingFile?.reassignedFrom || existingFile?.reassigned_from || ""),
+    reassigned_from: assignedChanged && hasAssignedStaffValue(reAssignedStaff) ? (previousCurrentAssignee || assigned || "") : (existingFile?.reassigned_from || existingFile?.reassignedFrom || ""),
+    reassignedTo: hasAssignedStaffValue(reAssignedStaff) ? reAssignedStaff : (existingFile?.reassignedTo || existingFile?.reassigned_to || ""),
+    reassigned_to: hasAssignedStaffValue(reAssignedStaff) ? reAssignedStaff : (existingFile?.reassigned_to || existingFile?.reassignedTo || ""),
+    reassignedBy: assignedChanged && hasAssignedStaffValue(reAssignedStaff) ? (state.currentUser || "") : (existingFile?.reassignedBy || existingFile?.reassigned_by || ""),
+    reassigned_by: assignedChanged && hasAssignedStaffValue(reAssignedStaff) ? (state.currentUser || "") : (existingFile?.reassigned_by || existingFile?.reassignedBy || ""),
+    reassignedAt: hasAssignedStaffValue(reAssignedStaff) ? (reAssignedDate || todayDate()) : (existingFile?.reassignedAt || existingFile?.reassigned_at || ""),
+    reassigned_at: hasAssignedStaffValue(reAssignedStaff) ? (reAssignedDate || todayDate()) : (existingFile?.reassigned_at || existingFile?.reassignedAt || ""),
     dueDate: data.get("dueDate"),
     priority: data.get("priority"),
     completionDate,
@@ -6001,6 +6239,37 @@ async function saveFileFromDrawer() {
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
   };
+  const existingAssignmentHistory = assignmentHistory(existingFile || {});
+  if (assignedChanged && hasAssignedStaffValue(reAssignedStaff)) {
+    const reassignedAtIso = new Date().toISOString();
+    const historyRow = {
+      id: crypto.randomUUID(),
+      fileId: record.id,
+      file_id: record.id,
+      actionType: "Reassignment",
+      action_type: "Reassignment",
+      assignedFrom: previousCurrentAssignee || assigned || "",
+      assigned_from: previousCurrentAssignee || assigned || "",
+      assignedTo: reAssignedStaff,
+      assigned_to: reAssignedStaff,
+      assignedToId: reAssignedUser.id || "",
+      assigned_to_id: reAssignedUser.id || "",
+      assignedToEmail: reAssignedUser.email || "",
+      assigned_to_email: reAssignedUser.email || "",
+      assignedBy: state.currentUser || "",
+      assigned_by: state.currentUser || "",
+      assignedById: state.session?.userId || "",
+      assigned_by_id: state.session?.userId || "",
+      assignedAt: reassignedAtIso,
+      assigned_at: reassignedAtIso,
+      remarks: data.get("remarks").trim(),
+      dedupeKey: `${record.id}|${previousCurrentAssignee || assigned}|${reAssignedStaff}|${reAssignedDate || todayDate()}`,
+    };
+    const seen = new Set(existingAssignmentHistory.map((row) => row.dedupeKey).filter(Boolean));
+    record.assignmentHistory = seen.has(historyRow.dedupeKey) ? existingAssignmentHistory : [historyRow, ...existingAssignmentHistory];
+  } else {
+    record.assignmentHistory = existingAssignmentHistory;
+  }
   const taskActivityAt = shouldBumpTaskActivity(existingFile, record, assignedChanged)
     ? new Date().toISOString()
     : fileTaskActivityAt(existingFile || record);
@@ -6069,8 +6338,9 @@ async function saveFileFromDrawer() {
   }
   const becameChecked = existingFile && checkingStatusOf(existingFile).label !== "Checked" && checkingStatusOf(record).label === "Checked";
   if (becameChecked) queueFileCheckedNotification(record, existingFile);
+  if (existingFile && assignedChanged && hasAssignedStaffValue(record.reAssignedStaff)) queueReassignmentNotifications(record, previousCurrentAssignee);
   const changeText = describeFileChanges(existingFile, record);
-  if (changeText && !becameChecked) queueFileChangeNotification(record, changeText, fileChangeType(existingFile, record));
+  if (changeText && !becameChecked && !(assignedChanged && hasAssignedStaffValue(record.reAssignedStaff))) queueFileChangeNotification(record, changeText, fileChangeType(existingFile, record));
   if (existingFile && changeText) {
     addAuditLog("File edited", {
       fileId: record.id,
