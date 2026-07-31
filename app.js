@@ -3211,11 +3211,11 @@ function renderLogin() {
           <p class="login-subtitle">Use your approved office login to continue.</p>
           <div class="field">
             <label>User Name / Email</label>
-            <input id="loginEmail" type="text" value="casadique@gmail.com" autocomplete="username" placeholder="Enter email or username" />
+            <input id="loginEmail" type="text" value="" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Enter email or username" />
           </div>
           <div class="field">
             <label>Password</label>
-            <div class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
+            <div class="password-wrap"><input id="loginPassword" type="password" value="" autocomplete="new-password" placeholder="Enter password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
           </div>
           <div class="login-action-stack">
             <button class="primary-button" id="loginButton">Login</button>
@@ -3226,11 +3226,23 @@ function renderLogin() {
     </div>
     <div class="toast" id="toast"></div>
   `;
+  clearLoginPrefill();
   document.querySelector("#loginButton").onclick = handleLogin;
   bindPasswordToggles();
   document.querySelector("#loginPassword").onkeydown = (e) => {
     if (e.key === "Enter") handleLogin();
   };
+}
+
+function clearLoginPrefill() {
+  const email = document.querySelector("#loginEmail");
+  const password = document.querySelector("#loginPassword");
+  if (email) email.value = "";
+  if (password) password.value = "";
+  setTimeout(() => {
+    if (email) email.value = "";
+    if (password) password.value = "";
+  }, 100);
 }
 
 function recoverySessionFromUrl() {
