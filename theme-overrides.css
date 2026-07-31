@@ -129,6 +129,97 @@
   opacity: 1;
 }
 
+/* Sidebar branding polish */
+.sidebar .brand {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  align-content: center;
+  column-gap: 14px;
+  min-height: 116px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar .brand-mark {
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  min-height: 52px;
+  border-radius: 13px;
+  overflow: hidden;
+  align-self: center;
+  justify-self: start;
+}
+
+.sidebar .ca-logo-mark img {
+  width: 45px;
+  height: 45px;
+  object-fit: contain;
+}
+
+.sidebar .brand-text-only {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sidebar .brand-text-only h1 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 22px;
+  line-height: 1.05;
+  font-weight: 900;
+  letter-spacing: 0;
+  white-space: normal;
+}
+
+.sidebar .brand-text-only h1 span,
+.sidebar .brand-text-only h1 em {
+  display: inline;
+  color: #ffffff;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.sidebar .brand-text-only h1 span::after {
+  content: " ";
+}
+
+.sidebar .brand-text-only .brand-byline {
+  margin: 6px 0 0;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.22;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: normal;
+}
+
+.sidebar .brand-text-only .brand-subline {
+  margin: 3px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.sidebar.collapsed .brand {
+  grid-template-columns: 1fr;
+  min-height: 84px;
+  padding: 18px 15px;
+  justify-items: center;
+}
+
+.sidebar.collapsed .brand-mark {
+  justify-self: center;
+}
+
+.sidebar.collapsed .brand-text-only {
+  display: none;
+}
+
 .chat-composer-line {
   align-items: end;
   gap: 12px;
@@ -581,6 +672,27 @@ body,
 }
 
 @media (max-width: 1024px) {
+  .sidebar .brand,
+  .sidebar.collapsed .brand,
+  .app-shell.sidebar-collapsed .sidebar .brand {
+    grid-template-columns: 52px minmax(0, 1fr);
+    justify-items: stretch;
+    min-height: 116px;
+    padding: 18px 20px 16px;
+  }
+
+  .sidebar .brand-text-only,
+  .sidebar.collapsed .brand-text-only,
+  .app-shell.sidebar-collapsed .sidebar .brand-text-only {
+    display: block;
+  }
+
+  .sidebar .brand-mark,
+  .sidebar.collapsed .brand-mark,
+  .app-shell.sidebar-collapsed .sidebar .brand-mark {
+    justify-self: start;
+  }
+
   .app-shell,
   .app-shell.sidebar-collapsed {
     grid-template-columns: 1fr;
