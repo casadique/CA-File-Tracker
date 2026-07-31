@@ -14,10 +14,13 @@ function sortFilesForRequest(files, options = {}) {
   if (listView === "active") rows = rows.filter((file) => !isCompletedFile(file) || hasOpenCorrection(file));
   if (listView === "correctionRequired") rows = rows.filter(hasOpenCorrection);
   if (listView === "notChecked") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !file.checkedBy);
+  if (listView === "feeReceived") rows = rows.filter((file) => file.feeReceived);
   if (sortField === "assigned_at") return sortFilesByDate(rows, fileAssignmentDateValue, direction, fileReceivedDateValue);
   if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileCreatedTime);
   if (sortField === "file_received_date") return sortFilesByDate(rows, fileReceivedDateValue, direction, fileCreatedTime);
   if (sortField === "completed_date") return sortFilesByDate(rows, fileCompletionDateValue, direction, fileCreatedTime);
+  if (sortField === "fee_received_at") return [...rows].sort((a, b) => direction === "asc" ? sortFeeReceivedAsc(a, b) : sortFeeReceivedDesc(a, b));
+  if (listView === "feeReceived") return [...rows].sort(sortFeeReceivedDesc);
   return sortFilesNewestFirst(rows);
 }
 
@@ -56,6 +59,34 @@ function fileCorrectionDateValue(file = {}) {
 
 function fileCreatedTime(file = {}) {
   return dateOrNumber(file.created_at || file.createdAt || file.updated_at || file.updatedAt || file.lastUpdatedDate);
+}
+
+function feeReceivedTime(file = {}) {
+  return dateOrNumber(file.fee_received_at || file.feeReceivedAt || file.received_at || file.receivedAt);
+}
+
+function stableFileIdSortDesc(a = {}, b = {}) {
+  const left = a.id ?? "";
+  const right = b.id ?? "";
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber !== rightNumber) return rightNumber - leftNumber;
+  return String(right).localeCompare(String(left));
+}
+
+function sortFeeReceivedDesc(a = {}, b = {}) {
+  const leftTime = feeReceivedTime(a);
+  const rightTime = feeReceivedTime(b);
+  if (rightTime && leftTime && rightTime !== leftTime) return rightTime - leftTime;
+  if (rightTime && !leftTime) return 1;
+  if (!rightTime && leftTime) return -1;
+  const idSort = stableFileIdSortDesc(a, b);
+  if (idSort) return idSort;
+  return fileCreatedTime(b) - fileCreatedTime(a);
+}
+
+function sortFeeReceivedAsc(a = {}, b = {}) {
+  return -sortFeeReceivedDesc(a, b);
 }
 
 function fileUpdatedTime(file = {}) {
@@ -101,6 +132,7 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
+    applyFeeReceivedTimestamp(record, before, new Date(now).toISOString());
     const taskActivityAt = shouldBumpTaskActivity(before, record, profile)
       ? new Date(now).toISOString()
       : (before?.taskActivityAt || before?.task_activity_at || record.taskActivityAt || record.task_activity_at || record.assignedAt || record.assigned_at || record.workAllotmentDate || record.reAssignedDate || "");
@@ -121,6 +153,25 @@ async function upsertFile(file, userId, profile = {}) {
     state.files = sortFilesNewestFirst(files);
     return state;
   }, userId);
+}
+
+function applyFeeReceivedTimestamp(record = {}, before = {}, fallbackIso = new Date().toISOString()) {
+  if (!record.feeReceived) {
+    record.feeReceivedAt = "";
+    record.fee_received_at = "";
+    record.receivedAt = "";
+    record.received_at = "";
+    return record;
+  }
+  const existingTimestamp = before?.feeReceivedAt || before?.fee_received_at || before?.receivedAt || before?.received_at || "";
+  const incomingTimestamp = record.feeReceivedAt || record.fee_received_at || record.receivedAt || record.received_at || "";
+  const becameReceived = !before?.feeReceived;
+  const receivedTimestamp = incomingTimestamp || existingTimestamp || (becameReceived ? fallbackIso : "");
+  record.feeReceivedAt = receivedTimestamp;
+  record.fee_received_at = receivedTimestamp;
+  record.receivedAt = receivedTimestamp;
+  record.received_at = receivedTimestamp;
+  return record;
 }
 
 async function returnFileForCorrection(fileId, payload, userId, profile) {

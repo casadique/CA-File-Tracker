@@ -4529,6 +4529,7 @@ function staffPageFiles(listView) {
 }
 
 function sortStaffPageFiles(files, listView = "") {
+  if (listView === "feeReceived") return sortFilesByFeeReceivedNewestFirst(files);
   if (listView === "correctionRequired" || state.filters.dashboardKind === "correctionRequired") return sortFilesByCorrectionNewestFirst(files);
   if (listView === "completed" || usesCompletionSort(listView, state.filters.dashboardKind)) return sortFilesByCompletionNewestFirst(files);
   if (listView === "active" && state.filters.dashboardKind === "myTask") return sortFilesByAssignmentNewestFirst(files);
@@ -4614,6 +4615,53 @@ function sortFilesByCompletionNewestFirst(files = []) {
   });
 }
 
+function sortFilesByFeeReceivedNewestFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const left = feeReceivedSortTime(a);
+    const right = feeReceivedSortTime(b);
+    if (right && left && right !== left) return right - left;
+    if (right && !left) return 1;
+    if (!right && left) return -1;
+    const idSort = stableFileIdSortDesc(a, b);
+    if (idSort) return idSort;
+    return fileCreatedSortTime(b) - fileCreatedSortTime(a);
+  });
+}
+
+function feeReceivedSortTime(file = {}) {
+  return Date.parse(file.feeReceivedAt || file.fee_received_at || file.receivedAt || file.received_at || "") || 0;
+}
+
+function applyFeeReceivedTimestamp(record = {}, before = {}, fallbackIso = new Date().toISOString()) {
+  if (!record.feeReceived) {
+    record.feeReceivedAt = "";
+    record.fee_received_at = "";
+    record.receivedAt = "";
+    record.received_at = "";
+    return record;
+  }
+  const existingTimestamp = before?.feeReceivedAt || before?.fee_received_at || before?.receivedAt || before?.received_at || "";
+  const incomingTimestamp = record.feeReceivedAt || record.fee_received_at || record.receivedAt || record.received_at || "";
+  const becameReceived = !before?.feeReceived;
+  const receivedTimestamp = incomingTimestamp || existingTimestamp || (becameReceived ? fallbackIso : "");
+  record.feeReceivedAt = receivedTimestamp;
+  record.fee_received_at = receivedTimestamp;
+  record.receivedAt = receivedTimestamp;
+  record.received_at = receivedTimestamp;
+  return record;
+}
+
+function stableFileIdSortDesc(a = {}, b = {}) {
+  const left = a.id ?? "";
+  const right = b.id ?? "";
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber !== rightNumber) {
+    return rightNumber - leftNumber;
+  }
+  return String(right).localeCompare(String(left));
+}
+
 function sortFilesByAssignmentNewestFirst(files = []) {
   return [...files].sort((a, b) => {
     const left = fileAssignmentSortTime(a);
@@ -4654,7 +4702,7 @@ function latestCorrectionSortTime(file = {}) {
 }
 
 function usesCompletionSort(listView = state.filters.listView, dashboardKind = state.filters.dashboardKind) {
-  return ["completed", "notChecked", "billed", "nonBilled", "feePending", "feeReceived"].includes(listView)
+  return ["completed", "notChecked", "billed", "nonBilled", "feePending"].includes(listView)
     || ["completed", "reportsPrepared", "shared"].includes(dashboardKind);
 }
 
@@ -4720,6 +4768,7 @@ function financeNewestFirst(a = {}, b = {}) {
 }
 
 function sortFilesForDisplay(files) {
+  if (state.filters.listView === "feeReceived") return sortFilesByFeeReceivedNewestFirst(files);
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -5092,7 +5141,7 @@ function renderReAssignedFileTable(files) {
 }
 
 function renderFeeReceivedFileTable(files) {
-  const rows = sortFilesByCompletionNewestFirst(files);
+  const rows = sortFilesByFeeReceivedNewestFirst(files);
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact">
@@ -5190,7 +5239,7 @@ function bindFileActions() {
     btn.onclick = () => openMarkReceivedModal(btn.dataset.markReceived);
   });
   document.querySelectorAll("[data-mark-not-received]").forEach((btn) => {
-    btn.onclick = () => updateFileBilling(btn.dataset.markNotReceived, { feeReceived: false, feeReceivedDate: "" }, "Fee marked as not received", "feePending");
+    btn.onclick = () => updateFileBilling(btn.dataset.markNotReceived, { feeReceived: false, feeReceivedDate: "", feeReceivedAt: "", fee_received_at: "", receivedAt: "", received_at: "" }, "Fee marked as not received", "feePending");
   });
   document.querySelectorAll("[data-delete]").forEach((btn) => {
     btn.onclick = () => {
@@ -5506,6 +5555,8 @@ async function saveReceivedFromModal(fileId) {
     receivedByUserName: user.name || state.currentUser || "",
     received_at: receivedAt,
     receivedAt,
+    fee_received_at: receivedAt,
+    feeReceivedAt: receivedAt,
     feeReceivedBy: user.name || state.currentUser || "",
     payment_status: balanceAmount > 0 ? "Partly Received" : "Fee Received",
     paymentStatus: balanceAmount > 0 ? "Partly Received" : "Fee Received",
@@ -5528,6 +5579,7 @@ async function updateFileBilling(fileId, updates, message, nextListView = "") {
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
   };
+  applyFeeReceivedTimestamp(updated, file);
   state.files[index] = updated;
   queueFileChangeNotification(updated, billingChangeText(file, updated), updates.billed ? "Billed" : updates.feeReceived ? "Fee Received" : "Billing Update");
   saveState();
@@ -6328,6 +6380,10 @@ async function saveFileFromDrawer() {
     billingType: existingFile?.billingType || "",
     feeReceived: (existingFile?.billed || stagesObj.Billed) ? Boolean(existingFile?.feeReceived) : false,
     feeReceivedDate: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.feeReceivedDate || "") : "",
+    feeReceivedAt: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.feeReceivedAt || existingFile?.fee_received_at || existingFile?.receivedAt || existingFile?.received_at || "") : "",
+    fee_received_at: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.fee_received_at || existingFile?.feeReceivedAt || existingFile?.received_at || existingFile?.receivedAt || "") : "",
+    receivedAt: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.receivedAt || existingFile?.received_at || existingFile?.feeReceivedAt || existingFile?.fee_received_at || "") : "",
+    received_at: (existingFile?.billed || stagesObj.Billed) ? (existingFile?.received_at || existingFile?.receivedAt || existingFile?.fee_received_at || existingFile?.feeReceivedAt || "") : "",
     stages: stagesObj,
     assignedStaff: assigned,
     assignedStaffId: assignedUser.id || "",
@@ -6391,6 +6447,7 @@ async function saveFileFromDrawer() {
     lastUpdatedDate: todayDate(),
     updatedAt: Date.now(),
   };
+  applyFeeReceivedTimestamp(record, existingFile);
   const existingAssignmentHistory = assignmentHistory(existingFile || {});
   if (assignedChanged && hasAssignedStaffValue(reAssignedStaff)) {
     const reassignedAtIso = new Date().toISOString();
@@ -6450,6 +6507,10 @@ async function saveFileFromDrawer() {
       billingType: existingFile.billingType,
       feeReceived: existingFile.feeReceived,
       feeReceivedDate: existingFile.feeReceivedDate,
+      feeReceivedAt: existingFile.feeReceivedAt,
+      fee_received_at: existingFile.fee_received_at,
+      receivedAt: existingFile.receivedAt,
+      received_at: existingFile.received_at,
       stages: existingFile.stages,
       assignedStaff: existingFile.assignedStaff,
       assignedStaffId: existingFile.assignedStaffId,
@@ -8647,6 +8708,7 @@ function processBulkFeeReceivedUpdateRows(rows) {
         };
         file.feeReceived = true;
         file.feeReceivedDate = normalizeImportDate(entry.lastUpdatedDate) || todayDate();
+        applyFeeReceivedTimestamp(file, before, generatedAt);
         file.feeReceivedAmount = entry.receivedAmount;
         file.updatedAt = Date.now();
         matchedIndices.add(index);
@@ -11887,6 +11949,7 @@ function fileListSectionTitle() {
     billed: "Billed Files",
     nonBilled: "Non-Billed Files",
     feePending: "Fee Pending Files",
+    feeReceived: "Fee Received Files",
   };
   const dashboardTitles = {
     pending: "Pending Files",
@@ -11988,7 +12051,8 @@ function fileSpName(file = {}) {
 
 function fileListReportRows(files) {
   const section = state.filters.listView || state.filters.dashboardKind || "files";
-  return (files || []).map((file, index) => {
+  const sourceFiles = section === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files || []) : (files || []);
+  return sourceFiles.map((file, index) => {
     const base = {
       SN: index + 1,
       "Client Name": filePdfText(file.name),
@@ -12069,6 +12133,19 @@ function fileListReportRows(files) {
         "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
         "Pending Amount": filePdfAmount(filePendingAmount(file)),
         "Payment Status": file.feeReceived ? "Received" : "Pending",
+      };
+    }
+    if (section === "feeReceived") {
+      return {
+        SN: base.SN,
+        "Client Name": base["Client Name"],
+        "Service Type": base["Service Type"],
+        FY: base.FY,
+        "Billed Amount": filePdfAmount(dashboardFileAmount(file, "billed")),
+        "Received Amount": filePdfAmount(dashboardFileAmount(file, "received")),
+        "Fee Received Date": filePdfDate(file.feeReceivedDate || file.receivedOn || file.received_on),
+        "Received By": filePdfText(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy, "-"),
+        "Payment Status": "Received",
       };
     }
     return {
