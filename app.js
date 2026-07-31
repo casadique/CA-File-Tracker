@@ -11788,11 +11788,11 @@ function bindChatComposerEvents() {
   const textarea = document.querySelector("#chatText");
   if (textarea) {
     textarea.addEventListener("input", () => {
-      textarea.style.height = "auto";
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 132)}px`;
+      resizeChatTextarea(textarea);
       updateSendButtonState();
     });
     textarea.addEventListener("keydown", handleMessageKeyDown);
+    resizeChatTextarea(textarea);
     updateSendButtonState();
   }
   const attachmentInput = document.querySelector("#chatAttachment");
@@ -11808,6 +11808,12 @@ function bindChatComposerEvents() {
     renderChatAttachmentPreview();
     updateSendButtonState();
   });
+}
+
+function resizeChatTextarea(textarea = document.querySelector("#chatText")) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 58), 148)}px`;
 }
 
 function bindNewChatEvents() {
@@ -11894,17 +11900,17 @@ function renderChatConversationListOnly() {
 
 function renderChatConversationList() {
   const rows = filterChatConversations(chatConversationSummaries(chatUiState.targetType, chatUiState.recipientId));
-  return rows.length ? rows.map(chatConversationButton).join("") : `<div class="chat-empty-state">No users or chats found.</div>`;
+  return rows.length ? rows.map(chatConversationButton).join("") : `<div class="chat-empty-state">No members found.</div>`;
 }
 
 function filterChatConversations(items = []) {
-  const query = String(chatUiState.search || "").trim().toLowerCase();
+  const query = normalizeChatSearchText(chatUiState.search);
   return items.filter((item) => {
     if (chatUiState.filter === "private" && item.type !== "personal") return false;
     if (chatUiState.filter === "groups" && item.type !== "group") return false;
     if (chatUiState.filter === "unread" && !item.unread) return false;
     if (!query) return true;
-    return String(item.searchText || "").toLowerCase().includes(query);
+    return normalizeChatSearchText(item.searchText).includes(query);
   });
 }
 
@@ -11932,7 +11938,7 @@ function renderActiveConversationPanel(draftText = "") {
       <div class="chat-composer-line">
         <label class="chat-tool-button" for="chatAttachment" title="Attach PDF or Excel" aria-label="Attach file">${navIcon("backup")}</label>
         <input class="hidden" type="file" id="chatAttachment" accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-        <textarea id="chatText" placeholder="${chatUiState.targetType === "personal" ? "Message this staff member..." : "Message the group..."}" rows="1">${escapeHtml(draftText)}</textarea>
+        <textarea id="chatText" placeholder="Type a message..." rows="2">${escapeHtml(draftText)}</textarea>
         <button class="chat-send-button" id="sendChatMessage" type="submit" title="Send message" aria-label="Send message">${navIcon("chat")}</button>
       </div>
     </form>
@@ -11942,7 +11948,7 @@ function renderActiveConversationPanel(draftText = "") {
 function renderNewChatPanel() {
   if (!chatUiState.newChatOpen) return "";
   const users = chatRecipientUsers().filter((user) => {
-    const query = String(chatUiState.search || "").trim().toLowerCase();
+    const query = normalizeChatSearchText(chatUiState.search);
     if (!query) return true;
     return chatUserSearchText(user).includes(query);
   });
@@ -11955,7 +11961,7 @@ function renderNewChatPanel() {
         </div>
         <input id="newGroupName" value="${escapeHtml(chatUiState.groupName)}" placeholder="Group name" aria-label="Group name">
         <div class="new-chat-user-list">
-          ${users.map((user) => `<label class="new-chat-user"><input type="checkbox" data-toggle-group-member="${escapeHtml(user.id)}" ${chatUiState.groupMembers.includes(user.id) ? "checked" : ""}><span class="chat-avatar">${escapeHtml(userInitials(chatDisplayName(user)))}</span><span><strong>${escapeHtml(chatDisplayName(user))}</strong><small>${escapeHtml(user.role || user.email || "Team member")}</small></span></label>`).join("") || `<div class="chat-empty-state">No staff found.</div>`}
+          ${users.map((user) => `<label class="new-chat-user"><input type="checkbox" data-toggle-group-member="${escapeHtml(user.id)}" ${chatUiState.groupMembers.includes(user.id) ? "checked" : ""}><span class="chat-avatar">${escapeHtml(userInitials(chatDisplayName(user)))}</span><span><strong>${escapeHtml(chatDisplayName(user))}</strong><small>${escapeHtml(user.role || user.email || "Team member")}</small></span></label>`).join("") || `<div class="chat-empty-state">No members found.</div>`}
         </div>
         <button class="primary-button create-group-button" id="createChatGroup" type="button">Create Group</button>
       </div>
@@ -11968,7 +11974,7 @@ function renderNewChatPanel() {
         <button data-new-chat-mode="group" type="button">Group</button>
       </div>
       <div class="new-chat-user-list">
-        ${users.map((user) => `<button class="new-chat-user" data-start-private-chat="${escapeHtml(user.id)}" type="button" title="${escapeHtml(chatDisplayName(user))}"><span class="chat-avatar">${escapeHtml(userInitials(chatDisplayName(user)))}</span><span><strong>${escapeHtml(chatDisplayName(user))}</strong><small>${escapeHtml(user.role || user.email || "Team member")}</small></span><em>Start</em></button>`).join("") || `<div class="chat-empty-state">No staff found.</div>`}
+        ${users.map((user) => `<button class="new-chat-user" data-start-private-chat="${escapeHtml(user.id)}" type="button" title="${escapeHtml(chatDisplayName(user))}"><span class="chat-avatar">${escapeHtml(userInitials(chatDisplayName(user)))}</span><span><strong>${escapeHtml(chatDisplayName(user))}</strong><small>${escapeHtml(user.role || user.email || "Team member")}</small></span><em>Start</em></button>`).join("") || `<div class="chat-empty-state">No members found.</div>`}
       </div>
     </div>
   `;
@@ -12142,7 +12148,18 @@ function chatConversationSummary(type, recipientId, title, subtitle, messages, a
     initials: userInitials(title),
     unread,
     active,
-    searchText: [title, subtitle, user?.email, type].filter(Boolean).join(" "),
+    searchText: [
+      title,
+      subtitle,
+      user?.email,
+      user?.id,
+      user?.authUserId,
+      user?.role,
+      user?.designation,
+      user?.position,
+      user?.department,
+      type,
+    ].filter(Boolean).join(" "),
   };
 }
 
@@ -12187,7 +12204,21 @@ function chatDisplayName(user = {}) {
 }
 
 function chatUserSearchText(user = {}) {
-  return [chatDisplayName(user), user.name, user.email, user.role].filter(Boolean).join(" ").toLowerCase();
+  return normalizeChatSearchText([
+    chatDisplayName(user),
+    user.name,
+    user.email,
+    user.id,
+    user.authUserId,
+    user.role,
+    user.designation,
+    user.position,
+    user.department,
+  ].filter(Boolean).join(" "));
+}
+
+function normalizeChatSearchText(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function formatChatListTime(message = {}) {
@@ -12341,13 +12372,15 @@ async function sendChatMessage() {
       renderChatConversationListOnly();
       bindChatComposerEvents();
       scrollActiveChatToBottom();
+      document.querySelector("#chatText")?.focus();
       return;
     } catch (error) {
       state.chatMessages = mergeChatMessages((state.chatMessages || []).filter((message) => message.id !== optimistic.id), [{ ...optimistic, status: "failed" }]);
-      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel("");
+      document.querySelector("#chatConversationPanel").innerHTML = renderActiveConversationPanel(text);
       renderChatConversationListOnly();
       bindChatComposerEvents();
       scrollActiveChatToBottom();
+      document.querySelector("#chatText")?.focus();
       console.error("Failed message insert", { targetType, targetUserId: targetUser?.id || "", message: error.message });
       return toast(`Message failed to send: ${error.message || "Please retry."}`);
     } finally {
@@ -12390,6 +12423,7 @@ async function sendChatMessage() {
   renderChatConversationListOnly();
   bindChatComposerEvents();
   scrollActiveChatToBottom();
+  document.querySelector("#chatText")?.focus();
 }
 
 function readChatAttachment(file) {
