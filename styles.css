@@ -9507,6 +9507,19 @@ body,
   box-shadow: 0 16px 30px rgba(37, 99, 235, 0.24);
 }
 
+.login-action-stack {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.login-action-stack .primary-button {
+  margin-top: 0;
+}
+
 .login-note {
   margin: 14px 0 0;
   color: #64748b;
@@ -9516,7 +9529,7 @@ body,
 }
 
 .login-credit {
-  margin: 18px 0 0;
+  margin: 0;
   color: #0f4f78;
   font-family: "Segoe UI", Arial, sans-serif;
   font-size: 14px;
