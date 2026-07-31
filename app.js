@@ -6303,7 +6303,7 @@ function renderStaffDetailsForm() {
       ${staffFormField("mobile", "Mobile", "tel", v("mobile"))}
       ${staffSelectField("position", "Position", staffPositionOptions, raw("position", selectedUser?.role || ""), "Select Position", true)}
       ${staffDepartmentField(raw("department"))}
-      <div class="field"><label>Reporting Manager</label><select name="reportingManagerId"><option value="">Select Manager</option>${state.users.filter((u) => ["Admin", "Manager", "Staff Manager"].includes(u.role)).map((u) => `<option value="${escapeHtml(u.id)}" ${editing?.reportingManagerId === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>Reporting to</label><select name="reportingManagerId"><option value="">Select Manager</option>${state.users.filter((u) => ["Admin", "Manager", "Staff Manager"].includes(u.role)).map((u) => `<option value="${escapeHtml(u.id)}" ${editing?.reportingManagerId === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`).join("")}</select></div>
       ${staffFormField("branch", "Branch or Office", "text", v("branch"))}
       ${staffSelectField("employmentType", "Employment Type", staffEmploymentTypeOptions, raw("employmentType"), "Select Employment Type")}
       <div class="field"><label>Employment Status</label><select name="employmentStatus">${["Active", "On Leave", "Resigned", "Terminated", "Inactive"].map((item) => `<option ${((editing?.employmentStatus || "Active") === item) ? "selected" : ""}>${item}</option>`).join("")}</select></div>
@@ -6401,7 +6401,7 @@ function filteredStaffDetails() {
 
 function renderStaffDetailsTable(rows) {
   if (!rows.length) return empty("No staff records found.");
-  const headers = ["SN", "Profile", "Staff Name", "Employee ID", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting Manager", "Employment Status", "Actions"];
+  const headers = ["SN", "Profile", "Staff Name", "Employee ID", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting to", "Employment Status", "Actions"];
   return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
     <td>${index + 1}</td>
     <td>${staffAvatar(row)}</td>
@@ -6436,7 +6436,7 @@ function renderStaffProfile() {
   return `<div class="staff-profile">
     <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
     <div class="staff-profile-grid">
-      ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting Manager", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
+      ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
       ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber].filter(Boolean).join(" - ")]])}
       ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
       ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
@@ -6633,7 +6633,7 @@ function staffDetailsReportRows(rows = filteredStaffDetails()) {
     Department: row.department,
     Email: row.email,
     Mobile: row.mobile,
-    "Reporting Manager": staffManagerName(row.reportingManagerId),
+    "Reporting to": staffManagerName(row.reportingManagerId),
     "Employment Status": row.employmentStatus,
   }));
 }
@@ -7312,10 +7312,11 @@ function downloadImportTemplate() {
   toast("Sample Excel template downloaded");
 }
 
-function downloadExcelTable(name, rows) {
+function downloadExcelTable(name, rows, title = "") {
   const blockedExportHeaders = new Set(["id", "name", "pan", "serviceType", "careOf", "mode", "fileReceivedDate", "workDone", "shared", "reportPrepared", "approved", "filed", "billed", "stages", "assignedStaff", "workAllotmentDate", "workStartedDate", "dueDate", "priority", "lastUpdatedDate", "updatedAt", "assignedStaffId", "assignedStaffEmail", "reAssignedStaff", "reAssignedStaffId", "reAssignedStaffEmail"]);
   rows = rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => !blockedExportHeaders.has(String(key).trim()))));
   const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+  const headingLines = reportHeadingLines(title);
   const wideColumns = ["Name", "PAN / Regn Number", "Service Type", "Remarks", "Attachments"];
   const dateColumns = ["File Received Date", "Work Allotment Date", "Re Assigned Date", "Due Date", "Last Updated Date"];
   const narrowColumns = ["C/o", "Mode", "Priority", "Status"];
@@ -7367,11 +7368,25 @@ function downloadExcelTable(name, rows) {
           white-space: normal;
           mso-data-placement: same-cell;
         }
+        .report-heading td {
+          border: 0;
+          background: #ffffff !important;
+          color: #0f172a;
+          font-weight: 700;
+          font-size: 15px;
+          padding: 4px 2px;
+        }
+        .report-heading.meta td {
+          color: #334155;
+          font-size: 12px;
+          font-weight: 600;
+        }
       </style>
     </head>
     <body>
     <table>
       <colgroup>${headers.map((h) => `<col style="width:${columnWidth(h)}px">`).join("")}</colgroup>
+      ${headingLines.length ? `<tbody>${headingLines.map((line, index) => `<tr class="report-heading ${index === headingLines.length - 2 ? "" : "meta"}"><td colspan="${Math.max(headers.length, 1)}">${escapeHtml(line)}</td></tr>`).join("")}<tr class="report-heading meta"><td colspan="${Math.max(headers.length, 1)}">&nbsp;</td></tr></tbody>` : ""}
       <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
       <tbody>${rows.map((row) => `<tr>${headers.map((h) => {
         const value = escapeHtml(row[h] ?? "");
@@ -7431,15 +7446,23 @@ async function downloadPdfSections(name, sections, title = "") {
     y += 18;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    headingLines.slice(1, -1).forEach((line) => {
+    const hasMetaLine = headingLines.length > 3;
+    const reportTitleIndex = hasMetaLine ? headingLines.length - 2 : headingLines.length - 1;
+    headingLines.slice(1, reportTitleIndex).forEach((line) => {
       doc.text(line, 40, y);
       y += 14;
     });
     if (headingLines.length > 1) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(13);
-      doc.text(headingLines[headingLines.length - 1], 40, y + 4);
+      doc.text(headingLines[reportTitleIndex], 40, y + 4);
       y += 22;
+    }
+    if (hasMetaLine) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(headingLines[headingLines.length - 1], 40, y);
+      y += 16;
     }
   } else {
     doc.setFont("helvetica", "bold");
@@ -10589,6 +10612,20 @@ function cashReportRows(rows = filteredCashCollections()) {
   return [...mapped, { SN: "", Date: "", Particulars: "", "V.No": "", "Received From": "", Mode: "Total", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), Remarks: "" }];
 }
 
+function transactionReportDateLine(fromKey, toKey) {
+  const from = state.filters[fromKey] ? displayDate(state.filters[fromKey]) : "All";
+  const to = state.filters[toKey] ? displayDate(state.filters[toKey]) : "All";
+  return `From Date: ${from}    To Date: ${to}`;
+}
+
+function expenseReportTitleLines(title) {
+  return ["Muhammad & Associates,", "Chartered Accountants,", title, transactionReportDateLine("expenseFrom", "expenseTo")];
+}
+
+function cashCollectionReportTitleLines() {
+  return ["Muhammad & Associates,", "Chartered Accountants,", "Cash Collection Report", transactionReportDateLine("cashFrom", "cashTo")];
+}
+
 function balanceReportRows() {
   const b = cashBalanceForRange();
   return [
@@ -10600,17 +10637,17 @@ function balanceReportRows() {
   ];
 }
 
-function exportExpenseExcel() { downloadExcelTable("expense-report", expenseReportRows()); }
-function exportCashExcel() { downloadExcelTable("other-cash-collection-report", cashReportRows()); }
+function exportExpenseExcel() { downloadExcelTable("expense-report", expenseReportRows(), expenseReportTitleLines("Expense Report")); }
+function exportCashExcel() { downloadExcelTable("cash-collection-report", cashReportRows(), cashCollectionReportTitleLines()); }
 function exportBalanceExcel() { downloadExcelTable("cash-balance-report", balanceReportRows()); }
-async function exportExpensePdf() { await downloadPdfRows("expense-report", expenseReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Expense Report"]); }
-async function exportCashPdf() { await downloadPdfRows("other-cash-collection-report", cashReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Other Cash Collection Report"]); }
+async function exportExpensePdf() { await downloadPdfRows("expense-report", expenseReportRows(), expenseReportTitleLines("Expense Report")); }
+async function exportCashPdf() { await downloadPdfRows("cash-collection-report", cashReportRows(), cashCollectionReportTitleLines()); }
 async function exportBalancePdf() { await downloadPdfRows("cash-reconciliation-report", balanceReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Cash Reconciliation"]); }
 function printExpenseReport() {
-  printStructuredReport({ title: "Expense Report", sections: [{ title: "Expenses", rows: expenseReportRows() }], format: "print" });
+  printStructuredReport({ title: "Expense Report", subtitle: transactionReportDateLine("expenseFrom", "expenseTo"), sections: [{ title: "Expenses", rows: expenseReportRows() }], format: "print" });
 }
 function printCashReport() {
-  printStructuredReport({ title: "Collections Report", sections: [{ title: "Collections", rows: cashReportRows() }], format: "print" });
+  printStructuredReport({ title: "Cash Collection Report", subtitle: transactionReportDateLine("cashFrom", "cashTo"), sections: [{ title: "Collections", rows: cashReportRows() }], format: "print" });
 }
 function printBalanceReport() {
   printStructuredReport({ title: "Cash Reconciliation", sections: [{ title: "Summary", rows: balanceReportRows() }, { title: "Cash Movement", rows: cashMovementRows().map((row) => ({ SN: row.sn, Date: expenseDisplayDate(row.date), Time: row.time || "", Type: row.type, Particulars: row.particulars, Reference: row.reference, "Cash In": money(row.cashIn), "Cash Out": money(row.cashOut), "Running Balance": money(row.runningBalance), "Entered By": row.enteredBy })) }], format: "print" });
@@ -11063,6 +11100,7 @@ function printStructuredReport({ title, subtitle = "", sections = [], format = "
           .report-page { padding: 8px; }
           .firm { color: #1d4ed8; font-size: 11px; font-weight: 800; text-transform: uppercase; margin-bottom: 2px; }
           h1 { margin: 0 0 8px; font-size: 15px; color: #0f172a; }
+          .subtitle { margin: -3px 0 8px; color: #334155; font-size: 10px; font-weight: 700; }
           h2 { margin: 10px 0 5px; font-size: 12px; color: #123f6d; }
           table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; page-break-inside: auto; }
           thead { display: table-header-group; }
@@ -11083,6 +11121,7 @@ function printStructuredReport({ title, subtitle = "", sections = [], format = "
         <div class="report-page">
           <div class="firm">${escapeHtml(firmName)}</div>
           <h1>${escapeHtml(title)}</h1>
+          ${subtitle ? `<div class="subtitle">${escapeHtml(subtitle)}</div>` : ""}
           ${sections.map((section) => structuredReportSection(section)).join("")}
         </div>
       </body>

@@ -6096,11 +6096,13 @@ textarea {
 
 /* Staff dashboard: compact role-specific KPI cards. */
 .staff-modern-dashboard .staff-dashboard-kpi-grid {
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(112px, 128px));
   gap: 8px;
+  justify-content: start;
 }
 
 .staff-modern-dashboard .dashboard-kpi-card {
+  width: 100%;
   min-height: 66px;
   padding: 8px 10px;
   border-bottom-width: 3px;
