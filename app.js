@@ -1324,6 +1324,7 @@ function normalizeStaffDetails(rows = [], users = state.users || []) {
       employmentType: row.employmentType || row.employment_type || "",
       employmentStatus: row.employmentStatus || row.employment_status || "Active",
       gender: row.gender || "",
+      qualifications: row.qualifications || row.qualification || "",
       address: row.address || "",
       emergencyContactName: row.emergencyContactName || row.emergency_contact_name || "",
       emergencyContactNumber: row.emergencyContactNumber || row.emergency_contact_number || "",
@@ -6311,6 +6312,7 @@ function renderStaffDetailsForm() {
       ${staffFormField("emergencyContactName", "Emergency Contact Name", "text", v("emergencyContactName"))}
       ${staffFormField("emergencyContactNumber", "Emergency Contact Number", "tel", v("emergencyContactNumber"))}
       ${staffFormField("profilePhotoUrl", "Profile Photo URL", "url", v("profilePhotoUrl"))}
+      <div class="field wide-field"><label>Qualifications</label><textarea name="qualifications" placeholder="Enter qualifications">${v("qualifications")}</textarea></div>
       <div class="field wide-field"><label>Address</label><textarea name="address">${v("address")}</textarea></div>
       <div class="field wide-field"><label>Remarks</label><textarea name="remarks">${v("remarks")}</textarea></div>
       <div class="staff-form-errors" id="staffFormErrors"></div>
@@ -6437,6 +6439,7 @@ function renderStaffProfile() {
     <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
     <div class="staff-profile-grid">
       ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
+      ${staffProfileBlock("Qualifications", [["Qualifications", row.qualifications]])}
       ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber].filter(Boolean).join(" - ")]])}
       ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
       ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
@@ -6575,6 +6578,7 @@ function saveStaffDetailsForm(event) {
     employmentType,
     employmentStatus: data.get("employmentStatus") || "Active",
     gender,
+    qualifications: String(data.get("qualifications") || "").trim(),
     address: String(data.get("address") || "").trim(),
     emergencyContactName: String(data.get("emergencyContactName") || "").trim(),
     emergencyContactNumber: String(data.get("emergencyContactNumber") || "").trim(),
@@ -6634,6 +6638,7 @@ function staffDetailsReportRows(rows = filteredStaffDetails()) {
     Email: row.email,
     Mobile: row.mobile,
     "Reporting to": staffManagerName(row.reportingManagerId),
+    Qualifications: row.qualifications,
     Status: row.employmentStatus,
   }));
 }
