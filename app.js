@@ -2806,19 +2806,47 @@ function mount() {
 function renderLogin() {
   document.querySelector("#app").innerHTML = `
     <div class="login-page">
-      <div class="login-card">
-        <div class="brand-mark">CF</div>
-        <h1>CA File Tracker</h1>
-        <p class="login-subtitle">Welcome back. Track files, billing and team updates in one place.</p>
-        <div class="field">
-          <label>User Name / Email</label>
-          <input id="loginEmail" type="text" value="casadique@gmail.com" autocomplete="username" />
-        </div>
-        <div class="field">
-          <label>Password</label>
-          <div class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
-        </div>
-        <button class="primary-button" id="loginButton">Login</button>
+      <div class="login-shell">
+        <section class="login-brand-panel">
+          <div class="login-brand-lockup">
+            <div class="brand-mark">CA</div>
+            <div>
+              <strong>CA File Tracker</strong>
+              <span>Muhammad & Associates</span>
+              <small>Chartered Accountants</small>
+            </div>
+          </div>
+          <div class="login-brand-copy">
+            <span class="login-eyebrow">Secure Workspace</span>
+            <h1>Track filings, teams and collections from one place.</h1>
+            <p>Centralised file allotment, status updates, reports, notifications and office cash movement for your team.</p>
+          </div>
+          <div class="login-feature-grid">
+            <span>Live file status</span>
+            <span>Staff dashboards</span>
+            <span>Central database</span>
+          </div>
+        </section>
+        <section class="login-card">
+          <div class="login-card-head">
+            <div class="brand-mark">CF</div>
+            <div>
+              <span class="login-eyebrow">Welcome back</span>
+              <h1>Sign in</h1>
+            </div>
+          </div>
+          <p class="login-subtitle">Use your approved office login to continue.</p>
+          <div class="field">
+            <label>User Name / Email</label>
+            <input id="loginEmail" type="text" value="casadique@gmail.com" autocomplete="username" placeholder="Enter email or username" />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <div class="password-wrap"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter password" /><button type="button" data-toggle-password="loginPassword">View</button></div>
+          </div>
+          <button class="primary-button" id="loginButton">Login</button>
+          <p class="login-note">Access is restricted to authorised Admin, Manager and Staff users.</p>
+        </section>
       </div>
     </div>
     <div class="toast" id="toast"></div>
