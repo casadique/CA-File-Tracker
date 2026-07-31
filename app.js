@@ -5,6 +5,7 @@ const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
 const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
+const DAILY_QUOTE_MINIMIZED_KEY = `${STORAGE_KEY}-daily-quote-minimized`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
 const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
 const COMPLETED_FILES_CHECKED_VERSION = "completed-files-checked-by-chindu-2026-07-14";
@@ -2823,6 +2824,7 @@ function dailyQuoteForDate(dateString = indiaTodayDate()) {
 
 function renderDailyQuoteBanner() {
   if (activePage !== "dashboard") return "";
+  if (sessionStorage.getItem(DAILY_QUOTE_MINIMIZED_KEY) === "Yes") return "";
   const quote = dailyQuoteForDate();
   const text = quoteTextValue(quote);
   if (!text) return "";
@@ -2835,6 +2837,7 @@ function renderDailyQuoteBanner() {
         <span class="daily-quote-text">"${escapeHtml(text)}"</span>
         ${author ? `<span class="daily-quote-author">&mdash; ${escapeHtml(author)}</span>` : ""}
       </div>
+      <button class="daily-quote-minimize" id="dailyQuoteMinimize" type="button" title="Hide quote for this session" aria-label="Hide quote">Hide</button>
     </div>
   `;
 }
@@ -3315,6 +3318,14 @@ function renderAll() {
     const quoteHtml = renderDailyQuoteBanner();
     quoteSlot.innerHTML = quoteHtml;
     quoteSlot.classList.toggle("hidden", !quoteHtml.trim());
+    const quoteMinimize = quoteSlot.querySelector("#dailyQuoteMinimize");
+    if (quoteMinimize) {
+      quoteMinimize.onclick = () => {
+        sessionStorage.setItem(DAILY_QUOTE_MINIMIZED_KEY, "Yes");
+        quoteSlot.innerHTML = "";
+        quoteSlot.classList.add("hidden");
+      };
+    }
   }
   const topBackButton = document.querySelector("#topBackButton");
   if (topBackButton) {

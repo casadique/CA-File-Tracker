@@ -39,7 +39,9 @@ app.use(["/src", "/database", "/tools", "/Backups", "/data"], (_req, res) => {
   res.status(404).send("Not found");
 });
 app.use((req, res, next) => {
-  if (req.path === "/" || req.path.endsWith(".html")) {
+  if (req.path === "/service-worker.js" || req.path === "/manifest.webmanifest") {
+    res.set("Cache-Control", "no-cache, must-revalidate");
+  } else if (req.path === "/" || req.path.endsWith(".html")) {
     res.set("Cache-Control", "no-store");
   } else if (req.path.endsWith(".js") || req.path.endsWith(".css")) {
     res.set("Cache-Control", "no-cache, must-revalidate");
