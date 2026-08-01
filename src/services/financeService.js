@@ -315,6 +315,100 @@ async function deleteOpeningBalance(id, userId, profile) {
   }, userId);
 }
 
+async function submitCashReconciliation(payload, userId, profile) {
+  return patchAppState((state) => {
+    const now = new Date();
+    const from = normalizeDate(payload.from || payload.from_date) || "";
+    const to = normalizeDate(payload.to || payload.to_date) || from || normalizeDate(now.toISOString().slice(0, 10));
+    const periodKey = `${from || "opening"}:${to}`;
+    const totals = calculateCashTotals(state, from, to);
+    const physicalCashCount = Number(payload.physicalCashCount ?? payload.physical_cash_count);
+    if (!Number.isFinite(physicalCashCount) || physicalCashCount < 0) {
+      const error = new Error("Please enter a valid physical cash count.");
+      error.status = 400;
+      throw error;
+    }
+    const difference = Number((physicalCashCount - totals.calculatedClosing).toFixed(2));
+    const type = difference > 0 ? "excess" : difference < 0 ? "shortage" : "matched";
+    const existing = (state.cashReconciliations || []).find((item) => item.periodKey === periodKey && item.isDeleted !== true);
+    if (existing?.approvalStatus === "approved" && profile?.role !== "Admin") {
+      const error = new Error("Only Admin can amend an approved reconciliation.");
+      error.status = 403;
+      throw error;
+    }
+    const record = {
+      ...(existing || {}),
+      id: existing?.id || crypto.randomUUID(),
+      periodKey,
+      reconciliationDate: to,
+      fromDate: from,
+      toDate: to,
+      adjustmentType: type,
+      adjustmentAmount: Math.abs(difference),
+      systemClosingBalance: totals.calculatedClosing,
+      physicalCashCount,
+      remarks: String(payload.remarks || "").trim(),
+      submittedBy: profile?.name || "",
+      submittedById: profile?.id || profile?.email || userId || "",
+      submittedAt: now.toISOString(),
+      verifiedBy: profile?.name || "",
+      verificationDate: now.toISOString(),
+      approvalStatus: type === "matched" ? "matched" : "pending_approval",
+      approvedBy: "",
+      approvedAt: "",
+      rejectionReason: "",
+      updatedAt: now.toISOString(),
+      createdAt: existing?.createdAt || now.toISOString(),
+      revision: Number(existing?.revision || 0) + 1,
+    };
+    state.cashReconciliations = upsertById(state.cashReconciliations || [], record).sort(financeNewestFirst);
+    appendAudit(state, type === "matched" ? "Cash reconciliation matched" : "Cash reconciliation submitted", record, profile, now);
+    return state;
+  }, userId);
+}
+
+async function decideCashReconciliation(id, decision, payload, userId, profile) {
+  return patchAppState((state) => {
+    if (profile?.role !== "Admin") {
+      const error = new Error("Only Admin can approve or reject a cash difference.");
+      error.status = 403;
+      throw error;
+    }
+    const now = new Date();
+    const existing = (state.cashReconciliations || []).find((item) => item.id === id && item.isDeleted !== true);
+    if (!existing) {
+      const error = new Error("Cash reconciliation was not found.");
+      error.status = 404;
+      throw error;
+    }
+    if (decision === "approve" && existing.approvalStatus === "approved") return state;
+    const record = {
+      ...existing,
+      approvalStatus: decision === "approve" ? "approved" : "rejected",
+      approvedBy: decision === "approve" ? (profile?.name || "") : "",
+      approvedById: decision === "approve" ? (profile?.id || profile?.email || userId || "") : "",
+      approvedAt: decision === "approve" ? now.toISOString() : "",
+      rejectionReason: decision === "reject" ? String(payload?.reason || payload?.rejectionReason || "").trim() : "",
+      updatedAt: now.toISOString(),
+    };
+    state.cashReconciliations = upsertById(state.cashReconciliations || [], record).sort(financeNewestFirst);
+    appendAudit(state, decision === "approve" ? "Cash reconciliation adjustment approved" : "Cash reconciliation rejected", record, profile, now);
+    return state;
+  }, userId);
+}
+
+function calculateCashTotals(state, from = "", to = "") {
+  const target = from || to || new Date().toISOString().slice(0, 10);
+  const openingEntry = [...(state.openingBalances || [])].filter((item) => item.date && item.date <= target).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const effectiveFrom = from || openingEntry?.date || "";
+  const effectiveTo = to || from || new Date().toISOString().slice(0, 10);
+  const inRange = (date) => (!effectiveFrom || date >= effectiveFrom) && (!effectiveTo || date <= effectiveTo);
+  const collections = (state.otherCashCollections || []).filter((item) => isActiveTransaction(item) && item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const expenses = (state.expenses || []).filter((item) => isActiveTransaction(item) && item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
+  return { opening, collections, expenses, calculatedClosing: opening + collections - expenses };
+}
+
 function normalizeExpense(payload = {}, now, profile = {}) {
   const amount = Number(payload.amount || 0);
   if (!amount || amount < 0) {
@@ -495,4 +589,6 @@ module.exports = {
   deleteCollection,
   saveOpeningBalance,
   deleteOpeningBalance,
+  submitCashReconciliation,
+  decideCashReconciliation,
 };

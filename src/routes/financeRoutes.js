@@ -10,6 +10,8 @@ const {
   deleteCollection,
   saveOpeningBalance,
   deleteOpeningBalance,
+  submitCashReconciliation,
+  decideCashReconciliation,
 } = require("../services/financeService");
 
 const router = express.Router();
@@ -25,10 +27,32 @@ router.get("/", requireAuth, requireRole(...financeRoles), async (_req, res, nex
       openingBalances: state.openingBalances || [],
       otherCashCollectionSources: state.otherCashCollectionSources || [],
       expenseItems: state.expenseItems || [],
+      cashReconciliations: state.cashReconciliations || [],
     });
   } catch (error) {
     next(error);
   }
+});
+
+router.post("/reconciliations", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await submitCashReconciliation(req.body.reconciliation || req.body, req.user.id, req.profile);
+    res.json({ ok: true, cashReconciliations: state.cashReconciliations || [] });
+  } catch (error) { next(error); }
+});
+
+router.post("/reconciliations/:id/approve", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await decideCashReconciliation(req.params.id, "approve", req.body || {}, req.user.id, req.profile);
+    res.json({ ok: true, cashReconciliations: state.cashReconciliations || [] });
+  } catch (error) { next(error); }
+});
+
+router.post("/reconciliations/:id/reject", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await decideCashReconciliation(req.params.id, "reject", req.body || {}, req.user.id, req.profile);
+    res.json({ ok: true, cashReconciliations: state.cashReconciliations || [] });
+  } catch (error) { next(error); }
 });
 
 router.post("/expenses", requireAuth, requireRole(...financeRoles), async (req, res, next) => {

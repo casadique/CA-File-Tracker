@@ -404,6 +404,7 @@ function loadState() {
     expenses: [],
     otherCashCollections: [],
     openingBalances: [],
+    cashReconciliations: [],
     otherCashCollectionSources: ["CA Sadique"],
     expenseItems: ["Office Expense", "Travelling", "Printing & Stationery", "Staff Welfare"],
     openingCashBalance: 0,
@@ -670,6 +671,14 @@ function normalizeState(appState) {
     targetUserEmail: item.targetUserEmail || "",
     targetUserName: item.targetUserName || "",
   }));
+  appState.cashReconciliations = (appState.cashReconciliations || []).map((item) => ({
+    ...item,
+    id: item.id || crypto.randomUUID(),
+    approvalStatus: item.approvalStatus || "pending_approval",
+    adjustmentAmount: Number(item.adjustmentAmount || 0) || 0,
+    systemClosingBalance: Number(item.systemClosingBalance || 0) || 0,
+    physicalCashCount: Number(item.physicalCashCount || 0) || 0,
+  })).sort(financeNewestFirst);
   appState.fileNotifications = dedupeFileNotifications(appState.fileNotifications);
   appState.chatGroups = (appState.chatGroups || []).map((group) => ({
     ...group,
@@ -1119,6 +1128,20 @@ async function saveOpeningBalanceToApi(openingBalance) {
 async function deleteOpeningBalanceFromApi(id) {
   const result = await apiJson(`/api/finance/opening-balances/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.openingBalances) state.openingBalances = result.openingBalances;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function submitCashReconciliationToApi(reconciliation) {
+  const result = await apiJson("/api/finance/reconciliations", { method: "POST", body: JSON.stringify({ reconciliation }) });
+  if (result?.cashReconciliations) state.cashReconciliations = result.cashReconciliations;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function decideCashReconciliationToApi(id, decision, payload = {}) {
+  const result = await apiJson(`/api/finance/reconciliations/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: JSON.stringify(payload) });
+  if (result?.cashReconciliations) state.cashReconciliations = result.cashReconciliations;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -11186,27 +11209,24 @@ function renderCashBalanceTab() {
     <div class="expense-tools-card balance-tools">
       <div class="expense-card-head">
         <h3>Cash Reconciliation</h3>
-        <p>Review cash-only movement and closing balance</p>
+        <p>Verify physical cash and approve tracked excess or shortage adjustments</p>
       </div>
       <div class="filters colourful-filters expense-filters balance-filter-row">
-        ${expenseFilterInput("balanceFrom", "From Date", "date")}
-        ${expenseFilterInput("balanceTo", "To Date", "date")}
+        <div class="balance-filter-group"><span>Date Range</span>${expenseFilterInput("balanceFrom", "From", "date")}${expenseFilterInput("balanceTo", "To", "date")}</div>
         ${expenseFilterInput("balanceEnteredBy", "Entered By")}
         ${expenseFilterSelect("balanceType", "Transaction Type", ["", "Collection", "Expense"])}
         <div class="field"><label>Action</label><button class="secondary-button" id="balanceSearch">Recalculate</button></div>
         <div class="field"><label>Reset</label><button class="secondary-button" id="balanceReset">Clear</button></div>
-        <div class="field"><label>Export</label><button class="secondary-button" id="balanceExcel">Excel</button></div>
-        <div class="field"><label>PDF</label><button class="secondary-button" id="balancePdf">PDF</button></div>
-        <div class="field"><label>Print</label><button class="secondary-button" id="balancePrint">Print</button></div>
+        <div class="balance-filter-group compact-actions"><span>Export &amp; Print</span><button class="secondary-button" id="balanceExcel">Excel</button><button class="secondary-button" id="balancePdf">PDF</button><button class="secondary-button" id="balancePrint">Print</button></div>
       </div>
     </div>
-    <div class="cash-balance-grid">
+    <section class="reconciliation-section"><div class="reconciliation-section-head"><div><span>Reconciliation Summary</span><h3>Cash position for the selected period</h3></div>${cashReconciliationBadge(currentCashReconciliation(from, to))}</div><div class="cash-balance-grid reconciliation-summary-grid">
       ${cashBalanceCard("Opening Cash Balance", balance.opening)}
-      ${cashBalanceCard("Total Cash Collections", balance.feeCollections + balance.otherCollections)}
-      ${cashBalanceCard("Total Cash Expenses", balance.cashExpenses)}
-      ${cashBalanceCard("Adjustments", balance.adjustments || 0)}
-      ${cashBalanceCard("Expected Closing Cash", balance.closing, true)}
-    </div>
+      ${cashBalanceCard("Cash Collections", balance.feeCollections + balance.otherCollections)}
+      ${cashBalanceCard("Cash Expenses", balance.cashExpenses)}
+      ${cashBalanceCard("Approved Excess / Shortage", balance.approvedAdjustment || 0)}
+      ${cashBalanceCard("Adjusted Closing Cash Balance", balance.closing, true)}
+    </div></section>
     ${renderCashVerificationPanel(balance)}
     <div class="cash-details-toggle"><button class="secondary-button" id="toggleCashDetails">${state.filters.balanceShowDetails ? "Hide Transaction Details" : "View Transaction Details"}</button></div>
     ${state.filters.balanceShowDetails ? renderCashMovementTable() : ""}
@@ -11228,25 +11248,46 @@ function cashBalanceCard(label, amount, highlight = false) {
 function renderCashVerificationPanel(balance) {
   const physical = Number(state.filters.physicalCashCount || 0);
   const hasPhysical = state.filters.physicalCashCount !== undefined && state.filters.physicalCashCount !== "";
-  const difference = hasPhysical ? physical - Number(balance.closing || 0) : 0;
-  const status = !hasPhysical || Math.abs(difference) < 0.01 ? "Reconciled" : "Difference Found";
+  const difference = hasPhysical ? physical - Number(balance.calculatedClosing || 0) : 0;
+  const type = !hasPhysical ? "-" : difference > 0.009 ? "Cash Excess" : difference < -0.009 ? "Cash Shortage" : "Matched";
+  const record = currentCashReconciliation();
   return `
-    <div class="expense-tools-card cash-verification-card">
+    <section class="expense-tools-card cash-verification-card reconciliation-section">
       <div class="expense-card-head">
         <h3>Cash Verification</h3>
         <p>Compare system closing balance with physical cash count</p>
       </div>
-      <div class="cash-status ${status === "Reconciled" ? "ok" : "warn"}">${status}</div>
       <div class="filters colourful-filters expense-filters cash-verify-grid">
-        <div class="field"><label>System Closing Balance</label><input value="${escapeHtml(String(money(balance.closing)))}" readonly></div>
+        <div class="field"><label>System Closing Balance</label><input id="systemClosingCash" value="${escapeHtml(String(money(balance.calculatedClosing)))}" readonly></div>
         ${expenseFilterInput("physicalCashCount", "Physical Cash Count", "number")}
-        <div class="field"><label>Difference</label><input value="${escapeHtml(money(difference))}" readonly></div>
-        ${expenseFilterInput("cashVerifiedBy", "Verified By")}
-        ${expenseFilterInput("cashVerificationDate", "Verification Date", "date")}
+        <div class="field"><label>Difference</label><input id="cashDifference" value="${escapeHtml(money(difference))}" readonly></div>
+        <div class="field"><label>Difference Type</label><input id="cashDifferenceType" value="${escapeHtml(type)}" readonly></div>
         ${expenseFilterInput("cashVerificationRemarks", "Remarks")}
+        <div class="field"><label>Verify</label><button class="primary-button" id="verifyCash">Verify Cash</button></div>
       </div>
-    </div>
+      ${record && record.adjustmentType !== "matched" ? renderCashApprovalPanel(record) : ""}
+    </section>
   `;
+}
+
+function reconciliationPeriodKey(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
+  const effectiveTo = to || from || todayDate();
+  return `${from || "opening"}:${effectiveTo}`;
+}
+
+function currentCashReconciliation(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
+  const key = reconciliationPeriodKey(from, to);
+  return (state.cashReconciliations || []).find((item) => item.periodKey === key && item.isDeleted !== true) || null;
+}
+
+function cashReconciliationBadge(record) {
+  if (!record) return '<span class="reconciliation-badge neutral">Not Verified</span>';
+  const labels = { matched: "Matched", pending_approval: "Pending Approval", approved: `Approved ${record.adjustmentType === "shortage" ? "Shortage" : "Excess"}: ${rupee(record.adjustmentAmount)}`, rejected: "Rejected" };
+  return `<span class="reconciliation-badge ${escapeHtml(record.approvalStatus)}">${escapeHtml(labels[record.approvalStatus] || record.approvalStatus)}</span>`;
+}
+
+function renderCashApprovalPanel(record) {
+  return `<div class="cash-approval-panel"><div class="reconciliation-section-head"><div><span>Approval Section</span><h3>${record.approvalStatus === "pending_approval" ? "Cash difference awaiting Admin approval" : "Cash difference decision"}</h3></div>${cashReconciliationBadge(record)}</div><div class="cash-approval-facts"><div><span>Difference Amount</span><strong>${rupee(record.adjustmentAmount)}</strong></div><div><span>Difference Type</span><strong>${record.adjustmentType === "shortage" ? "Cash Shortage" : "Cash Excess"}</strong></div><div><span>Verified By</span><strong>${escapeHtml(record.verifiedBy || record.submittedBy || "-")}</strong></div><div><span>Verification Date</span><strong>${escapeHtml(formatDateTime(record.verificationDate || record.submittedAt) || "-")}</strong></div><div><span>Remarks</span><strong>${escapeHtml(record.remarks || "-")}</strong></div></div>${state.currentRole === "Admin" && record.approvalStatus === "pending_approval" ? `<div class="cash-approval-actions"><button class="primary-button" id="approveCashAdjustment" data-id="${record.id}">Approve Adjustment</button><button class="secondary-button danger" id="rejectCashAdjustment" data-id="${record.id}">Reject</button></div>` : ""}</div>`;
 }
 
 function renderExpenseFilters() {
@@ -11460,6 +11501,19 @@ function bindExpensePage() {
     saveState();
     renderAll();
   });
+  const physicalCashInput = document.querySelector('[data-expense-filter="physicalCashCount"]');
+  physicalCashInput?.addEventListener("input", () => {
+    const system = Number(String(document.querySelector("#systemClosingCash")?.value || "0").replace(/,/g, ""));
+    const physicalValue = Number(physicalCashInput.value || 0);
+    const difference = physicalCashInput.value === "" ? 0 : physicalValue - system;
+    const differenceInput = document.querySelector("#cashDifference");
+    const typeInput = document.querySelector("#cashDifferenceType");
+    if (differenceInput) differenceInput.value = money(difference);
+    if (typeInput) typeInput.value = physicalCashInput.value === "" ? "-" : difference > 0.009 ? "Cash Excess" : difference < -0.009 ? "Cash Shortage" : "Matched";
+  });
+  document.querySelector("#verifyCash")?.addEventListener("click", verifyCashReconciliation);
+  document.querySelector("#approveCashAdjustment")?.addEventListener("click", (event) => decideCashAdjustment(event.currentTarget.dataset.id, "approve"));
+  document.querySelector("#rejectCashAdjustment")?.addEventListener("click", (event) => decideCashAdjustment(event.currentTarget.dataset.id, "reject"));
   document.querySelector("#expenseExcel")?.addEventListener("click", exportExpenseExcel);
   document.querySelector("#expensePdf")?.addEventListener("click", exportExpensePdf);
   document.querySelector("#expensePrint")?.addEventListener("click", printExpenseReport);
@@ -11907,8 +11961,48 @@ function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.
   const feeCollections = activeCashCollections().filter((item) => isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const otherCollections = activeCashCollections().filter((item) => !isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const cashExpenses = activeExpenses().filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const adjustments = 0;
-  return { opening, feeCollections, otherCollections, cashExpenses, adjustments, closing: opening + feeCollections + otherCollections + adjustments - cashExpenses };
+  const calculatedClosing = opening + feeCollections + otherCollections - cashExpenses;
+  const approved = (state.cashReconciliations || []).filter((item) => item.approvalStatus === "approved" && item.isDeleted !== true && inRange(item.reconciliationDate || item.toDate || item.to_date));
+  const approvedExcess = approved.filter((item) => item.adjustmentType === "excess").reduce((sum, item) => sum + Number(item.adjustmentAmount || 0), 0);
+  const approvedShortage = approved.filter((item) => item.adjustmentType === "shortage").reduce((sum, item) => sum + Number(item.adjustmentAmount || 0), 0);
+  const approvedAdjustment = approvedExcess - approvedShortage;
+  return { opening, feeCollections, otherCollections, cashExpenses, calculatedClosing, approvedExcess, approvedShortage, approvedAdjustment, adjustments: approvedAdjustment, closing: calculatedClosing + approvedAdjustment };
+}
+
+async function verifyCashReconciliation() {
+  const physicalCashCount = state.filters.physicalCashCount;
+  if (physicalCashCount === "" || physicalCashCount === undefined) return toast("Please enter the physical cash count.");
+  const payload = { from: state.filters.balanceFrom || "", to: state.filters.balanceTo || "", physicalCashCount: Number(physicalCashCount), remarks: state.filters.cashVerificationRemarks || "" };
+  try {
+    if (isSupabaseMode()) await submitCashReconciliationToApi(payload);
+    else {
+      const balance = cashBalanceForRange();
+      const difference = Number((payload.physicalCashCount - balance.calculatedClosing).toFixed(2));
+      const existing = currentCashReconciliation();
+      const now = new Date().toISOString();
+      const record = { ...(existing || {}), id: existing?.id || crypto.randomUUID(), periodKey: reconciliationPeriodKey(), reconciliationDate: payload.to || payload.from || todayDate(), fromDate: payload.from, toDate: payload.to || payload.from || todayDate(), adjustmentType: difference > 0 ? "excess" : difference < 0 ? "shortage" : "matched", adjustmentAmount: Math.abs(difference), systemClosingBalance: balance.calculatedClosing, physicalCashCount: payload.physicalCashCount, remarks: payload.remarks, submittedBy: state.currentUser, verifiedBy: state.currentUser, submittedAt: now, verificationDate: now, approvalStatus: difference === 0 ? "matched" : "pending_approval", approvedBy: "", approvedAt: "" };
+      state.cashReconciliations = [record, ...(state.cashReconciliations || []).filter((item) => item.id !== record.id)];
+      saveState();
+    }
+    toast("Cash verification saved successfully.");
+    renderAll();
+  } catch (error) { toast(error.message || "Cash verification could not be saved."); }
+}
+
+async function decideCashAdjustment(id, decision) {
+  if (state.currentRole !== "Admin") return toast("Only Admin can approve or reject a cash difference.");
+  const reason = decision === "reject" ? (prompt("Enter rejection reason:") || "") : "";
+  if (decision === "reject" && !reason.trim()) return;
+  try {
+    if (isSupabaseMode()) await decideCashReconciliationToApi(id, decision, { reason });
+    else {
+      const now = new Date().toISOString();
+      state.cashReconciliations = (state.cashReconciliations || []).map((item) => item.id === id ? { ...item, approvalStatus: decision === "approve" ? "approved" : "rejected", approvedBy: decision === "approve" ? state.currentUser : "", approvedAt: decision === "approve" ? now : "", rejectionReason: reason, updatedAt: now } : item);
+      saveState();
+    }
+    toast(decision === "approve" ? "Cash adjustment approved and balance updated." : "Cash adjustment rejected.");
+    renderAll();
+  } catch (error) { toast(error.message || "Cash adjustment could not be updated."); }
 }
 
 function applicableOpeningBalance(from = "", to = todayDate()) {
@@ -11998,7 +12092,10 @@ function balanceReportRows() {
     { Particulars: "Cash Fee Collections", Amount: money(b.feeCollections) },
     { Particulars: "Other Cash Collections", Amount: money(b.otherCollections) },
     { Particulars: "Cash Expenses", Amount: money(b.cashExpenses) },
-    { Particulars: "Closing Cash Balance", Amount: money(b.closing) },
+    { Particulars: "Calculated Closing Cash", Amount: money(b.calculatedClosing) },
+    { Particulars: "Approved Cash Excess", Amount: money(b.approvedExcess) },
+    { Particulars: "Approved Cash Shortage", Amount: money(b.approvedShortage) },
+    { Particulars: "Adjusted Closing Cash Balance", Amount: money(b.closing) },
   ];
 }
 
