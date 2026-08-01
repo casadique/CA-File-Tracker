@@ -10687,3 +10687,8 @@ textarea,
     font-size: 10px !important;
   }
 }
+.cash-details-toggle {
+  display: flex;
+  justify-content: flex-end;
+  margin: 12px 0;
+}

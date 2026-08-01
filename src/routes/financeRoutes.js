@@ -5,6 +5,8 @@ const {
   saveExpense,
   deleteExpense,
   saveCollection,
+  saveFeeReceipt,
+  reverseUnlinkedFeeReceipt,
   deleteCollection,
   saveOpeningBalance,
   deleteOpeningBalance,
@@ -19,7 +21,7 @@ router.get("/", requireAuth, requireRole(...financeRoles), async (_req, res, nex
     res.json({
       ok: true,
       expenses: state.expenses || [],
-      otherCashCollections: state.otherCashCollections || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
       openingBalances: state.openingBalances || [],
       otherCashCollectionSources: state.otherCashCollectionSources || [],
       expenseItems: state.expenseItems || [],
@@ -52,9 +54,37 @@ router.post("/collections", requireAuth, requireRole(...financeRoles), async (re
     const state = await saveCollection(req.body.collection || req.body, req.user.id, req.profile);
     res.json({
       ok: true,
-      otherCashCollections: state.otherCashCollections || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
       otherCashCollectionSources: state.otherCashCollectionSources || [],
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await saveFeeReceipt(
+      req.params.fileId,
+      req.body.receipt || {},
+      req.body.collection || {},
+      req.user.id,
+      req.profile,
+    );
+    res.json({
+      ok: true,
+      files: state.files || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/fee-receipts/:fileId/reverse-unlinked", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await reverseUnlinkedFeeReceipt(req.params.fileId, req.user.id, req.profile);
+    res.json({ ok: true, files: state.files || [] });
   } catch (error) {
     next(error);
   }
@@ -63,7 +93,11 @@ router.post("/collections", requireAuth, requireRole(...financeRoles), async (re
 router.delete("/collections/:id", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
     const state = await deleteCollection(req.params.id, req.user.id, req.profile);
-    res.json({ ok: true, otherCashCollections: state.otherCashCollections || [] });
+    res.json({
+      ok: true,
+      files: state.files || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+    });
   } catch (error) {
     next(error);
   }

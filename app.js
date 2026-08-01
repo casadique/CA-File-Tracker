@@ -1079,9 +1079,30 @@ async function saveCashCollectionToApi(collection) {
   return result;
 }
 
+async function saveLinkedFeeReceiptToApi(fileId, receipt, collection) {
+  const result = await apiJson(`/api/finance/fee-receipts/${encodeURIComponent(fileId)}`, {
+    method: "POST",
+    body: JSON.stringify({ receipt, collection }),
+  });
+  if (result?.files) state.files = result.files;
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function reverseUnlinkedFeeReceiptToApi(fileId) {
+  const result = await apiJson(`/api/finance/fee-receipts/${encodeURIComponent(fileId)}/reverse-unlinked`, {
+    method: "POST",
+  });
+  if (result?.files) state.files = result.files;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function deleteCashCollectionFromApi(id) {
   const result = await apiJson(`/api/finance/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  if (result?.files) state.files = result.files;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -4058,10 +4079,21 @@ function dashboardFinancials() {
   const totalBilled = files.filter(isBilledFile).reduce((sum, file) => sum + dashboardFileAmount(file, "billed"), 0);
   const feeReceived = files.filter((file) => file.feeReceived).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
   const feePending = Math.max(totalBilled - feeReceived, 0);
-  const collectionsToday = (state.otherCashCollections || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    + files.filter((file) => file.feeReceived && feeReceiptLinkedFilesHaveCollection(file) && (file.feeReceivedDate || file.lastUpdatedDate) === today).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
-  const expensesToday = (state.expenses || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const collectionsToday = activeCashCollections().filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const expensesToday = activeExpenses().filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return { totalBilled, feeReceived, feePending, collectionsToday, expensesToday, cashBalance: cashBalanceForRange().closing };
+}
+
+function isActiveFinancialTransaction(item = {}) {
+  return item.isDeleted !== true && item.is_deleted !== true && String(item.status || "").toLowerCase() !== "deleted";
+}
+
+function activeCashCollections() {
+  return (state.otherCashCollections || []).filter(isActiveFinancialTransaction);
+}
+
+function activeExpenses() {
+  return (state.expenses || []).filter(isActiveFinancialTransaction);
 }
 
 function dashboardFileAmount(file, kind = "billed") {
@@ -4090,8 +4122,8 @@ function dashboardTrendValues(kind) {
     if (kind === "billed") return files.filter((file) => file.billedDate === iso).length;
     if (kind === "feeReceived") return files.filter((file) => file.feeReceivedDate === iso).length;
     if (kind === "feePending") return files.filter(isFeePendingFile).length;
-    if (kind === "collections") return (state.otherCashCollections || []).filter((item) => item.date === iso).length;
-    if (kind === "expenses") return (state.expenses || []).filter((item) => item.date === iso).length;
+    if (kind === "collections") return activeCashCollections().filter((item) => item.date === iso).length;
+    if (kind === "expenses") return activeExpenses().filter((item) => item.date === iso).length;
     if (kind === "cash") return cashBalanceForRange("", iso).closing;
     return files.length;
   });
@@ -5495,7 +5527,7 @@ function feeReceiptTransactionIdForFile(file = {}) {
 function linkedFeeReceiptCollection(file = {}) {
   const receiptId = feeReceiptIdForFile(file);
   const transactionId = feeReceiptTransactionIdForFile(file);
-  return (state.otherCashCollections || []).find((item) => {
+  return activeCashCollections().find((item) => {
     if (transactionId && item.id === transactionId) return true;
     if (receiptId && (item.feeReceiptId === receiptId || item.fee_receipt_id === receiptId || item.sourceId === receiptId || item.source_id === receiptId)) return true;
     return file.id && (item.fileId === file.id || item.file_id === file.id) && (item.sourceType === "fee_receipt" || item.source_type === "fee_receipt");
@@ -5608,7 +5640,7 @@ function feeReceiptFromModal(file = {}) {
     receivedDate,
     paymentMode,
     remarks,
-    pushToTransactions: Boolean(document.querySelector("[name='receiptPushToTransactions']")?.checked) || Boolean(existingLinked),
+    pushToTransactions: true,
     feeReceiptId: feeReceiptIdForFile(file) || crypto.randomUUID(),
     transactionId: existingLinked?.id || feeReceiptTransactionIdForFile(file) || "",
   };
@@ -5703,6 +5735,7 @@ function fileSerialNumber(file, fallbackIndex = 0) {
 function fileRowActions(file) {
   const actions = [`<button class="mini-button" data-edit="${file.id}">Edit</button>`];
   const canManageBilling = rolePerm().assign;
+  const canManageFeeReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
   if (canManageBilling && state.filters.listView === "completed" && isBillingReadyFile(file) && !isNonBilledFile(file)) {
     actions.push(`<button class="mini-button ${file.billingType === "Non-Billable" ? "success" : ""}" data-non-billable="${file.id}">Non-Billable</button>`);
     if (!file.billed) actions.push(`<button class="mini-button success" data-mark-billed="${file.id}">Billed</button>`);
@@ -5718,8 +5751,13 @@ function fileRowActions(file) {
     actions.push(`<button class="mini-button" data-fee-non-billable="${file.id}">Non-Billable</button>`);
     if (file.billed && !file.feeReceived) actions.push(`<button class="mini-button success" data-mark-received="${file.id}">Mark Received</button>`);
   }
-  if (canManageBilling && ["billed", "feeReceived"].includes(state.filters.listView) && file.billed && file.feeReceived) {
-    actions.push(`<button class="mini-button" data-mark-not-received="${file.id}">Not Received</button>`);
+  if (canManageFeeReceipt && ["billed", "feeReceived"].includes(state.filters.listView) && file.billed && file.feeReceived) {
+    const linkedCollection = linkedFeeReceiptCollection(file);
+    if (linkedCollection) {
+      actions.push(`<button class="mini-button" data-go-fee-transaction="${linkedCollection.id}">Go Transaction</button>`);
+    } else {
+      actions.push(`<button class="mini-button" data-mark-not-received="${file.id}">Not Received</button>`);
+    }
   }
   if (canManageBilling && state.filters.listView === "feePending" && isFeePendingFile(file)) {
     actions.push(`<button class="mini-button" data-fee-non-billable="${file.id}">Non-Billable</button>`);
@@ -5772,7 +5810,76 @@ function bindFileActions() {
     btn.onclick = () => openMarkReceivedModal(btn.dataset.markReceived);
   });
   document.querySelectorAll("[data-mark-not-received]").forEach((btn) => {
-    btn.onclick = () => updateFileBilling(btn.dataset.markNotReceived, { feeReceived: false, feeReceivedDate: "", feeReceivedAt: "", fee_received_at: "", receivedAt: "", received_at: "" }, "Fee marked as not received", "feePending");
+    btn.onclick = async () => {
+      if (!["Admin", "Manager"].includes(normalizeRole(state.currentRole))) {
+        return toast("Only Admin or Manager can reverse an unlinked fee receipt.");
+      }
+      const file = state.files.find((item) => item.id === btn.dataset.markNotReceived);
+      if (!file) return toast("File record not found.");
+      if (linkedFeeReceiptCollection(file)) {
+        return toast("This fee receipt has a linked collection. Delete the linked transaction to return the file to Fee Pending.");
+      }
+      btn.disabled = true;
+      try {
+        if (isSupabaseMode()) {
+          await reverseUnlinkedFeeReceiptToApi(file.id);
+        } else {
+          const index = state.files.findIndex((item) => item.id === file.id);
+          state.files[index] = {
+            ...file,
+            billed: true,
+            billingType: "Billable",
+            feeReceived: false,
+            feeReceivedDate: "",
+            feeReceivedAt: "",
+            fee_received_at: "",
+            receivedAt: "",
+            received_at: "",
+            receivedDate: "",
+            received_date: "",
+            receivedOn: "",
+            received_on: "",
+            feeReceivedAmount: 0,
+            amountReceived: 0,
+            amount_received: 0,
+            balanceAmount: Number(file.billedAmount || file.feeAmount || file.amount || 0),
+            paymentStatus: "Fee Not Received",
+            payment_status: "Fee Not Received",
+            paymentMode: "",
+            receiptMode: "",
+            feeCollectionMode: "",
+            feeReceiptRemarks: "",
+            receiptRemarks: "",
+            feeReceiptId: "",
+            fee_receipt_id: "",
+            feeTransactionId: "",
+            fee_transaction_id: "",
+            transactionId: "",
+            transaction_id: "",
+            feeReceivedBy: "",
+            stages: { ...normalizeStages(file), Billed: true },
+            updatedAt: Date.now(),
+            lastUpdatedDate: todayDate(),
+          };
+          saveState();
+        }
+        toast("Fee marked as Not Received and returned to Fee Pending.");
+        renderAll();
+      } catch (error) {
+        toast(error.message || "Unable to reverse this fee receipt.");
+        btn.disabled = false;
+      }
+    };
+  });
+  document.querySelectorAll("[data-go-fee-transaction]").forEach((btn) => {
+    btn.onclick = () => {
+      if (!["Admin", "Manager"].includes(normalizeRole(state.currentRole))) {
+        return toast("Only Admin or Manager can view linked fee transactions.");
+      }
+      const transaction = activeCashCollections().find((item) => item.id === btn.dataset.goFeeTransaction);
+      if (!transaction) return toast("The linked collection transaction was not found.");
+      viewTransactionDetail("Collection", transaction);
+    };
   });
   document.querySelectorAll("[data-delete]").forEach((btn) => {
     btn.onclick = () => {
@@ -6094,6 +6201,16 @@ async function saveReceivedFromModal(fileId) {
   let linkedTransaction = null;
   if (receipt.pushToTransactions) {
     try {
+      const collection = feeReceiptCollectionPayload(file, receipt, linkedFeeReceiptCollection(file));
+      if (isSupabaseMode()) {
+        const result = await saveLinkedFeeReceiptToApi(fileId, { ...receipt, receivedAt }, collection);
+        linkedTransaction = activeCashCollections().find((item) => item.fileId === fileId || item.file_id === fileId) || collection;
+        if (button) button.disabled = false;
+        closeMarkReceivedModal();
+        toast("Fee received and collection linked successfully.");
+        renderAll();
+        return result;
+      }
       linkedTransaction = await saveFeeReceiptCollection(file, receipt);
       receipt.transactionId = linkedTransaction.id;
     } catch (error) {
@@ -10996,10 +11113,11 @@ function renderCashCollectionsTab() {
 function renderTransactionSidePanel(tab) {
   const balance = cashBalanceForRange();
   const today = indiaTodayDate();
-  const todaysCollections = (state.otherCashCollections || []).filter((item) => item.date === today);
-  const cashCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Cash");
-  const bankCollections = (state.otherCashCollections || []).filter((item) => item.mode === "Bank");
-  const otherCollections = (state.otherCashCollections || []).filter((item) => !isCollectionType(item, "fee_collection"));
+  const collections = activeCashCollections();
+  const todaysCollections = collections.filter((item) => item.date === today);
+  const cashCollections = collections.filter((item) => item.mode === "Cash");
+  const bankCollections = collections.filter((item) => item.mode === "Bank");
+  const otherCollections = collections.filter((item) => !isCollectionType(item, "fee_collection"));
   return `<aside class="transaction-side-column">
     <section class="transaction-side-card">
       <div class="expense-card-head">
@@ -11059,12 +11177,14 @@ function renderCashBalanceTab() {
     </div>
     <div class="cash-balance-grid">
       ${cashBalanceCard("Opening Cash Balance", balance.opening)}
-      ${cashBalanceCard("Cash Collections", balance.feeCollections + balance.otherCollections)}
-      ${cashBalanceCard("Cash Expenses", balance.cashExpenses)}
-      ${cashBalanceCard("Closing Cash Balance", balance.closing, true)}
+      ${cashBalanceCard("Total Cash Collections", balance.feeCollections + balance.otherCollections)}
+      ${cashBalanceCard("Total Cash Expenses", balance.cashExpenses)}
+      ${cashBalanceCard("Adjustments", balance.adjustments || 0)}
+      ${cashBalanceCard("Expected Closing Cash", balance.closing, true)}
     </div>
     ${renderCashVerificationPanel(balance)}
-    ${renderCashMovementTable()}
+    <div class="cash-details-toggle"><button class="secondary-button" id="toggleCashDetails">${state.filters.balanceShowDetails ? "Hide Transaction Details" : "View Transaction Details"}</button></div>
+    ${state.filters.balanceShowDetails ? renderCashMovementTable() : ""}
   `;
 }
 
@@ -11310,6 +11430,11 @@ function bindExpensePage() {
   document.querySelector("#cashReset")?.addEventListener("click", resetCashFilters);
   document.querySelector("#balanceSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
   document.querySelector("#balanceReset")?.addEventListener("click", resetBalanceFilters);
+  document.querySelector("#toggleCashDetails")?.addEventListener("click", () => {
+    state.filters.balanceShowDetails = !state.filters.balanceShowDetails;
+    saveState();
+    renderAll();
+  });
   document.querySelector("#expenseExcel")?.addEventListener("click", exportExpenseExcel);
   document.querySelector("#expensePdf")?.addEventListener("click", exportExpensePdf);
   document.querySelector("#expensePrint")?.addEventListener("click", printExpenseReport);
@@ -11616,11 +11741,18 @@ async function deleteExpense(id) {
 }
 
 async function deleteCashCollection(id) {
-  if (!confirm("Delete this cash collection entry?")) return;
+  if (!["Admin", "Manager"].includes(state.currentRole)) return toast("Only Admin or Manager can delete collections.");
+  const collection = activeCashCollections().find((item) => item.id === id);
+  if (!collection) return toast("Collection record not found.");
+  const linked = Boolean((collection.fileId || collection.file_id) && (collection.sourceType === "fee_receipt" || collection.source_type === "fee_receipt"));
+  const prompt = linked
+    ? "This collection is linked to a billed file. Deleting it will mark the file as Fee Not Received and return it to Fee Pending. Do you want to continue?"
+    : "Delete this cash collection entry?";
+  if (!confirm(prompt)) return;
   if (isSupabaseMode()) {
     try {
       await deleteCashCollectionFromApi(id);
-      toast("Cash collection deleted and synced");
+      toast(linked ? "Collection deleted and linked file moved to Fee Pending successfully." : "Collection deleted successfully.");
       renderAll();
       return;
     } catch (error) {
@@ -11628,9 +11760,37 @@ async function deleteCashCollection(id) {
       return toast(`Collection delete failed: ${error.message || "Please retry."}`);
     }
   }
-  state.otherCashCollections = (state.otherCashCollections || []).filter((item) => item.id !== id);
+  const now = new Date().toISOString();
+  state.otherCashCollections = (state.otherCashCollections || []).map((item) => item.id === id ? { ...item, isDeleted: true, is_deleted: true, deletedAt: now, deleted_at: now } : item);
+  if (linked) {
+    const fileId = collection.fileId || collection.file_id;
+    state.files = (state.files || []).map((file) => file.id === fileId ? revertLocalFeeReceipt(file) : file);
+  }
   saveState();
+  toast(linked ? "Collection deleted and linked file moved to Fee Pending successfully." : "Collection deleted successfully.");
   renderAll();
+}
+
+function revertLocalFeeReceipt(file = {}) {
+  return {
+    ...file,
+    billed: true,
+    feeReceived: false,
+    feeReceivedDate: "",
+    feeReceivedAt: "",
+    fee_received_at: "",
+    feeReceivedAmount: 0,
+    amount_received: 0,
+    amountReceived: 0,
+    paymentStatus: "Fee Not Received",
+    payment_status: "Fee Not Received",
+    feeReceiptId: "",
+    fee_receipt_id: "",
+    feeTransactionId: "",
+    fee_transaction_id: "",
+    transactionId: "",
+    transaction_id: "",
+  };
 }
 
 function expenseSearchActive() {
@@ -11642,7 +11802,7 @@ function cashSearchActive() {
 }
 
 function filteredExpenses() {
-  return (state.expenses || []).filter((item) => {
+  return activeExpenses().filter((item) => {
     if (state.filters.expenseFrom && item.date < state.filters.expenseFrom) return false;
     if (state.filters.expenseTo && item.date > state.filters.expenseTo) return false;
     if (state.filters.expenseParticulars && !item.particulars.toLowerCase().includes(state.filters.expenseParticulars.toLowerCase())) return false;
@@ -11656,7 +11816,7 @@ function filteredExpenses() {
 }
 
 function filteredCashCollections() {
-  return (state.otherCashCollections || []).filter((item) => {
+  return activeCashCollections().filter((item) => {
     if (state.filters.cashFrom && item.date < state.filters.cashFrom) return false;
     if (state.filters.cashTo && item.date > state.filters.cashTo) return false;
     if (state.filters.cashParticulars && !item.particulars.toLowerCase().includes(state.filters.cashParticulars.toLowerCase())) return false;
@@ -11684,7 +11844,8 @@ function expenseAttachmentLink(item) {
 function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  const canDelete = ["Admin", "Manager"].includes(state.currentRole);
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button>${canDelete ? `<button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button>` : ""}</td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function resetExpenseFilters() {
@@ -11718,11 +11879,11 @@ function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.
   const mode = state.filters.balanceMode || "";
   const modeOk = (itemMode) => !mode || itemMode === mode;
   const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
-  const feeCollections = feeReceiptCashFilesForBalance().filter((file) => String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && (!mode || mode === "Cash") && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).reduce((sum, file) => sum + (Number(file.feeReceivedAmount || 0) || 0), 0)
-    + (state.otherCashCollections || []).filter((item) => isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const otherCollections = (state.otherCashCollections || []).filter((item) => !isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const cashExpenses = (state.expenses || []).filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return { opening, feeCollections, otherCollections, cashExpenses, closing: opening + feeCollections + otherCollections - cashExpenses };
+  const feeCollections = activeCashCollections().filter((item) => isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const otherCollections = activeCashCollections().filter((item) => !isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const cashExpenses = activeExpenses().filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const adjustments = 0;
+  return { opening, feeCollections, otherCollections, cashExpenses, adjustments, closing: opening + feeCollections + otherCollections + adjustments - cashExpenses };
 }
 
 function applicableOpeningBalance(from = "", to = todayDate()) {
@@ -11741,18 +11902,7 @@ function cashMovementRows() {
   const enteredByFilter = normalizeImportMatchText(state.filters.balanceEnteredBy || "");
   const typeFilter = state.filters.balanceType || "";
   const rows = [
-    ...feeReceiptCashFilesForBalance().filter((file) => String(file.feeCollectionMode || file.paymentMode || "").toLowerCase() === "cash" && inRange(file.feeReceivedDate || file.lastUpdatedDate || "")).map((file) => ({
-      date: file.feeReceivedDate || file.lastUpdatedDate || "",
-      time: "",
-      type: "Collection",
-      particulars: `Fee Collection - ${file.name || ""}`,
-      reference: file.fileNo || file.crNo || "",
-      cashIn: Number(file.feeReceivedAmount || 0),
-      cashOut: 0,
-      enteredBy: file.feeReceivedBy || file.lastUpdatedBy || file.staff || "",
-      createdAt: file.updatedAt || file.createdAt || "",
-    })),
-    ...(state.otherCashCollections || []).filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
+    ...activeCashCollections().filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
       date: item.date,
       time: item.time || "",
       type: "Collection",
@@ -11763,7 +11913,7 @@ function cashMovementRows() {
       enteredBy: item.createdBy || item.enteredBy || "",
       createdAt: item.createdAt || item.created_at || "",
     })),
-    ...(state.expenses || []).filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
+    ...activeExpenses().filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
       date: item.date,
       time: item.time || "",
       type: "Expense",
@@ -11955,7 +12105,7 @@ function dailyVisitorPdfRows(date = dailyReportDate()) {
 }
 
 function dailyExpenseRows(date = dailyReportDate()) {
-  return (state.expenses || [])
+  return activeExpenses()
     .filter((expense) => normalizeImportDate(expense.date) === date)
     .sort((a, b) => String(a.particulars || "").localeCompare(String(b.particulars || "")))
     .map((expense, index) => ({
@@ -11971,7 +12121,7 @@ function dailyExpenseRows(date = dailyReportDate()) {
 }
 
 function dailyExpensePdfRows(date = dailyReportDate()) {
-  return (state.expenses || [])
+  return activeExpenses()
     .filter((expense) => normalizeImportDate(expense.date || expense.expense_date) === date)
     .sort((a, b) => String(a.particulars || a.expense_item || "").localeCompare(String(b.particulars || b.expense_item || "")))
     .map((expense, index) => ({
@@ -11991,7 +12141,7 @@ function dailyPdfMoney(value) {
 }
 
 function dailyCollectionRows(date = dailyReportDate()) {
-  return (state.otherCashCollections || [])
+  return activeCashCollections()
     .filter((collection) => normalizeImportDate(collection.date) === date)
     .sort((a, b) => String(a.receivedFrom || a.particulars || "").localeCompare(String(b.receivedFrom || b.particulars || "")))
     .map((collection, index) => ({
@@ -12105,7 +12255,7 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
       { title: "Completed Files", rows: completedRows, total: `Total Completed Files: ${completedRows.length}`, empty: "No files were completed on the selected date." },
       { title: "New Work Came", rows: newWorkRows, total: `Total New Work Received: ${newWorkRows.length}`, empty: "No new work was received on the selected date." },
       { title: "Visitors List", rows: dailyVisitorPdfRows(date), total: `Total Visitors: ${visitorRows.length}`, empty: "No visitor records for the selected date.", columnStyles: dailyVisitorPdfColumnStyles() },
-      { title: "Expense Report", rows: dailyExpensePdfRows(date), total: `Total Expenses: ${dailyPdfMoney((state.expenses || []).filter((expense) => normalizeImportDate(expense.date || expense.expense_date) === date).reduce((sum, expense) => sum + Number(expense.amount || 0), 0))}`, empty: "No expense records for the selected date.", columnStyles: dailyExpensePdfColumnStyles(), rightAlign: ["Amount"] },
+      { title: "Expense Report", rows: dailyExpensePdfRows(date), total: `Total Expenses: ${dailyPdfMoney(activeExpenses().filter((expense) => normalizeImportDate(expense.date || expense.expense_date) === date).reduce((sum, expense) => sum + Number(expense.amount || 0), 0))}`, empty: "No expense records for the selected date.", columnStyles: dailyExpensePdfColumnStyles(), rightAlign: ["Amount"] },
       { title: "Collections", rows: collectionRows, total: `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, empty: "No collections were recorded on the selected date." },
     ];
     if (format === "PDF") {
