@@ -20,7 +20,7 @@ const users = [
   { name: "Dheeraj", role: "Staff", email: "dheerajvv11@gmail.com", password: "Dheeraj@11" },
   { name: "Rasha", role: "Staff", email: "rashamp7@gmail.com", password: "Rasha@007" },
   { name: "Arya", role: "Staff", email: "aryatv142001@gmail.com", password: "Arya@001" },
-  { name: "Najmunnisa", role: "Manager", email: "pvnajmunnisa123@gmail.com", password: "Najma@696" },
+  { name: "Najma", role: "Manager", email: "pvnajmunnisa123@gmail.com", password: "Najma@696" },
   { name: "Chindu", role: "Manager", email: "craveendran06@gmail.com", password: "Chindu#357" },
   { name: "Sreeshna", role: "Staff", email: "sreeshna@gmail.com", password: "sreeshna@123" },
 ];

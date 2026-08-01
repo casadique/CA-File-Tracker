@@ -39,7 +39,7 @@ const stages = [
 
 const staff = sortByName([
   userAccount("CA Sadique", "casadique@gmail.com", "Admin", "Casadique@233487", "u1", "system"),
-  userAccount("Najmunnisa", "pvnajmunnisa123@gmail.com", "Manager", "Najma@696"),
+  userAccount("Najma", "pvnajmunnisa123@gmail.com", "Manager", "Najma@696"),
   userAccount("Chindu", "craveendran06@gmail.com", "Manager", "Chindu#357"),
   userAccount("Abhinandana", "abhinandanakmadhu@gmail.com", "Staff", "Abhi@369"),
   userAccount("Althaf", "althafmk2210@gmail.com", "Staff Manager", "Althaf@2210"),
@@ -137,7 +137,7 @@ const essentialTeamUserEmails = new Set([
   "pvnajmunnisa123@gmail.com",
   "craveendran06@gmail.com",
 ]);
-const essentialTeamUserNames = new Set(["ca sadique", "sadique", "anusree", "najmunnisa", "najma", "chindu"]);
+const essentialTeamUserNames = new Set(["ca sadique", "sadique", "anusree", "najma", "chindu"]);
 
 const dummyFileNames = new Set([
   "acme traders",
@@ -483,7 +483,8 @@ function normalizeState(appState) {
     "Riya Sharma": "Nisha",
     "Amit Jain": "Arya",
     "Farah Khan": "Anusree",
-    "Office Viewer": "Najmunnisa",
+    "Office Viewer": "Najma",
+    "Najmunnisa": "Najma",
   };
   const shouldResetMasterLists = appState.masterListResetVersion !== MASTER_LIST_RESET_VERSION;
   let savedUsers = (appState.users || []).filter((user) => !isRemovedStaff(user.name));
@@ -2391,7 +2392,6 @@ function staffAliasMap() {
     "ca": ["CA Sadique"],
     "sadique": ["CA Sadique"],
     "najmunnisa": ["Najma"],
-    "najma": ["Najmunnisa"],
   };
 }
 
@@ -10424,7 +10424,7 @@ function visitorPersonOptions() {
   return sortList([
     ...state.users.map((user) => user.name),
     "CA Sadique",
-    "Najmunnisa",
+    "Najma",
     "Chindu",
   ]);
 }

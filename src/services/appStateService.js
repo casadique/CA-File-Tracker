@@ -3,6 +3,10 @@ const { supabaseAdmin } = require("../config/supabase");
 
 const APP_STATE_ID = "default";
 const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
+const DISPLAY_NAME_MIGRATIONS = new Map([
+  ["Najmunnisa", "Najma"],
+]);
+const PROTECTED_IDENTITY_KEYS = /(?:id|email|password|auth|token)$/i;
 
 async function getAppState() {
   const startedAt = perfStart();
@@ -91,19 +95,61 @@ function emptyState() {
 }
 
 function normalizeServerState(state) {
+  const displayNormalizedState = normalizeDisplayNames(state);
   return {
-    ...state,
-    files: sortFilesNewestFirst(state.files || []),
-    visitors: sortVisitorsNewestFirst(state.visitors || []),
-    expenses: sortFinanceRows(state.expenses || []),
-    otherCashCollections: sortFinanceRows((state.otherCashCollections || []).map(normalizeCollectionRow)),
-    chatMessages: sortMessagesOldestFirst(state.chatMessages || []).slice(-1000),
-    chatGroups: Array.isArray(state.chatGroups) ? state.chatGroups : [],
-    readChatMessages: Array.isArray(state.readChatMessages) ? [...new Set(state.readChatMessages.filter(Boolean))] : [],
-    fileNotifications: normalizeFileNotifications(state.fileNotifications || []),
-    staffDetails: sortStaffDetailsNewestFirst(state.staffDetails || []),
-    correctionHistory: sortCorrectionsNewestFirst(state.correctionHistory || []),
+    ...displayNormalizedState,
+    files: sortFilesNewestFirst(displayNormalizedState.files || []),
+    visitors: sortVisitorsNewestFirst(displayNormalizedState.visitors || []),
+    expenses: sortFinanceRows(displayNormalizedState.expenses || []),
+    otherCashCollections: sortFinanceRows((displayNormalizedState.otherCashCollections || []).map(normalizeCollectionRow)),
+    chatMessages: sortMessagesOldestFirst(displayNormalizedState.chatMessages || []).slice(-1000),
+    chatGroups: Array.isArray(displayNormalizedState.chatGroups) ? displayNormalizedState.chatGroups : [],
+    readChatMessages: Array.isArray(displayNormalizedState.readChatMessages) ? [...new Set(displayNormalizedState.readChatMessages.filter(Boolean))] : [],
+    fileNotifications: normalizeFileNotifications(displayNormalizedState.fileNotifications || []),
+    staffDetails: sortStaffDetailsNewestFirst(displayNormalizedState.staffDetails || []),
+    correctionHistory: sortCorrectionsNewestFirst(displayNormalizedState.correctionHistory || []),
   };
+}
+
+function normalizeDisplayNames(value, key = "") {
+  if (Array.isArray(value)) return value.map((item) => normalizeDisplayNames(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        normalizeDisplayNames(childValue, childKey),
+      ])
+    );
+  }
+  if (
+    typeof value !== "string"
+    || PROTECTED_IDENTITY_KEYS.test(key)
+    || value.includes("@")
+    || /^(?:user|auth|staff|profile)[-_]/i.test(value)
+  ) return value;
+  let normalized = value;
+  DISPLAY_NAME_MIGRATIONS.forEach((nextName, previousName) => {
+    normalized = normalized.replace(new RegExp(`\\b${previousName}\\b`, "gi"), nextName);
+  });
+  return normalized;
+}
+
+async function migrateDisplayNames() {
+  const { data, error } = await supabaseAdmin
+    .from("app_state")
+    .select("state")
+    .eq("id", APP_STATE_ID)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.state) return { changed: false };
+  const migrated = normalizeDisplayNames(data.state);
+  if (JSON.stringify(migrated) === JSON.stringify(data.state)) return { changed: false };
+  const { error: updateError } = await supabaseAdmin
+    .from("app_state")
+    .update({ state: migrated, updated_at: new Date().toISOString() })
+    .eq("id", APP_STATE_ID);
+  if (updateError) throw updateError;
+  return { changed: true };
 }
 
 function normalizeFileNotifications(rows = []) {
@@ -279,4 +325,6 @@ module.exports = {
   backupPayload,
   sortFilesNewestFirst,
   normalizeFileNotifications,
+  normalizeDisplayNames,
+  migrateDisplayNames,
 };
