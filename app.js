@@ -696,7 +696,7 @@ function normalizeState(appState) {
       targetUserName: message.targetUserName || target?.name || "",
       targetUserEmail: message.targetUserEmail || target?.email || "",
       groupId: message.groupId || message.group_id || "team",
-      groupName: message.groupName || message.group_name || "Team Chat",
+      groupName: message.groupName || message.group_name || "Chat",
     };
   });
   appState.session = appState.session || { loggedIn: false };
@@ -3016,8 +3016,8 @@ function unreadChatConversations() {
 
 function unreadChatLabel() {
   const count = unreadChatCount();
-  if (!count) return "Team Chat";
-  return count === 1 ? "Team Chat - 1 Chat" : `Team Chat - ${count} Chats`;
+  if (!count) return "Chat";
+  return count === 1 ? "Chat - 1 unread" : `Chat - ${count} unread`;
 }
 
 function chatButtonLabel() {
@@ -3105,13 +3105,44 @@ function topActionIconButton(id, type, icon, label, count = 0) {
   `;
 }
 
+function topActionButton(id, type, icon, label) {
+  return `
+    <button class="top-action-button top-action-${type} top-action-secondary" id="${id}" type="button">
+      <span class="top-action-button-icon" aria-hidden="true">${navIcon(icon)}</span>
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
+function renderTopActions() {
+  const actions = [];
+  if (activePage === "dashboard") {
+    if (canCreateFile()) {
+      actions.push(`<button class="top-action-button top-action-add" id="addFileButton" type="button">Add File</button>`);
+    }
+    actions.push(topActionIconButton("chatButton", "chat", "chat", "Chat", unreadChatCount()));
+    actions.push(topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length));
+  } else if (activePage === "files") {
+    if (rolePerm().assign) {
+      actions.push(topActionButton("sampleImportButton", "sample", "spreadsheet", "Download Sample"));
+      actions.push(topActionButton("importFileButton", "import", "database", "Import Excel"));
+      actions.push(`<input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">`);
+    }
+    if (canCreateFile()) {
+      actions.push(`<button class="top-action-button top-action-add" id="addFileButton" type="button">Add File</button>`);
+    }
+  }
+  actions.push(`<button class="top-action-button top-action-profile" id="topProfileButton" type="button" title="Profile"><span class="topbar-profile-avatar">${escapeHtml(userInitials(state.currentUser))}</span><span class="topbar-profile-name">${escapeHtml(state.currentUser || "Profile")}</span></button>`);
+  return actions.join("");
+}
+
 function updateTopActionBadges() {
   const chatButton = document.querySelector("#chatButton");
   if (chatButton) {
     const label = unreadChatLabel();
     chatButton.title = label;
     chatButton.setAttribute("aria-label", label);
-    chatButton.innerHTML = topActionIconContent("chat", "Team Chats", unreadChatCount());
+    chatButton.innerHTML = topActionIconContent("chat", "Chat", unreadChatCount());
   }
   const notifyButton = document.querySelector("#notifyButton");
   if (notifyButton) {
@@ -3174,13 +3205,7 @@ function mount() {
             <p id="pageSubtitle"></p>
           </div>
           <div class="daily-quote-slot" id="dailyQuoteSlot">${renderDailyQuoteBanner()}</div>
-          <div class="top-actions">
-            ${topActionIconButton("chatButton", "chat", "chat", "Team Chats", unreadChatCount())}
-            ${topActionIconButton("notifyButton", "notify", "bell", "Notifications", notifications().length)}
-            ${rolePerm().assign ? `<button class="top-action-button top-action-sample" id="sampleImportButton">Download</button><button class="top-action-button top-action-import" id="importFileButton">Import</button><input class="hidden" type="file" id="importFileInput" accept=".csv,.tsv,.xls,.html,.htm,.xlsx">` : ""}
-            ${canCreateFile() ? `<button class="top-action-button top-action-add" id="addFileButton"> Add File</button>` : ""}
-            <button class="top-action-button top-action-profile" id="topProfileButton" title="Profile"><span class="topbar-profile-avatar">${escapeHtml(userInitials(state.currentUser))}</span><span class="topbar-profile-name">${escapeHtml(state.currentUser || "Profile")}</span></button>
-          </div>
+          <div class="top-actions" id="topActions">${renderTopActions()}</div>
         </header>
         <section class="page" id="dashboard"></section>
         <section class="page" id="files"></section>
@@ -3400,7 +3425,7 @@ async function handleLogin() {
   }
 }
 
-function bindShell() {
+function bindTopActions() {
   const addFileButton = document.querySelector("#addFileButton");
   if (addFileButton) addFileButton.onclick = () => openFileDrawer();
   const sampleImportButton = document.querySelector("#sampleImportButton");
@@ -3413,6 +3438,26 @@ function bindShell() {
     };
     importFileInput.onchange = handleImportFile;
   }
+  const notifyButton = document.querySelector("#notifyButton");
+  if (notifyButton) notifyButton.onclick = () => openNotifications();
+  const chatButton = document.querySelector("#chatButton");
+  if (chatButton) chatButton.onclick = () => openTeamChat();
+  const topProfileButton = document.querySelector("#topProfileButton");
+  if (topProfileButton) {
+    topProfileButton.onclick = () => {
+      closeOverlays();
+      if (state.currentRole !== "Admin") resetFilters();
+      activePage = state.currentRole === "Admin" ? "users" : "dashboard";
+      toast(`${state.currentUser || "Profile"} - ${state.currentRole || "User"}`);
+      saveState();
+      saveTabSession();
+      renderAll();
+    };
+  }
+}
+
+function bindShell() {
+  bindTopActions();
   const runLogout = () => {
     state.session = { loggedIn: false };
     setApiToken("");
@@ -3428,18 +3473,6 @@ function bindShell() {
   if (logoutButton) logoutButton.onclick = runLogout;
   const sidebarLogoutButton = document.querySelector("#sidebarLogoutButton");
   if (sidebarLogoutButton) sidebarLogoutButton.onclick = runLogout;
-  const topProfileButton = document.querySelector("#topProfileButton");
-  if (topProfileButton) {
-    topProfileButton.onclick = () => {
-      closeOverlays();
-      if (state.currentRole !== "Admin") resetFilters();
-      activePage = state.currentRole === "Admin" ? "users" : "dashboard";
-      toast(`${state.currentUser || "Profile"} - ${state.currentRole || "User"}`);
-      saveState();
-      saveTabSession();
-      renderAll();
-    };
-  }
   const sidebarCollapseButton = document.querySelector("#sidebarCollapseButton");
   if (sidebarCollapseButton) {
     sidebarCollapseButton.onclick = () => {
@@ -3447,8 +3480,6 @@ function bindShell() {
       mount();
     };
   }
-  document.querySelector("#notifyButton").onclick = () => openNotifications();
-  document.querySelector("#chatButton").onclick = () => openTeamChat();
   document.querySelector("#mobileMenu").onclick = () => {
     document.querySelector("#sidebar").classList.add("open");
     document.querySelector("#backdrop").classList.add("show");
@@ -3566,6 +3597,11 @@ function renderAll() {
   document.querySelector(`#${activePage}`).classList.add("active");
   document.querySelector(".content")?.classList.toggle("dashboard-mode", activePage === "dashboard");
   document.querySelector(".topbar")?.classList.toggle("dashboard-topbar", activePage === "dashboard");
+  const topActions = document.querySelector("#topActions");
+  if (topActions) {
+    topActions.innerHTML = renderTopActions();
+    bindTopActions();
+  }
   const titles = {
     dashboard: ["Dashboard", ""],
     files: ["File List", ""],
@@ -13231,7 +13267,7 @@ function openTeamChat(clearDraft = false) {
     <div class="drawer-head modern-drawer-head chat-shell-head">
       <div>
         <span class="drawer-eyebrow">Team Workspace</span>
-        <h3>Team Chat</h3>
+        <h3>Chat</h3>
         <p class="small-muted">Private and group messages synced through the central database.</p>
       </div>
       <button class="icon-button drawer-close" id="closeTeamChat" title="Close chat" aria-label="Close chat">X</button>
@@ -13706,7 +13742,7 @@ function chatConversationTitle(targetType = "all", recipientId = "") {
   if (targetType === "group") {
     const group = chatGroupById(recipientId);
     const memberCount = group?.id === "team" ? chatRecipientUsers().length + 1 : (group?.memberIds || []).length + 1;
-    return { title: group?.name || "Team Chat", subtitle: `Group Chat - ${memberCount} member(s)`, initials: userInitials(group?.name || "GC") };
+    return { title: group?.name || "Chat", subtitle: `Group Chat - ${memberCount} member(s)`, initials: userInitials(group?.name || "GC") };
   }
   return { title: "All Conversations", subtitle: "Group and personal messages", initials: "AC" };
 }
@@ -13788,7 +13824,7 @@ function chatGroups() {
     (group.memberIds || []).includes(user?.id)
   );
   return [
-    { id: "team", name: "Team Chat", memberIds: chatRecipientUsers().map((user) => user.id) },
+    { id: "team", name: "Chat", memberIds: chatRecipientUsers().map((user) => user.id) },
     ...customGroups,
   ];
 }
