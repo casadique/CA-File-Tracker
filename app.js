@@ -5,7 +5,6 @@ const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
 const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
-const DAILY_QUOTE_MINIMIZED_KEY = `${STORAGE_KEY}-daily-quote-minimized`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
 const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
 const COMPLETED_FILES_CHECKED_VERSION = "completed-files-checked-by-chindu-2026-07-14";
@@ -3082,7 +3081,6 @@ function dailyQuoteForDate(dateString = indiaTodayDate()) {
 
 function renderDailyQuoteBanner() {
   if (activePage !== "dashboard") return "";
-  if (sessionStorage.getItem(DAILY_QUOTE_MINIMIZED_KEY) === "Yes") return "";
   const quote = dailyQuoteForDate();
   const text = quoteTextValue(quote);
   if (!text) return "";
@@ -3095,7 +3093,6 @@ function renderDailyQuoteBanner() {
         <span class="daily-quote-text">"${escapeHtml(text)}"</span>
         ${author ? `<span class="daily-quote-author">&mdash; ${escapeHtml(author)}</span>` : ""}
       </div>
-      <button class="daily-quote-minimize" id="dailyQuoteMinimize" type="button" title="Hide quote for this session" aria-label="Hide quote">Hide</button>
     </div>
   `;
 }
@@ -3600,14 +3597,6 @@ function renderAll() {
     const quoteHtml = renderDailyQuoteBanner();
     quoteSlot.innerHTML = quoteHtml;
     quoteSlot.classList.toggle("hidden", !quoteHtml.trim());
-    const quoteMinimize = quoteSlot.querySelector("#dailyQuoteMinimize");
-    if (quoteMinimize) {
-      quoteMinimize.onclick = () => {
-        sessionStorage.setItem(DAILY_QUOTE_MINIMIZED_KEY, "Yes");
-        quoteSlot.innerHTML = "";
-        quoteSlot.classList.add("hidden");
-      };
-    }
   }
   const topBackButton = document.querySelector("#topBackButton");
   if (topBackButton) {
@@ -12180,10 +12169,10 @@ function renderDailyReportPage() {
           <p>New work, completed files and visitors for the selected date.</p>
         </div>
         <div class="daily-report-actions">
-          <button class="secondary-button" id="dailyReportPdf" ${rolePerm().export ? "" : "disabled"}>Export to PDF</button>
-          <button class="secondary-button" id="dailyReportExcel" ${rolePerm().export ? "" : "disabled"}>Export to Excel</button>
-          <button class="secondary-button" id="dailyReportPrint">Print</button>
-          <button class="secondary-button" id="dailyReportRefresh">Refresh</button>
+          <button class="daily-report-action daily-report-action-pdf" id="dailyReportPdf" ${rolePerm().export ? "" : "disabled"}>${navIcon("pdf")}<span>Export to PDF</span></button>
+          <button class="daily-report-action daily-report-action-excel" id="dailyReportExcel" ${rolePerm().export ? "" : "disabled"}>${navIcon("spreadsheet")}<span>Export to Excel</span></button>
+          <button class="daily-report-action daily-report-action-print" id="dailyReportPrint">${navIcon("print")}<span>Print</span></button>
+          <button class="daily-report-action daily-report-action-refresh" id="dailyReportRefresh">${navIcon("refresh")}<span>Refresh</span></button>
         </div>
       </div>
       <div class="field daily-date-field">
@@ -12223,10 +12212,16 @@ function bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, coll
     saveState();
     renderDailyReportPage();
   };
-  document.querySelector("#dailyReportRefresh").onclick = () => {
-    syncSharedState(localStorage.getItem(STORAGE_KEY), false);
-    renderDailyReportPage();
-    toast("Daily Report refreshed");
+  document.querySelector("#dailyReportRefresh").onclick = (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    button.classList.add("is-refreshing");
+    window.setTimeout(() => {
+      syncSharedState(localStorage.getItem(STORAGE_KEY), false);
+      renderDailyReportPage();
+      toast("Daily Report refreshed");
+    }, 450);
   };
   document.querySelector("#dailyReportPdf").onclick = (event) => exportDailyReport("PDF", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
   document.querySelector("#dailyReportExcel").onclick = (event) => exportDailyReport("Excel", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
@@ -12236,10 +12231,11 @@ function bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, coll
 async function exportDailyReport(format, date = dailyReportDate(), newWorkRows = dailyNewWorkRows(date), completedRows = dailyCompletedRows(date), visitorRows = dailyVisitorRows(date), collectionRows = dailyCollectionRows(date), expenseRows = dailyExpenseRows(date), button = null) {
   if (!rolePerm().export) return toast("This role cannot export data.");
   if (button?.disabled) return;
-  const originalText = button?.textContent || "";
+  const originalContent = button?.innerHTML || "";
   if (button) {
     button.disabled = true;
-    button.textContent = format === "Excel" ? "Preparing Excel..." : (format === "PDF" ? "Preparing PDF..." : "Preparing Print...");
+    button.classList.add("is-loading");
+    button.innerHTML = `<span class="daily-action-spinner" aria-hidden="true"></span><span>${format === "Excel" ? "Preparing Excel..." : (format === "PDF" ? "Preparing PDF..." : "Preparing Print...")}</span>`;
   }
   const title = `Daily Report M&A - ${displayDate(date)}`;
   const pdfTitle = `Daily Report - ${displayDate(date)}`;
@@ -12288,7 +12284,8 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = originalText;
+      button.classList.remove("is-loading");
+      button.innerHTML = originalContent;
     }
   }
 }
