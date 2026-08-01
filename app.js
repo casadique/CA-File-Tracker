@@ -1037,6 +1037,13 @@ async function syncFileRecordToApi(file) {
   return result;
 }
 
+async function markFileCheckedInApi(fileId, checkingRemarks) {
+  return apiJson(`/api/files/${encodeURIComponent(fileId)}/check`, {
+    method: "POST",
+    body: JSON.stringify({ checkingRemarks }),
+  });
+}
+
 async function syncFileDeleteToApi(fileId) {
   const result = await deleteFileFromApi(fileId);
   if (result?.files) state.files = result.files;
@@ -5809,15 +5816,24 @@ async function checkCompletedFile(fileId) {
     return toast("You cannot check a file completed by yourself. This file must be checked by another authorised user.");
   }
   const checkedBy = state.currentUser || loggedInUser()?.name || "";
-  const checkedDate = canEditCheckedDate()
-    ? normalizeImportDate(prompt("Date of Checking (dd-mm-yyyy)", displayDate(todayDate())) || todayDate())
-    : todayDate();
-  if (!checkedDate) return toast("Date of Checking is required.");
-  const completionDate = normalizeImportDate(workCompletedDate(file));
-  if (completionDate && checkedDate < completionDate) return toast("Date of Checking cannot be earlier than Work Completion Date.");
+  const checkedAt = new Date().toISOString();
+  const checkedDate = checkedAt.slice(0, 10);
   const checkingRemarks = prompt("Checking Remarks", file.checkingRemarks || "")?.trim() || "";
   if (!validCheckingRemark(checkingRemarks)) return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
-  const checkedAt = new Date().toISOString();
+  if (isSupabaseMode()) {
+    try {
+      const result = await markFileCheckedInApi(fileId, checkingRemarks);
+      if (result?.file) state.files = state.files.map((item) => (item.id === fileId ? { ...item, ...result.file } : item));
+      if (result?.fileNotifications) state.fileNotifications = mergeFileNotifications(state.fileNotifications || [], result.fileNotifications).slice(0, 500);
+      saveState({ skipMerge: true, skipRemote: true });
+      toast("File marked as checked and synced");
+      renderAll();
+      return;
+    } catch (error) {
+      console.error("Checking update failed", { fileId, message: error.message });
+      return toast(`Checking update failed: ${error.message || "Please retry."}`);
+    }
+  }
   const updated = {
     ...file,
     checkedBy,
@@ -6446,20 +6462,13 @@ function openFileDrawer(id) {
         ${formField("completionDate", "Completed Date", file.completionDate || "", "date", false)}
       </div>
       <div class="two-col">
-        ${canManageChecking() ? (canEditCheckedDate() ? staffAssignField("checkedBy", "Checked By", file.checkedBy || "", false, true, false) : checkingDetailField("Checked By", file.checkedBy || state.currentUser || "-")) : checkingDetailField("Checking Status", checkingStatusOf(file).label || "-")}
-        ${canManageChecking() ? (canEditCheckedDate() ? formField("checkedDate", "Checked Date", file.checkedDate || "", "date", false) : checkingDetailField("Checked Date", file.checkedDate ? displayDate(file.checkedDate) : "-")) : checkingDetailField("Checked Date", file.checkedDate ? displayDate(file.checkedDate) : "-")}
+        ${checkingDetailField("Checked By", file.checkedBy || "-")}
+        ${checkingDetailField("Checked Date", file.checkedDate ? displayDate(file.checkedDate) : "-")}
       </div>
-      ${canManageChecking() ? `
-        <div class="field">
-          <label>Checking Remarks</label>
-          <textarea name="checkingRemarks">${escapeHtml(file.checkingRemarks || "")}</textarea>
-        </div>
-      ` : `
-        <div class="two-col">
-          ${checkingDetailField("Checked By", file.checkedBy || "-")}
-          ${checkingDetailField("Checking Remarks", file.checkingRemarks || "-")}
-        </div>
-      `}
+      <div class="two-col">
+        ${checkingDetailField("Checking Status", checkingStatusOf(file).label || "-")}
+        ${checkingDetailField("Checking Remarks", file.checkingRemarks || "-")}
+      </div>
       ${correctionInfoPanel(file)}
       <div class="field">
         <label>Remarks</label>
@@ -6502,9 +6511,6 @@ function openFileDrawer(id) {
   };
   bindStaffPicker("assignedStaff");
   bindStaffPicker("reAssignedStaff");
-  bindStaffPicker("checkedBy");
-  const checkedDateInput = document.querySelector("[name='checkedDate']");
-  if (checkedDateInput && !canEditCheckedDate()) checkedDateInput.disabled = true;
   bindAllotmentDateDefaults();
   document.querySelector("#attachmentsInput").onchange = (e) => {
     const existing = JSON.parse(drawer.dataset.attachments || "[]");
@@ -6941,9 +6947,9 @@ async function saveFileFromDrawer() {
   let completionDate = normalizeImportDate(data.get("completionDate")) || existingFile?.completionDate || "";
   if (stagesObj.Completed && !completionDate) completionDate = todayDate();
   if (justCompleted && !normalizeImportDate(data.get("completionDate"))) completionDate = todayDate();
-  let checkedBy = canManageChecking() ? (canEditCheckedDate() ? resolveAssignedStaff(data.get("checkedBy"), "checkedByNewInput", "") : (existingFile?.checkedBy || state.currentUser || "")) : (existingFile?.checkedBy || "");
-  let checkedDate = canManageChecking() ? (canEditCheckedDate() ? normalizeImportDate(data.get("checkedDate")) : (existingFile?.checkedDate || todayDate())) : (existingFile?.checkedDate || "");
-  let checkingRemarks = canManageChecking() ? (data.get("checkingRemarks") || "").trim() : (existingFile?.checkingRemarks || "");
+  let checkedBy = existingFile?.checkedBy || "";
+  let checkedDate = existingFile?.checkedDate || "";
+  let checkingRemarks = existingFile?.checkingRemarks || "";
   if (justCompleted) {
     checkedBy = "";
     checkedDate = "";
@@ -6955,29 +6961,6 @@ async function saveFileFromDrawer() {
     checkedBy = "";
     checkedDate = "";
     checkingRemarks = "";
-  }
-  if (canManageChecking() && stagesObj.Completed && validCheckingRemark(checkingRemarks)) {
-    if (!checkedBy) checkedBy = state.currentUser || loggedInUser()?.name || "";
-    if (!checkedDate) checkedDate = todayDate();
-  }
-  if (canManageChecking() && stagesObj.Completed && (checkedBy || checkedDate || checkingRemarks) && !canCheckFile(existingFile || { stages: stagesObj, assignedStaff: assigned })) {
-    addAuditLog("Attempt made to check own work", {
-      fileId: existingFile?.id || data.get("id") || "",
-      fileName: existingFile?.name || data.get("name") || "",
-      attemptedBy: state.currentUser,
-      workDoneBy: existingFile?.completedBy || existingFile?.assignedStaff || assigned || "",
-    });
-    saveState();
-    restoreSaveFileButton(saveButton);
-    return toast("You cannot check a file completed by yourself. This file must be checked by another authorised user.");
-  }
-  if (canManageChecking() && stagesObj.Completed && (checkedBy || checkedDate || checkingRemarks) && !validCheckingRemark(checkingRemarks)) {
-    restoreSaveFileButton(saveButton);
-    return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
-  }
-  if (checkedDate && completionDate && checkedDate < completionDate) {
-    restoreSaveFileButton(saveButton);
-    return toast("Checked Date cannot be earlier than Work Completion Date.");
   }
   const record = {
     id: data.get("id"),
@@ -11977,12 +11960,13 @@ function dailyExpenseRows(date = dailyReportDate()) {
     .sort((a, b) => String(a.particulars || "").localeCompare(String(b.particulars || "")))
     .map((expense, index) => ({
     SN: index + 1,
-    "Received from": expense.paidTo || expense.paid_to || "",
-    Particulars: expense.particulars || "",
-    "Ref No": expense.voucherNo || expense.voucher_number || "",
-    Mode: expense.mode || "",
+    Date: displayDate(normalizeImportDate(expense.date || expense.expense_date)),
+    "Expense Item": expense.expense_item || expense.particulars || "",
+    "Paid To": expense.paidTo || expense.paid_to || "",
+    "Payment Mode": expense.mode || expense.payment_mode || "",
+    "Voucher No.": expense.voucherNo || expense.voucher_number || "",
     Amount: money(expense.amount),
-    "Collected By": expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
+    "Paid By": expense.paidBy || expense.paid_by || expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
     }));
 }
 
@@ -11992,12 +11976,13 @@ function dailyExpensePdfRows(date = dailyReportDate()) {
     .sort((a, b) => String(a.particulars || a.expense_item || "").localeCompare(String(b.particulars || b.expense_item || "")))
     .map((expense, index) => ({
       SN: index + 1,
-      "Received from": expense.paidTo || expense.paid_to || "",
-      Particulars: expense.expense_item || expense.particulars || "",
-      "Ref No": expense.voucherNo || expense.voucher_number || "",
-      Mode: expense.mode || expense.payment_mode || "",
+      Date: displayDate(normalizeImportDate(expense.date || expense.expense_date)),
+      "Expense Item": expense.expense_item || expense.particulars || "",
+      "Paid To": expense.paidTo || expense.paid_to || "",
+      "Payment Mode": expense.mode || expense.payment_mode || "",
+      "Voucher No.": expense.voucherNo || expense.voucher_number || "",
       Amount: dailyPdfMoney(expense.amount),
-      "Collected By": expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
+      "Paid By": expense.paidBy || expense.paid_by || expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
     }));
 }
 
@@ -12059,7 +12044,7 @@ function renderDailyReportPage() {
       ${renderDailySection("Completed Files", completedRows, ["SN", "Name", "Type of Service", "C/o", "Work Done By", "Checked By"], `Total Completed Files: ${completedRows.length}`, "No files were completed on the selected date.")}
       ${renderDailySection("Visitors List", visitorRows, ["SN", "Visitor Name", "Mobile No", "Company", "Purpose", "Time", "Met"], `Total Visitors: ${visitorRows.length}`, "No visitors were recorded on the selected date.")}
       ${renderDailySection("Collections", collectionRows, ["SN", "Received from", "Particulars", "Ref No", "Mode", "Amount", "Collected By"], `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No collections were recorded on the selected date.")}
-      ${renderDailySection("Expense Report", expenseRows, ["SN", "Received from", "Particulars", "Ref No", "Mode", "Amount", "Collected By"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
+      ${renderDailySection("Expense Report", expenseRows, ["SN", "Date", "Expense Item", "Paid To", "Payment Mode", "Voucher No.", "Amount", "Paid By"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
     </div>
   `;
   bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
@@ -12274,13 +12259,14 @@ function dailyVisitorPdfColumnStyles() {
 
 function dailyExpensePdfColumnStyles() {
   return {
-    0: { cellWidth: 30, halign: "center" },
-    1: { cellWidth: 118 },
-    2: { cellWidth: 210 },
-    3: { cellWidth: 68 },
-    4: { cellWidth: 72 },
-    5: { cellWidth: 82, halign: "right" },
-    6: { cellWidth: 102 },
+    0: { cellWidth: 26, halign: "center" },
+    1: { cellWidth: 66 },
+    2: { cellWidth: 150 },
+    3: { cellWidth: 130 },
+    4: { cellWidth: 82 },
+    5: { cellWidth: 76 },
+    6: { cellWidth: 82, halign: "right" },
+    7: { cellWidth: 100 },
   };
 }
 
@@ -12291,7 +12277,7 @@ async function downloadDailyReportWorkbook(date, newWorkRows, completedRows, vis
     { name: "Completed Files", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }, ...completedRows, { SN: "", Name: `Total Completed Files: ${completedRows.length}`, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }] },
     { name: "Visitors List", rows: [{ SN: "", "Visitor Name": title, "Mobile No": "", Company: "", Purpose: "", Time: "", Met: "" }, ...visitorRows, { SN: "", "Visitor Name": `Total Visitors: ${visitorRows.length}`, "Mobile No": "", Company: "", Purpose: "", Time: "", Met: "" }] },
     { name: "Collections", rows: [{ SN: "", "Received from": title, Particulars: "", "Ref No": "", Mode: "", Amount: "", "Collected By": "" }, ...collectionRows, { SN: "", "Received from": "Total Collections", Particulars: "", "Ref No": "", Mode: "", Amount: money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Collected By": "" }] },
-    { name: "Expense Report", rows: [{ SN: "", "Received from": title, Particulars: "", "Ref No": "", Mode: "", Amount: "", "Collected By": "" }, ...expenseRows, { SN: "", "Received from": "Total Expenses", Particulars: "", "Ref No": "", Mode: "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Collected By": "" }] },
+    { name: "Expense Report", rows: [{ SN: "", Date: title, "Expense Item": "", "Paid To": "", "Payment Mode": "", "Voucher No.": "", Amount: "", "Paid By": "" }, ...expenseRows, { SN: "", Date: "", "Expense Item": "Total Expenses", "Paid To": "", "Payment Mode": "", "Voucher No.": "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Paid By": "" }] },
   ]);
 }
 

@@ -183,6 +183,7 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
+    preserveCheckingDetailsForGeneralSave(record, before);
     validateReassignmentTarget(before, file);
     const nowIso = new Date(now).toISOString();
     applyFeeReceivedTimestamp(record, before, nowIso);
@@ -207,6 +208,91 @@ async function upsertFile(file, userId, profile = {}) {
     state.files = sortFilesNewestFirst(files);
     return state;
   }, userId);
+}
+
+function preserveCheckingDetailsForGeneralSave(record, before = null) {
+  ["checkedBy", "checkedDate", "checkedAt", "checked_at", "finalCompletedAt", "final_completed_at", "checkingRemarks"]
+    .forEach((field) => { record[field] = before?.[field] || ""; });
+}
+
+async function markFileChecked(fileId, payload, userId, profile = {}) {
+  return patchAppState((state) => {
+    const files = state.files || [];
+    const index = files.findIndex((file) => file.id === fileId);
+    if (index < 0) throw httpError("File record not found.", 404);
+    assertCheckingPermission(profile);
+    const before = { ...files[index] };
+    if (!isCompletedFile(before) || hasOpenCorrection(before) || isCheckedFile(before)) {
+      throw httpError("This file is not pending checking.", 400);
+    }
+    if (fileWasCompletedBy(before, profile)) {
+      throw httpError("You cannot check a file completed by yourself. This file must be checked by another authorised user.", 403);
+    }
+    const checkingRemarks = String(payload?.checkingRemarks || "").trim();
+    if (!/[a-z0-9]{2,}/i.test(checkingRemarks)) {
+      throw httpError("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.", 400);
+    }
+    const checkedAt = new Date().toISOString();
+    const completedAt = reliableCompletionTimestamp(before);
+    if (completedAt && Date.parse(checkedAt) < Date.parse(completedAt)) {
+      throw httpError("Checked date and time cannot be earlier than Work Completed date and time.", 400);
+    }
+    const checkedBy = String(profile?.name || "").trim();
+    if (!checkedBy) throw httpError("Checker profile name is unavailable.", 400);
+    const checkedDate = checkedAt.slice(0, 10);
+    const after = {
+      ...before,
+      checkedBy,
+      checkedDate,
+      checkedAt,
+      checked_at: checkedAt,
+      finalCompletedAt: before.finalCompletedAt || before.final_completed_at || checkedAt,
+      final_completed_at: before.final_completed_at || before.finalCompletedAt || checkedAt,
+      checkingRemarks,
+      lastUpdatedDate: checkedDate,
+      updatedAt: Date.now(),
+      taskActivityAt: checkedAt,
+      task_activity_at: checkedAt,
+    };
+    files[index] = after;
+    appendFileUpdateNotifications(state, before, after, profile, new Date(checkedAt));
+    state.auditLog = [...(state.auditLog || []), {
+      id: crypto.randomUUID(),
+      action: "File marked Checked",
+      details: { fileId, fileName: after.name, checkedBy, checkedDate, checkedAt, checkingRemarks },
+      user: checkedBy,
+      role: profile?.role || "",
+      at: checkedAt,
+    }].slice(-1000);
+    state.files = sortFilesNewestFirst(files);
+    return state;
+  }, userId);
+}
+
+function reliableCompletionTimestamp(file = {}) {
+  const value = file.completed_at || file.completedAt || file.work_completed_at || file.workCompletedAt || "";
+  if (!value || /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return "";
+  return Number.isFinite(Date.parse(value)) ? value : "";
+}
+
+function assertCheckingPermission(profile = {}) {
+  const role = String(profile?.role || "").trim();
+  const authorisedStaff = new Set(["nisha", "rizwana", "althaf"]);
+  if (["Admin", "Manager", "Staff Manager"].includes(role)) return;
+  if (role === "Staff" && authorisedStaff.has(normalizeStaffIdentity(profile?.name))) return;
+  throw httpError("Only authorised checkers can check completed files.", 403);
+}
+
+function fileWasCompletedBy(file = {}, profile = {}) {
+  const checker = [profile.id, profile.auth_user_id, profile.email, profile.name].filter(Boolean);
+  const workers = [file.completedById, file.completedByEmail, file.completedBy, file.workDoneById, file.workDoneByEmail, file.workDoneBy].filter(Boolean);
+  return checker.some((identity) => workers.some((worker) => exactIdentity(identity, worker) || sameStaffIdentity(identity, worker)));
+}
+
+function httpError(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
 }
 
 function validateReassignmentTarget(before = null, incoming = {}) {
@@ -683,4 +769,4 @@ async function deleteFile(fileId, userId, profile = {}) {
   }, userId);
 }
 
-module.exports = { listFiles, upsertFile, returnFileForCorrection, deleteFile, sortFilesForRequest };
+module.exports = { listFiles, upsertFile, markFileChecked, returnFileForCorrection, deleteFile, sortFilesForRequest };

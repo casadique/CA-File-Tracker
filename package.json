@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "import:backup": "node tools/import-backup-to-supabase.js data/site-data.json",
-    "repair:collection-types": "node tools/repair-collection-types.js"
+    "repair:collection-types": "node tools/repair-collection-types.js",
+    "repair:checked-by": "node tools/cleanup-invalid-checking-assignments.js"
   },
   "engines": {
     "node": ">=18"

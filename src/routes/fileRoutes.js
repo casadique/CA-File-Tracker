@@ -1,7 +1,7 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { getAppState } = require("../services/appStateService");
-const { listFiles, upsertFile, returnFileForCorrection, deleteFile } = require("../services/fileService");
+const { listFiles, upsertFile, markFileChecked, returnFileForCorrection, deleteFile } = require("../services/fileService");
 
 const router = express.Router();
 
@@ -27,6 +27,16 @@ router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "
 router.put("/:id", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
     const state = await upsertFile({ ...(req.body.file || req.body), id: req.params.id }, req.user.id, req.profile);
+    const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
+    res.json({ ok: true, file: savedFile, fileNotifications: notificationsForFile(state, req.params.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/check", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
+  try {
+    const state = await markFileChecked(req.params.id, req.body || {}, req.user.id, req.profile);
     const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
     res.json({ ok: true, file: savedFile, fileNotifications: notificationsForFile(state, req.params.id) });
   } catch (error) {
