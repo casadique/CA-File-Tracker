@@ -345,6 +345,7 @@ let lastCentralRefreshAt = 0;
 let centralImportInFlight = false;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
+let dashboardCountsSnapshot = null;
 let lastDashboardScrollAt = 0;
 let dashboardRefreshRenderTimer = null;
 let chatSendInFlight = false;
@@ -1230,6 +1231,7 @@ async function loadStateFromApi() {
     const payload = await apiJson("/api/state");
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
+    dashboardCountsSnapshot = payload.dashboardCounts || null;
     applyCentralState(payload.state, { targetPage: activePage || "dashboard", rerender: true });
     sessionStorage.setItem(API_MODE_KEY, "supabase");
     return true;
@@ -1250,6 +1252,7 @@ async function refreshCentralState(options = {}) {
     const payload = await apiJson("/api/state");
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
+    dashboardCountsSnapshot = payload.dashboardCounts || null;
     const chatOpen = options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open");
     const userIsScrollingDashboard = activePage === "dashboard" && Date.now() - lastDashboardScrollAt < 700;
     applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard });
@@ -2615,6 +2618,18 @@ function visibleFiles() {
   return activeFiles.filter((file) => perm.allFiles || fileBelongsToUser(file, user));
 }
 
+function dashboardFiles() {
+  const seen = new Set();
+  return (state.files || []).filter((file, index) => {
+    if (isRemovedFileRecord(file)) return false;
+    const id = String(file?.id || file?.fileId || file?.file_id || "").trim();
+    const key = id ? `id:${id}` : `row:${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function staffOwnedFiles(user = loggedInUser()) {
   return (state.files || []).filter((file) => !isRemovedFileRecord(file) && (currentFileBelongsToUser(file, user) || reassignmentVisibleToUser(file, user)));
 }
@@ -2627,7 +2642,7 @@ function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
     const haystack = `${file.name} ${file.pan} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
-    if (f.listView === "active" && isCheckedCompleted(file)) return false;
+    if (f.listView === "active" && !isDashboardActiveFile(file)) return false;
     if (f.listView === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
     if (f.listView === "correctionRequired" && !hasOpenCorrection(file)) return false;
@@ -2663,6 +2678,7 @@ function filteredFiles() {
     if (f.dashboardKind === "reportsPrepared" && !file.reportPrepared) return false;
     if (f.dashboardKind === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.dashboardKind === "correctionRequired" && !file.stages?.["Correction Required"]) return false;
+    if (f.dashboardKind === "wipGroup" && !isDashboardWipFile(file)) return false;
     if (f.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
     return true;
   });
@@ -2721,7 +2737,7 @@ function daysUntil(dateString) {
 }
 
 function isOverdue(file) {
-  return !file.filed && daysUntil(file.dueDate) < 0;
+  return Boolean(file?.dueDate && isDashboardActiveFile(file) && daysUntil(file.dueDate) < 0);
 }
 
 function pendingApproval(file) {
@@ -2770,6 +2786,46 @@ function isBillingReadyFile(file) {
 
 function isDisplayCompletedFile(file) {
   return Boolean(isCheckedCompleted(file) && !(isCorrectedCompleted(file) && !isCheckedFile(file)));
+}
+
+function isDashboardActiveFile(file = {}) {
+  return !isDisplayCompletedFile(file);
+}
+
+function isDashboardWipFile(file = {}) {
+  if (!isDashboardActiveFile(file)) return false;
+  const status = dashboardWorkflowStatus(file);
+  return ["Allotted", "WIP", "Work Done", "Client Pending", "Approval Pending"].includes(status);
+}
+
+function dashboardWorkflowStatus(file = {}) {
+  if (hasOpenCorrection(file)) return "Correction Required";
+  if (isCorrectedCompleted(file) && !isCheckedFile(file)) return "Corrected & Completed";
+  if (file.stages?.["Approval Pending"] || pendingApproval(file)) return "Approval Pending";
+  if (file.stages?.["Client Pending"]) return "Client Pending";
+  if (file.workDone || file.stages?.["Work Done"]) return "Work Done";
+  if (file.stages?.WIP) return "WIP";
+  if (file.stages?.Allotted || hasAssignedStaffValue(file.assignedStaff)) return "Allotted";
+  return "Received";
+}
+
+function calculateDashboardCounts(files = dashboardFiles()) {
+  return {
+    totalFiles: files.length,
+    activeFiles: files.filter(isDashboardActiveFile).length,
+    wipFiles: files.filter(isDashboardWipFile).length,
+    completedFiles: files.filter(isDisplayCompletedFile).length,
+    overdueFiles: files.filter(isOverdue).length,
+    notCheckedFiles: files.filter(isNotCheckedFile).length,
+  };
+}
+
+function resolvedDashboardCounts(files = dashboardFiles()) {
+  const local = calculateDashboardCounts(files);
+  const remote = dashboardCountsSnapshot;
+  const keys = Object.keys(local);
+  if (!remote || !keys.every((key) => Number(remote[key]) === Number(local[key]))) return local;
+  return Object.fromEntries(keys.map((key) => [key, Number(remote[key] || 0)]));
 }
 
 function canManageChecking() {
@@ -3799,8 +3855,17 @@ function renderDashboard() {
     bindStaffDashboardPerformance();
     return;
   }
-  const files = visibleFiles();
-  const s = stats(files);
+  const files = dashboardFiles();
+  const counts = resolvedDashboardCounts(files);
+  const s = {
+    ...stats(files),
+    total: counts.totalFiles,
+    active: counts.activeFiles,
+    workInProgress: counts.wipFiles,
+    completed: counts.completedFiles,
+    overdue: counts.overdueFiles,
+    notChecked: counts.notCheckedFiles,
+  };
   const dataNotice = !s.total ? `
     <div class="permission-note">
       No file data is loaded in this browser. Use Admin login > User Management > Restore Backup, or Pull Data from Site if site sync was previously saved.
@@ -3808,7 +3873,7 @@ function renderDashboard() {
   ` : "";
   document.querySelector("#dashboard").innerHTML = `
     ${dataNotice}
-    ${renderModernDashboardShell(s)}
+    ${renderModernDashboardShell(s, files)}
     <section class="panel dashboard-staff-summary-panel">
       <button class="staff-summary-toggle" id="staffSummaryToggle" type="button">
         <span>Staff-Wise File Summary</span>
@@ -4019,11 +4084,11 @@ function navItemActive(id, fileViews) {
 }
 
 function navBadgeCounts() {
-  const files = visibleFiles();
+  const files = isStaffLogin() ? visibleFiles() : dashboardFiles();
   const currentFiles = isStaffLogin() ? files.filter((file) => currentFileBelongsToUser(file, loggedInUser())) : files;
   return {
     myTask: currentFiles.filter((file) => !isCheckedCompleted(file)).length,
-    active: currentFiles.filter((file) => !isCheckedCompleted(file)).length,
+    active: currentFiles.filter(isDashboardActiveFile).length,
     notChecked: currentFiles.filter(isNotCheckedFile).length,
     correctionRequired: currentFiles.filter(hasOpenCorrection).length,
     reAssigned: files.filter((file) => isReassignedFile(file) && (!isStaffLogin() || reassignmentVisibleToUser(file, loggedInUser()))).length,
@@ -4131,8 +4196,7 @@ function metric(label, value, note, className, filterKey = "") {
   return `<button class="metric-card ${className}" data-dashboard-filter="${filterKey}"><span>${label}</span><strong>${value}</strong><p>${note}</p></button>`;
 }
 
-function renderModernDashboardShell(s) {
-  const files = visibleFiles();
+function renderModernDashboardShell(s, files = dashboardFiles()) {
   const financials = dashboardFinancials();
   const today = indiaTodayDate();
   const userName = loggedInUser()?.name || state.currentUser || "CA Sadique";
@@ -4153,9 +4217,9 @@ function renderModernDashboardShell(s) {
         </div>
       </div>
       <div class="dashboard-kpi-grid">
-        ${dashboardKpiCard("Total Active Files", s.total, "All visible records", "active", "folder", "all", dashboardTrendValues("total"))}
-        ${dashboardKpiCard("Files Received", dashboardFilesReceivedToday(files), "Received today", "received", "file", "all", dashboardTrendValues("received"), false, false, dashboardActivityIndicator("received", files))}
-        ${dashboardKpiCard("Work in Progress", s.workInProgress, "Currently under work", "wip", "task", "wip", dashboardTrendValues("wip"), false, false, dashboardActivityIndicator("wip", files))}
+        ${dashboardKpiCard("Total Files", s.total, "All File List records", "active", "folder", "all", dashboardTrendValues("total"))}
+        ${dashboardKpiCard("Active Files", s.active, "Open and pending files", "received", "file", "active", dashboardTrendValues("active"))}
+        ${dashboardKpiCard("WIP Files", s.workInProgress, "Allotted and under work", "wip", "task", "wipGroup", dashboardTrendValues("wip"), false, false, dashboardActivityIndicator("wip", files))}
         ${dashboardKpiCard("Completed Files", s.completed, "Marked completed", "completed", "check", "completed", dashboardTrendValues("completed"), false, false, dashboardActivityIndicator("completed", files))}
         ${dashboardKpiCard("Overdue Files", s.overdue, "Needs immediate follow-up", "overdue", "pending", "overdue", dashboardTrendValues("overdue"), true, false, dashboardActivityIndicator("overdue", files))}
         ${dashboardKpiCard("Not Checked", s.notChecked, "Awaiting checking", "notchecked", "report", "notChecked", dashboardTrendValues("notChecked"), true)}
@@ -4199,7 +4263,7 @@ function dashboardKpiCard(title, value, note, tone, icon, filterKey, trendValues
   </button>`;
 }
 
-function dashboardActivityIndicator(kind, files = visibleFiles()) {
+function dashboardActivityIndicator(kind, files = dashboardFiles()) {
   const today = indiaTodayDate();
   const yesterdayDate = new Date(`${today}T00:00:00+05:30`);
   yesterdayDate.setDate(yesterdayDate.getDate() - 1);
@@ -4242,7 +4306,7 @@ function dashboardActivityIndicator(kind, files = visibleFiles()) {
 }
 
 function dashboardFinancials() {
-  const files = visibleFiles();
+  const files = dashboardFiles();
   const today = indiaTodayDate();
   const totalBilled = files.filter(isBilledFile).reduce((sum, file) => sum + dashboardFileAmount(file, "billed"), 0);
   const feeReceived = files.filter((file) => file.feeReceived).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
@@ -4270,7 +4334,7 @@ function dashboardFileAmount(file, kind = "billed") {
   return kind === "received" ? received : billed;
 }
 
-function dashboardFilesReceivedToday(files = visibleFiles()) {
+function dashboardFilesReceivedToday(files = dashboardFiles()) {
   const today = indiaTodayDate();
   return files.filter((file) => (file.fileReceivedDate || file.createdAt || "").slice(0, 10) === today).length;
 }
@@ -4281,10 +4345,11 @@ function dashboardTrendValues(kind) {
     const date = new Date(today);
     date.setDate(today.getDate() - (6 - index));
     const iso = dateInput(date);
-    const files = visibleFiles();
+    const files = dashboardFiles();
+    if (kind === "active") return files.filter(isDashboardActiveFile).length;
     if (kind === "received") return files.filter((file) => file.fileReceivedDate === iso).length;
     if (kind === "completed") return files.filter((file) => workCompletedDate(file) === iso || file.lastUpdatedDate === iso && isCheckedCompleted(file)).length;
-    if (kind === "wip") return files.filter((file) => file.stages?.WIP && !isCheckedCompleted(file) && (file.workStartedDate || file.lastUpdatedDate || "") <= iso).length;
+    if (kind === "wip") return files.filter((file) => isDashboardWipFile(file) && (file.workStartedDate || file.lastUpdatedDate || file.fileReceivedDate || "") <= iso).length;
     if (kind === "overdue") return files.filter((file) => file.dueDate && file.dueDate < iso && !isCheckedCompleted(file)).length;
     if (kind === "notChecked") return files.filter(isNotCheckedFile).length;
     if (kind === "billed") return files.filter((file) => file.billedDate === iso).length;
@@ -4318,10 +4383,10 @@ function renderFilesByStatusCard(files) {
   </section>`;
 }
 
-function dashboardStatusRows(files = visibleFiles()) {
+function dashboardStatusRows(files = dashboardFiles()) {
   return [
-    { label: "Received", count: files.filter((file) => stageIndex(file) === 0 && !isCheckedCompleted(file)).length, color: "#2563eb" },
-    { label: "Work in Progress", count: files.filter((file) => stageIndex(file) > 0 && !isCheckedCompleted(file)).length, color: "#f59e0b" },
+    { label: "Received", count: files.filter((file) => isDashboardActiveFile(file) && !isDashboardWipFile(file) && !hasOpenCorrection(file)).length, color: "#2563eb" },
+    { label: "Work in Progress", count: files.filter(isDashboardWipFile).length, color: "#f59e0b" },
     { label: "Completed", count: files.filter(isDisplayCompletedFile).length, color: "#3b82f6" },
     { label: "Not Checked", count: files.filter(isNotCheckedFile).length, color: "#06b6d4" },
     { label: "Returned", count: files.filter((file) => file.stages?.["Correction Required"]).length, color: "#ef4444" },
@@ -4711,6 +4776,7 @@ function openFilesFromDashboard(kind) {
   if (kind === "all") state.filters.listView = "";
   if (kind === "notStarted") state.filters.workflow = "Received";
   if (kind === "wip") state.filters.workflow = "WIP";
+  if (kind === "wipGroup") state.filters.dashboardKind = "wipGroup";
   if (kind === "onHold") state.filters.workflow = "On Hold";
   if (kind === "clientPending") state.filters.workflow = "Client Pending";
   if (kind === "workDone") state.filters.workflow = "Work Done";

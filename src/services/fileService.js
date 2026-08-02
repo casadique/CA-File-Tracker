@@ -5,6 +5,13 @@ const {
   canonicalServiceType,
   isRetiredCombinedRegistration,
 } = require("../constants/serviceTypes");
+const {
+  hasOpenCorrection,
+  isActiveFile,
+  isDisplayCompletedFile,
+  isNotCheckedFile,
+  isRemovedFile,
+} = require("./fileViewRules");
 
 const WORKFLOW_STAGES = [
   "Received",
@@ -33,10 +40,10 @@ function sortFilesForRequest(files, options = {}) {
   let rows = [...files];
   if (listView === "removed") rows = rows.filter(isRemovedFile);
   else rows = rows.filter((file) => !isRemovedFile(file));
-  if (listView === "completed") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !(isCorrectedCompleted(file) && !isCheckedFile(file)));
-  if (listView === "active") rows = rows.filter((file) => !isCompletedFile(file) || hasOpenCorrection(file));
+  if (listView === "completed") rows = rows.filter(isDisplayCompletedFile);
+  if (listView === "active") rows = rows.filter(isActiveFile);
   if (listView === "correctionRequired") rows = rows.filter(hasOpenCorrection);
-  if (listView === "notChecked") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !file.checkedBy);
+  if (listView === "notChecked") rows = rows.filter(isNotCheckedFile);
   if (listView === "feeReceived") rows = rows.filter((file) => file.feeReceived);
   if (sortField === "assigned_at") return sortFilesByDate(rows, fileAssignmentDateValue, direction, fileReceivedDateValue);
   if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileCreatedTime);
@@ -47,12 +54,6 @@ function sortFilesForRequest(files, options = {}) {
   if (listView === "feeReceived") return [...rows].sort(sortFeeReceivedDesc);
   if (listView === "removed") return sortFilesByDate(rows, removedTime, "desc", fileCreatedTime);
   return sortFilesNewestFirst(rows);
-}
-
-function isRemovedFile(file = {}) {
-  return Boolean(file.is_removed || file.isRemoved)
-    || String(file.status || file.workflowStatus || "").trim().toLowerCase() === "removed"
-    || Boolean(file.stages?.Removed);
 }
 
 function removedTime(file = {}) {
@@ -157,27 +158,6 @@ function dateOrNumber(value) {
   if (!value) return 0;
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function isCompletedFile(file = {}) {
-  return Boolean(file.filed || file.stages?.Completed);
-}
-
-function hasOpenCorrection(file = {}) {
-  const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
-  if (isCorrectedCompleted(file)) return false;
-  return Boolean(file.stages?.["Correction Required"])
-    || ["correction required", "correction in progress", "returned again", "returned for correction"].includes(status);
-}
-
-function isCorrectedCompleted(file = {}) {
-  const status = String(file.correctionStatus || file.correction_status || "").trim().toLowerCase();
-  return Boolean(file.stages?.["Corrected & Completed"] || file.stages?.corrected_completed)
-    || ["corrected & completed", "corrected and completed", "corrected_completed", "resubmitted for checking"].includes(status);
-}
-
-function isCheckedFile(file = {}) {
-  return Boolean(file.checkedBy || file.checkedDate);
 }
 
 function latestCorrection(file = {}) {

@@ -3,6 +3,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { getAppState, getAppStateRecord, saveAppState, backupPayload } = require("../services/appStateService");
 const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
+const { calculateDashboardCounts } = require("../services/fileViewRules");
 
 const router = express.Router();
 
@@ -11,6 +12,9 @@ router.get("/", requireAuth, async (req, res, next) => {
     const record = await getAppStateRecord();
     res.json({
       state: stateForProfile(record.state, req.profile, req.user.id),
+      dashboardCounts: ["Admin", "Manager"].includes(req.profile?.role)
+        ? calculateDashboardCounts(record.state.files || [])
+        : null,
       updatedAt: record.updatedAt,
       profile: req.profile,
     });
