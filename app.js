@@ -4839,6 +4839,16 @@ function removedFileRows(files) {
   }));
 }
 
+function removedFilesReportHeading() {
+  const from = state.filters.removedFrom || "";
+  const to = state.filters.removedTo || "";
+  let period = "Period: All Dates";
+  if (from && to) period = `Period: ${displayDate(from)} to ${displayDate(to)}`;
+  else if (from) period = `Period: From ${displayDate(from)}`;
+  else if (to) period = `Period: Up to ${displayDate(to)}`;
+  return ["Muhammad & Associates", "Chartered Accountants", period, "Removed Files Report"];
+}
+
 function removedFileUser(file = {}) {
   const value = String(file.removedBy || file.removed_by || "").trim();
   return !value || /^(unknown|imported record)$/i.test(value) ? "Chindu" : value;
@@ -4911,9 +4921,9 @@ function renderRemovedFilesPage() {
     if (input) input.oninput = input.onchange = () => { state.filters[key] = input.value; state.filters.removedPage = 1; saveState(); renderRemovedFilesPage(); };
   });
   document.querySelector("#clearRemovedFilters").onclick = () => { ["removedSearch", "removedFrom", "removedTo", "removedFy"].forEach((key) => state.filters[key] = ""); state.filters.removedPage = 1; saveState(); renderRemovedFilesPage(); };
-  document.querySelector("#exportRemovedExcel").onclick = () => downloadXlsxRows(`removed-files-${todayDate()}`, removedFileRows(allRows));
-  document.querySelector("#exportRemovedPdf").onclick = () => downloadPdfRows(`removed-files-${todayDate()}`, removedFileRows(allRows), "Removed Files");
-  document.querySelector("#printRemoved").onclick = () => printReport(`removed-files-${todayDate()}`, removedFileRows(allRows), "Removed Files");
+  document.querySelector("#exportRemovedExcel").onclick = () => downloadXlsxRows(`removed-files-${todayDate()}`, removedFileRows(allRows), removedFilesReportHeading());
+  document.querySelector("#exportRemovedPdf").onclick = () => downloadPdfRows(`removed-files-${todayDate()}`, removedFileRows(allRows), removedFilesReportHeading());
+  document.querySelector("#printRemoved").onclick = () => printReport(`removed-files-${todayDate()}`, removedFileRows(allRows), removedFilesReportHeading());
   document.querySelector("#refreshRemoved").onclick = async () => {
     const button = document.querySelector("#refreshRemoved");
     if (button?.disabled) return;
