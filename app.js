@@ -4076,10 +4076,10 @@ function renderModernDashboardShell(s) {
       </div>
       <div class="dashboard-kpi-grid">
         ${dashboardKpiCard("Total Active Files", s.total, "All visible records", "active", "folder", "all", dashboardTrendValues("total"))}
-        ${dashboardKpiCard("Files Received", dashboardFilesReceivedToday(files), "Received today", "received", "file", "all", dashboardTrendValues("received"))}
-        ${dashboardKpiCard("Work in Progress", s.workInProgress, "Currently under work", "wip", "task", "wip", dashboardTrendValues("wip"))}
-        ${dashboardKpiCard("Completed Files", s.completed, "Marked completed", "completed", "check", "completed", dashboardTrendValues("completed"))}
-        ${dashboardKpiCard("Overdue Files", s.overdue, "Needs immediate follow-up", "overdue", "pending", "overdue", dashboardTrendValues("overdue"), true)}
+        ${dashboardKpiCard("Files Received", dashboardFilesReceivedToday(files), "Received today", "received", "file", "all", dashboardTrendValues("received"), false, false, dashboardActivityIndicator("received", files))}
+        ${dashboardKpiCard("Work in Progress", s.workInProgress, "Currently under work", "wip", "task", "wip", dashboardTrendValues("wip"), false, false, dashboardActivityIndicator("wip", files))}
+        ${dashboardKpiCard("Completed Files", s.completed, "Marked completed", "completed", "check", "completed", dashboardTrendValues("completed"), false, false, dashboardActivityIndicator("completed", files))}
+        ${dashboardKpiCard("Overdue Files", s.overdue, "Needs immediate follow-up", "overdue", "pending", "overdue", dashboardTrendValues("overdue"), true, false, dashboardActivityIndicator("overdue", files))}
         ${dashboardKpiCard("Not Checked", s.notChecked, "Awaiting checking", "notchecked", "report", "notChecked", dashboardTrendValues("notChecked"), true)}
         ${dashboardKpiCard("Total Billed", financials.totalBilled, "Billable amount", "billed", "invoice", "billed", dashboardTrendValues("billed"), false, true)}
         ${dashboardKpiCard("Fee Received", financials.feeReceived, "Collected fees", "receivedfee", "rupee", "billed", dashboardTrendValues("feeReceived"), false, true)}
@@ -4102,11 +4102,11 @@ function renderModernDashboardShell(s) {
   `;
 }
 
-function dashboardKpiCard(title, value, note, tone, icon, filterKey, trendValues = [], adverse = false, currency = false) {
+function dashboardKpiCard(title, value, note, tone, icon, filterKey, trendValues = [], adverse = false, currency = false, activity = null) {
   const numeric = Number(value || 0);
-  const trend = trendValues.length > 1 ? trendValues[trendValues.length - 1] - trendValues[0] : 0;
-  const trendClass = adverse ? (trend <= 0 ? "positive" : "negative") : (trend >= 0 ? "positive" : "negative");
-  const trendSymbol = trend >= 0 ? "up" : "down";
+  const activityMarkup = activity
+    ? `<span class="kpi-activity ${activity.count > 0 && adverse ? "negative" : "neutral"}" title="${escapeHtml(activity.tooltip)}">${escapeHtml(activity.label)}</span>`
+    : "";
   return `<button class="dashboard-kpi-card kpi-${tone}" data-dashboard-filter="${filterKey}">
     <div class="dashboard-kpi-top">
       <span class="dashboard-kpi-icon">${navIcon(icon)}</span>
@@ -4114,11 +4114,53 @@ function dashboardKpiCard(title, value, note, tone, icon, filterKey, trendValues
     </div>
     <strong class="${numeric < 0 ? "negative-amount" : ""}">${currency ? rupee(numeric) : numeric.toLocaleString("en-IN")}</strong>
     <div class="dashboard-kpi-meta">
-      <span class="kpi-trend ${trendClass}">${trendSymbol === "up" ? "&uarr;" : "&darr;"} ${Math.abs(trend).toLocaleString("en-IN")}</span>
+      ${activityMarkup}
       <small>${escapeHtml(note)}</small>
     </div>
     ${miniTrendSvg(trendValues, tone)}
   </button>`;
+}
+
+function dashboardActivityIndicator(kind, files = visibleFiles()) {
+  const today = indiaTodayDate();
+  const yesterdayDate = new Date(`${today}T00:00:00+05:30`);
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterday = dateInput(yesterdayDate);
+  const activity = {
+    received: {
+      count: files.filter((file) => normalizeImportDate(file.fileReceivedDate || file.createdAt) === today).length,
+      singular: "file received today",
+      plural: "files received today",
+      zero: "No files received today",
+    },
+    wip: {
+      count: files.filter((file) => file.stages?.WIP && normalizeImportDate(file.workStartedDate || file.wipAt || file.wip_at) === today).length,
+      singular: "file moved to WIP today",
+      plural: "files moved to WIP today",
+      zero: "No files moved to WIP today",
+    },
+    completed: {
+      count: files.filter((file) => normalizeImportDate(workCompletedDate(file)) === today).length,
+      singular: "file completed today",
+      plural: "files completed today",
+      zero: "No files completed today",
+    },
+    overdue: {
+      count: files.filter((file) => normalizeImportDate(file.dueDate) === yesterday && !isCheckedCompleted(file)).length,
+      singular: "file became overdue today",
+      plural: "files became overdue today",
+      zero: "No files became overdue today",
+    },
+  }[kind];
+  if (!activity) return null;
+  const label = activity.count === 0
+    ? activity.zero
+    : `${activity.count.toLocaleString("en-IN")} ${activity.count === 1 ? activity.singular : activity.plural}`;
+  return {
+    count: activity.count,
+    label,
+    tooltip: `${label}. Based on records dated ${displayDate(today)} in the central database.`,
+  };
 }
 
 function dashboardFinancials() {

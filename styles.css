@@ -8627,6 +8627,19 @@ body,
   color: var(--dash-red);
 }
 
+.kpi-activity {
+  min-width: 0;
+  color: #475569;
+  font-size: 10.5px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.kpi-activity.negative {
+  color: var(--dash-red);
+}
+
 .dashboard-mini-trend {
   width: 100%;
   height: 22px;
