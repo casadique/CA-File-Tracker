@@ -5676,11 +5676,11 @@ function renderFileTable(files) {
   const assignedColumnLabel = isCompletedView ? "Done By" : "Assigned Staff";
   const managerCheckingColumns = canManageChecking() && isCompletedView;
   const headerRow = isCompletedView
-    ? `<th>SN</th><th>Client Name</th><th>FY</th><th>Service Type</th><th>${dateColumnLabel}</th><th>${assignedColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
+    ? `<th>SN</th><th class="completed-client-column">Client Name</th><th class="completed-fy-column">FY</th><th>Service Type</th><th>${dateColumnLabel}</th><th>${assignedColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
     : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
   return `
     <div class="table-wrap file-table-wrap">
-      <table class="file-table${compactClass}">
+      <table class="file-table${compactClass}${isCompletedView ? " completed-files-table" : ""}">
         <thead><tr>
           ${headerRow}
         </tr></thead>
@@ -5692,8 +5692,8 @@ function renderFileTable(files) {
             const receiptInfo = receiptSummary(file);
             const completedCells = `
               <td>${fileSerialNumber(file, index)}</td>
-              <td class="client-details-cell">${clientDetailsCell(file)}</td>
-              <td>${escapeHtml(fileFy(file) || "-")}</td>
+              <td class="client-details-cell completed-client-column">${clientDetailsCell(file)}</td>
+              <td class="completed-fy-column">${escapeHtml(fileFy(file) || "-")}</td>
               <td>${escapeHtml(file.serviceType || "")}</td>
               <td class="completed-doc-cell">${fmt(dateValue)}</td>
               <td class="completed-staff-cell">${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}${receiptInfo}</td>

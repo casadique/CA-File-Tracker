@@ -3826,6 +3826,20 @@ textarea {
   line-height: 1.25;
 }
 
+.completed-files-table .completed-client-column {
+  width: 28%;
+  min-width: 220px;
+  max-width: 340px;
+}
+
+.completed-files-table .completed-fy-column {
+  width: 118px;
+  min-width: 110px;
+  max-width: 130px;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .completed-careof-cell {
   width: 110px;
   max-width: 110px;
