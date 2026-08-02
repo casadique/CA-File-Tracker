@@ -34,6 +34,7 @@ const stages = [
   "Completed",
   "Correction Required",
   "Corrected & Completed",
+  "Removed",
   "Billed",
 ];
 
@@ -1051,6 +1052,17 @@ async function markFileCheckedInApi(fileId, checkingRemarks) {
     method: "POST",
     body: JSON.stringify({ checkingRemarks }),
   });
+}
+
+async function removeFileInApi(fileId, removalReason, file = null) {
+  return apiJson(`/api/files/${encodeURIComponent(fileId)}/remove`, {
+    method: "POST",
+    body: JSON.stringify({ removalReason, ...(file ? { file } : {}) }),
+  });
+}
+
+async function restoreRemovedFileInApi(fileId) {
+  return apiJson(`/api/files/${encodeURIComponent(fileId)}/restore`, { method: "POST" });
 }
 
 async function syncFileDeleteToApi(fileId) {
@@ -2539,13 +2551,21 @@ function exactStaffIdentity(left, right) {
 function visibleFiles() {
   const perm = rolePerm();
   const user = loggedInUser();
-  if (["Admin", "Manager"].includes(state.currentRole)) return state.files || [];
+  if (state.filters.listView === "removed" && ["Admin", "Manager"].includes(normalizeRole(state.currentRole))) {
+    return (state.files || []).filter(isRemovedFileRecord);
+  }
+  const activeFiles = (state.files || []).filter((file) => !isRemovedFileRecord(file));
+  if (["Admin", "Manager"].includes(state.currentRole)) return activeFiles;
   if (state.currentRole === "Staff") return staffOwnedFiles(user);
-  return state.files.filter((file) => perm.allFiles || fileBelongsToUser(file, user));
+  return activeFiles.filter((file) => perm.allFiles || fileBelongsToUser(file, user));
 }
 
 function staffOwnedFiles(user = loggedInUser()) {
-  return (state.files || []).filter((file) => currentFileBelongsToUser(file, user) || reassignmentVisibleToUser(file, user));
+  return (state.files || []).filter((file) => !isRemovedFileRecord(file) && (currentFileBelongsToUser(file, user) || reassignmentVisibleToUser(file, user)));
+}
+
+function isRemovedFileRecord(file = {}) {
+  return Boolean(file.is_removed || file.isRemoved || file.status === "Removed" || file.workflowStatus === "Removed" || file.stages?.Removed);
 }
 
 function filteredFiles() {
@@ -3549,6 +3569,7 @@ function renderNav() {
     "billed-files": "billed",
     "fee-pending": "feePending",
     "fee-received": "feeReceived",
+    "removed-files": "removed",
   };
   const counts = navBadgeCounts();
   const groups = navGroupDefinitions()
@@ -3899,6 +3920,7 @@ function navGroupDefinitions() {
       navItem("correction-required-files", "pending", "Correction Required", "correctionRequired"),
       navItem("re-assigned-files", "users", "Re Assigned Files", "reAssigned"),
       navItem("completed-files", "check", "Completed Files", "completed"),
+      ...(["Admin", "Manager"].includes(normalizeRole(state.currentRole)) ? [navItem("removed-files", "trash", "Removed Files", "removed")] : []),
     ] },
     { key: "billing", label: "Billing Status", collapsible: true, items: [
       navItem("non-billed-files", "receipt", "Non-Billed Files", "nonBilled"),
@@ -4675,6 +4697,7 @@ function resetFiltersKeepingCurrentFileModule() {
 
 function renderFilesPage() {
   if (isStaffLogin()) return renderStaffFilesPage();
+  if (state.filters.listView === "removed") return renderRemovedFilesPage();
   if (!state.filters.receivedSort) state.filters.receivedSort = "Newest First";
   const files = sortFilesForDisplay(filteredFiles());
   document.querySelector("#files").innerHTML = `
@@ -4698,7 +4721,7 @@ function renderFilesPage() {
         ${selectFilter("priority", "Priority", ["", "Low", "Medium", "High", "Urgent"])}
         ${selectFilter("billing", "Billing", ["", "Billed", "Unbilled"])}
         ${state.filters.listView === "completed" ? selectFilter("checkingStatus", "Checking Status", ["", "Not Checked", "Checked", "Returned for Correction"]) : ""}
-        ${inputFilter("pan", "PAN / Regn Number", "PAN or Regn")}
+        ${inputFilter("pan", "PAN/Reg No", "PAN or Regn")}
         ${selectFilter("overdue", "Overdue Files", ["", "Yes"])}
         ${selectFilter("pendingApproval", "Approval Pending", ["", "Yes"])}
         ${isStaffLogin() ? inputFilter("fileFrom", "From", "", "date") : ""}
@@ -4744,6 +4767,117 @@ function renderFilesPage() {
   const exportFilteredPdf = document.querySelector("#exportFilteredPdf");
   if (exportFilteredPdf) exportFilteredPdf.onclick = () => exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportFilteredPdf);
   bindFileActions();
+}
+
+function removedFileRows(files) {
+  return files.map((file, index) => ({
+    SN: index + 1,
+    "Client Name": file.name || "",
+    "PAN/Reg No": file.pan || "Not Entered",
+    FY: file.fy || "",
+    "C/o": file.careOf || "Direct",
+    "Removed On": formatDateTime(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || ""),
+    Reason: file.removal_reason || file.removalReason || "",
+    "Removed By": file.removedBy || file.removed_by || "",
+  }));
+}
+
+function renderRemovedFilesPage() {
+  if (!["Admin", "Manager"].includes(normalizeRole(state.currentRole))) {
+    activePage = "dashboard";
+    return renderAll();
+  }
+  const search = String(state.filters.removedSearch || "").trim().toLowerCase();
+  const from = state.filters.removedFrom || "";
+  const to = state.filters.removedTo || "";
+  const fy = state.filters.removedFy || "";
+  const allRows = (state.files || [])
+    .filter(isRemovedFileRecord)
+    .filter((file) => {
+      const removedDate = normalizeImportDate(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || "");
+      const haystack = `${file.name || ""} ${file.pan || ""} ${file.fy || ""} ${file.careOf || ""} ${file.removal_reason || file.removalReason || ""} ${file.removedBy || file.removed_by || ""}`.toLowerCase();
+      if (search && !haystack.includes(search)) return false;
+      if (from && removedDate < from) return false;
+      if (to && removedDate > to) return false;
+      if (fy && file.fy !== fy) return false;
+      return true;
+    })
+    .sort((a, b) => Date.parse(b.removed_at || b.removedAt || b.checkedAt || b.checkedDate || 0) - Date.parse(a.removed_at || a.removedAt || a.checkedAt || a.checkedDate || 0));
+  const pageSize = 25;
+  const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+  const page = Math.min(Math.max(1, Number(state.filters.removedPage || 1)), totalPages);
+  state.filters.removedPage = page;
+  const rows = allRows.slice((page - 1) * pageSize, page * pageSize);
+  const fyOptions = [...new Set((state.files || []).filter(isRemovedFileRecord).map((file) => file.fy).filter(Boolean))].sort().reverse();
+  document.querySelector("#files").innerHTML = `
+    <div class="panel removed-files-panel">
+      <div class="filter-hero"><div><h3>Removed Files</h3><p class="small-muted">Files removed by authorised users. Removal history remains preserved.</p></div><span>${allRows.length} File(s)</span></div>
+      <div class="filters colourful-filters">
+        ${inputFilter("removedSearch", "Search", "Client, PAN/Reg No, reason or remover")}
+        ${inputFilter("removedFrom", "Removed From", "", "date")}
+        ${inputFilter("removedTo", "Removed To", "", "date")}
+        ${selectFilter("removedFy", "FY", ["", ...fyOptions])}
+      </div>
+      <div class="action-row" style="margin-bottom:14px">
+        <button class="secondary-button" id="clearRemovedFilters">Clear Filters</button>
+        <button class="secondary-button file-action-button file-action-excel" id="exportRemovedExcel">${navIcon("spreadsheet")}Export Excel</button>
+        <button class="secondary-button file-action-button file-action-pdf" id="exportRemovedPdf">${navIcon("pdf")}Export PDF</button>
+        <button class="secondary-button" id="printRemoved">${navIcon("print")}Print</button>
+        <button class="secondary-button" id="refreshRemoved">${navIcon("refresh")}Refresh</button>
+      </div>
+      <div class="table-wrap file-table-wrap">
+        <table class="file-table file-table-compact">
+          <thead><tr><th>SN</th><th>Client Name</th><th>PAN/Reg No</th><th>FY</th><th>C/o</th><th>Removed On</th><th>Reason</th><th>Actions</th></tr></thead>
+          <tbody>${rows.map((file, index) => `<tr>
+            <td>${(page - 1) * pageSize + index + 1}</td>
+            <td>${escapeHtml(file.name || "")}</td><td>${escapeHtml(file.pan || "Not Entered")}</td><td>${escapeHtml(file.fy || "-")}</td><td>${escapeHtml(file.careOf || "Direct")}</td>
+            <td title="Removed by ${escapeHtml(file.removedBy || file.removed_by || "Unknown")}">${escapeHtml(formatDateTime(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || ""))}<span class="subtext">By ${escapeHtml(file.removedBy || file.removed_by || "Unknown")}</span></td>
+            <td>${escapeHtml(file.removal_reason || file.removalReason || "-")}</td>
+            <td><button class="mini-button" data-restore-removed="${file.id}">Take Back</button></td>
+          </tr>`).join("") || `<tr><td colspan="8">${empty("No removed files match these filters.")}</td></tr>`}</tbody>
+        </table>
+      </div>
+      <div class="pagination"><button class="secondary-button" id="removedPrev" ${page <= 1 ? "disabled" : ""}>Previous</button><span>Page ${page} of ${totalPages}</span><button class="secondary-button" id="removedNext" ${page >= totalPages ? "disabled" : ""}>Next</button></div>
+    </div>`;
+  ["removedSearch", "removedFrom", "removedTo", "removedFy"].forEach((key) => {
+    const input = document.querySelector(`[name='${key}']`);
+    if (input) input.oninput = input.onchange = () => { state.filters[key] = input.value; state.filters.removedPage = 1; saveState(); renderRemovedFilesPage(); };
+  });
+  document.querySelector("#clearRemovedFilters").onclick = () => { ["removedSearch", "removedFrom", "removedTo", "removedFy"].forEach((key) => state.filters[key] = ""); state.filters.removedPage = 1; saveState(); renderRemovedFilesPage(); };
+  document.querySelector("#exportRemovedExcel").onclick = () => downloadXlsxRows(`removed-files-${todayDate()}`, removedFileRows(allRows));
+  document.querySelector("#exportRemovedPdf").onclick = () => downloadPdfRows(`removed-files-${todayDate()}`, removedFileRows(allRows), "Removed Files");
+  document.querySelector("#printRemoved").onclick = () => printReport(`removed-files-${todayDate()}`, removedFileRows(allRows), "Removed Files");
+  document.querySelector("#refreshRemoved").onclick = async () => {
+    const button = document.querySelector("#refreshRemoved");
+    if (button?.disabled) return;
+    if (button) button.disabled = true;
+    try {
+      await refreshCentralState({ force: true });
+      renderRemovedFilesPage();
+    } finally {
+      if (button?.isConnected) button.disabled = false;
+    }
+  };
+  document.querySelector("#removedPrev").onclick = () => { state.filters.removedPage = page - 1; renderRemovedFilesPage(); };
+  document.querySelector("#removedNext").onclick = () => { state.filters.removedPage = page + 1; renderRemovedFilesPage(); };
+  document.querySelectorAll("[data-restore-removed]").forEach((button) => button.onclick = () => takeBackRemovedFile(button.dataset.restoreRemoved, button));
+}
+
+async function takeBackRemovedFile(fileId, button) {
+  if (!window.confirm("This file will be restored to the File List and Active Files with status Not Assigned. Do you want to continue?")) return;
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await restoreRemovedFileInApi(fileId);
+    if (result?.files) state.files = result.files;
+    else if (result?.file) state.files = state.files.map((file) => file.id === result.file.id ? result.file : file);
+    saveState({ skipMerge: true, skipRemote: true });
+    toast("File restored successfully and moved to Active Files as Not Assigned.");
+    renderAfterFileMutation();
+  } catch (error) {
+    toast(error.message || "Unable to restore this file.");
+    if (button) button.disabled = false;
+  }
 }
 
 function renderStaffFilesPage() {
@@ -6646,8 +6780,8 @@ function openFileDrawer(id) {
     </div>
     <form id="fileForm" class="drawer-body">
       <div class="two-col">
-        ${formField("name", "Name", file.name)}
-        ${formField("pan", "PAN / Regn Number", file.pan)}
+        ${formField("name", "Client Name", file.name)}
+        ${formField("pan", "PAN/Reg No", file.pan)}
         ${serviceField(file.serviceType)}
         ${careOfField(file.careOf || "Direct")}
         ${fyField(file.fy || "NA")}
@@ -6655,7 +6789,7 @@ function openFileDrawer(id) {
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
         ${workflowStatusField(file)}
         ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile)}
-        ${formField("workAllotmentDate", "Allotted On", file.workAllotmentDate || "", "date", false)}
+        ${formField("workAllotmentDate", "Work Allotment Date", file.workAllotmentDate || "", "date", false)}
         ${formField("dueDate", "Due Date", file.dueDate, "date")}
         ${selectField("priority", "Priority", ["Low", "Medium", "High", "Urgent"], file.priority)}
         ${staffAssignField("reAssignedStaff", "Re Assigned", "", !canAssignThisFile, true, true, {
@@ -6878,7 +7012,10 @@ function assignableStaffNames(currentValue = "") {
     .filter((user) => user.isActive !== false && user.is_active !== false)
     .filter((user) => !isRemovedStaff(user.name))
     .map((user) => user.name);
-  return dedupeByNormalizedText([currentValue, ...names].filter((name) => name && String(name).trim().toLowerCase() !== "not assigned"));
+  return dedupeByNormalizedText([currentValue, ...names].filter((name) => {
+    const normalized = String(name || "").trim().toLowerCase();
+    return normalized && normalized !== "not assigned" && normalized !== "not started";
+  }));
 }
 
 function serviceField(value) {
@@ -6974,12 +7111,14 @@ function resolveAssignedStaff(selectedValue, inputId = "assignedStaffNewInput", 
 function visibleWorkflowStages(file) {
   return stages.filter((stage) => {
     if (stage === "Billed") return false;
+    if (stage === "Removed" && !["Admin", "Manager"].includes(normalizeRole(state.currentRole))) return false;
     if (isStaffLogin() && !isSpecialFileCreator() && ["Received", "Allotted", "Billed"].includes(stage)) return false;
     return true;
   }).sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
 }
 
 function currentWorkflowStage(file = {}) {
+  if (isRemovedFileRecord(file)) return "Removed";
   const normalized = normalizeStages(file);
   if (isCorrectedCompleted({ ...file, stages: normalized }) && !isCheckedFile(file)) return "Corrected & Completed";
   const selected = stages.filter((stage) => stage !== "Billed" && normalized[stage]).pop();
@@ -7049,7 +7188,36 @@ async function saveFileFromDrawer() {
   const data = new FormData(form);
   const existingStages = normalizeStages(existingFile || {});
   const originalWorkflowStatus = existingFile ? currentWorkflowStage(existingFile) : "Received";
-  const selectedWorkflowStatus = data.get("workflowStatus") || originalWorkflowStatus || "Received";
+  let selectedWorkflowStatus = data.get("workflowStatus") || originalWorkflowStatus || "Received";
+  let pendingNewRemovalReason = "";
+  if (selectedWorkflowStatus === "Removed") {
+    const removalReason = window.prompt("Enter the mandatory reason for removing this file:", "")?.trim() || "";
+    if (!removalReason) {
+      restoreSaveFileButton(saveButton);
+      return toast("Removal reason is required.");
+    }
+    if (!window.confirm("This file will be moved to Removed Files. Do you want to continue?")) {
+      restoreSaveFileButton(saveButton);
+      return;
+    }
+    if (!existingFile) {
+      pendingNewRemovalReason = removalReason;
+      selectedWorkflowStatus = "Received";
+    } else try {
+      const result = await removeFileInApi(existingFile.id, removalReason);
+      if (result?.files) state.files = result.files;
+      else if (result?.file) state.files = state.files.map((file) => file.id === result.file.id ? result.file : file);
+      state.filters.listView = "removed";
+      saveState({ skipMerge: true, skipRemote: true });
+      closeOverlays();
+      toast("File moved to Removed Files.");
+      renderAfterFileMutation();
+    } catch (error) {
+      toast(error.message || "Unable to remove this file.");
+      restoreSaveFileButton(saveButton);
+    }
+    if (existingFile) return;
+  }
   const workflowStatusChanged = !existingFile || selectedWorkflowStatus !== originalWorkflowStatus;
   const stagesObj = workflowStatusChanged
     ? stagesFromWorkflowSelection(selectedWorkflowStatus, existingStages)
@@ -7446,7 +7614,14 @@ async function saveFileFromDrawer() {
   }
   saveState({ skipMerge: true, skipRemote: true });
   try {
-    await syncFileRecordToApi(record);
+    if (pendingNewRemovalReason) {
+      const result = await removeFileInApi(record.id, pendingNewRemovalReason, record);
+      if (result?.file) state.files = state.files.map((file) => file.id === result.file.id ? result.file : file);
+      state.filters.listView = "removed";
+      saveState({ skipMerge: true, skipRemote: true });
+    } else {
+      await syncFileRecordToApi(record);
+    }
   } catch (error) {
     console.error("Central file update failed", error);
     fileSaveRequests.delete(saveKey);
@@ -7454,7 +7629,7 @@ async function saveFileFromDrawer() {
     return toast(`Central update failed: ${error.message || "Please retry."}`);
   }
   closeOverlays();
-  toast("File record saved and synced");
+  toast(pendingNewRemovalReason ? "File moved to Removed Files." : "File record saved and synced");
   fileSaveRequests.delete(saveKey);
   renderAfterFileMutation();
   perfLog("file save total", saveStartedAt, { fileId: record.id, mode: editingId ? "edit" : "add" });
@@ -8614,12 +8789,13 @@ function bindPasswordToggles() {
   });
 }
 
-function downloadImportTemplate() {
+async function downloadImportTemplate() {
   const rows = [
     {
-      Name: "ABC Traders",
-      "PAN / Regn Number": "ABCDE1234F",
-      "Service Type": "GST Return",
+      "Client Name": "ABC Traders",
+      "PAN/Reg No": "ABCDE1234F",
+      "Service Type": "ITR Filing",
+      FY: "2025-26",
       "C/o": "Direct",
       Mode: "Whatsapp",
       "File Received Date": todayDate(),
@@ -8632,15 +8808,19 @@ function downloadImportTemplate() {
       Status: "Received",
       "Completed Date": "",
       "Checked By": "",
+      "Checking Remarks": "",
       "Checked Date": "",
-      Billed: "",
-      "Fee Received": "",
+      Billed: "No",
+      "Bill Amount": 0,
+      "Fee Received": "No",
+      "Received Amount": 0,
       Remarks: "Paste your existing file details here",
     },
     {
-      Name: "XYZ Pvt Ltd",
-      "PAN / Regn Number": "U12345KL2024PTC000001",
+      "Client Name": "XYZ Pvt Ltd",
+      "PAN/Reg No": "U12345KL2024PTC000001",
       "Service Type": "Statutory Audit",
+      FY: "2025-26",
       "C/o": "Taxmate",
       Mode: "Email",
       "File Received Date": todayDate(),
@@ -8653,14 +8833,17 @@ function downloadImportTemplate() {
       Status: "WIP",
       "Completed Date": "",
       "Checked By": "",
+      "Checking Remarks": "",
       "Checked Date": "",
-      Billed: "",
-      "Fee Received": "",
+      Billed: "No",
+      "Bill Amount": 0,
+      "Fee Received": "No",
+      "Received Amount": 0,
       Remarks: "",
     },
   ];
-  downloadExcelTable("ca-file-tracker-import-template", rows);
-  toast("Sample Excel template downloaded");
+  await downloadXlsxRows("ca-file-tracker-import-template", rows);
+  toast("Sample XLSX template downloaded");
 }
 
 function downloadExcelTable(name, rows, title = "") {
@@ -8668,7 +8851,7 @@ function downloadExcelTable(name, rows, title = "") {
   rows = rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => !blockedExportHeaders.has(String(key).trim()))));
   const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
   const headingLines = reportHeadingLines(title);
-  const wideColumns = ["Name", "PAN / Regn Number", "Service Type", "Remarks", "Attachments"];
+  const wideColumns = ["Client Name", "PAN/Reg No", "Service Type", "Remarks", "Attachments"];
   const dateColumns = ["File Received Date", "Work Allotment Date", "Re Assigned Date", "Due Date", "Last Updated Date"];
   const narrowColumns = ["C/o", "Mode", "Priority", "Status"];
   const columnWidth = (header) => {
@@ -10045,12 +10228,13 @@ function importRows(rows, options = {}) {
       }
       return "";
     };
-    const name = get("Name", "Client", "Client Name");
+    const name = get("Client Name", "Name", "Client");
     if (!name) return;
     const importSerialNumber = normalizeImportSerial(get("SN", "S.N", "S No", "S.No", "Sl No", "Sl.No", "Serial No", "Serial Number", "No")) || (options.assignSerials ? rowIndex + 1 : "");
     const serviceType = get("Service Type", "Service") || state.services[0] || "Other Services";
     const careOf = get("C/o", "Care Of", "CO", "C O") || "Direct";
-    const fy = get("FY", "Financial Year", "F.Y", "Assessment Year") || "NA";
+    const rawFy = get("FY", "Financial Year", "F.Y", "Assessment Year");
+    const fy = normalizeImportFiscalYear(rawFy, excelRowNumber, serviceType);
     const mode = normalizeMode(get("Mode")) || "Whatsapp";
     const assignedStaff = canonicalStaffName(normalizeImportStaff(get("Assigned Staff", "Staff")), "Not Assigned");
     const reAssignedStaff = canonicalStaffName(normalizeImportStaff(get("Re Assigned", "Reassigned", "Re Assigned Staff")), "");
@@ -10068,7 +10252,16 @@ function importRows(rows, options = {}) {
     let workAllotmentDate = normalizeImportDate(get("Work Allotment Date", "Allotment Date", "Allotted Date")) || fileReceivedDate;
     const importedWorkStartedDate = normalizeImportDate(get("Work Started Date", "WIP Date", "Work Start Date"));
     const completedDate = normalizeImportDate(get("Completed on", "Completed On", "Completed Date", "Completion Date", "Date Completed", "Filed Date"));
-    const billingImport = billingFromImport(get("Billed"), get("Fee Received", "Received"), get("Billing Type", "Billable"));
+    const billedValue = get("Billed");
+    const feeReceivedValue = get("Fee Received", "Received");
+    const billingImport = billingFromImport(billedValue, feeReceivedValue, get("Billing Type", "Billable"), excelRowNumber);
+    const importedBillAmount = parseImportAmount(get("Bill Amount", "Billed Amount", "Fee Amount"), "Bill Amount", excelRowNumber);
+    const importedReceivedAmount = parseImportAmount(get("Received Amount", "Amount Received", "Fee Received Amount"), "Received Amount", excelRowNumber);
+    const billAmount = billingImport.billed ? importedBillAmount : 0;
+    const receivedAmount = billingImport.feeReceived ? importedReceivedAmount : 0;
+    if (receivedAmount > billAmount) {
+      throw new Error(`Row ${excelRowNumber}: Received Amount cannot be greater than Bill Amount.`);
+    }
     const stagesObj = stagesFromImport(status, {
       workDone: get("Work Done"),
       approvalPending: get("Approval Pending", "Shared"),
@@ -10086,7 +10279,7 @@ function importRows(rows, options = {}) {
     const record = {
       id: crypto.randomUUID(),
       name,
-      pan: get("PAN / Regn Number", "PAN", "Regn Number", "Registration Number"),
+      pan: get("PAN/Reg No", "PAN / Regn Number", "PAN", "Regn Number", "Registration Number") || "Not Entered",
       serviceType,
       careOf,
       fy,
@@ -10098,9 +10291,17 @@ function importRows(rows, options = {}) {
       approved: stagesObj.Approved,
       filed: stagesObj.Completed,
       billed,
+      billedAmount: billAmount,
+      billed_amount: billAmount,
+      billAmount,
+      feeAmount: billAmount,
       billedDate: billingImport.billed ? (normalizeImportDate(get("Billed Date", "Billing Date", "Bill Date")) || completedDate || "") : "",
       billingType: billingImport.billingType,
       feeReceived: billingImport.feeReceived,
+      feeReceivedAmount: receivedAmount,
+      amountReceived: receivedAmount,
+      amount_received: receivedAmount,
+      balanceAmount: Math.max(0, billAmount - receivedAmount),
       feeReceivedDate: billingImport.feeReceived ? (normalizeImportDate(get("Fee Received Date", "Payment Received Date", "Fee Payment Date")) || completedDate || "") : "",
       stages: stagesObj,
       assignedStaff: finalAssignedStaff,
@@ -10118,12 +10319,15 @@ function importRows(rows, options = {}) {
       attachments: [],
       excelRowNumber,
       importSerialNumber,
+      importFyWasBlank: !rawFy,
       lastUpdatedDate: "2026-07-14",
       updatedAt: importBatchTime,
     };
     rememberImportedLists(record);
     importedRecords.push(record);
   });
+  assignMissingItrFiscalYears(importedRecords);
+  importedRecords.forEach((record) => delete record.importFyWasBlank);
   const finalImportedRecords = collapseDuplicateImportedFiles(importedRecords);
   if (options.replace) {
     state.files = finalImportedRecords;
@@ -10168,9 +10372,10 @@ function importedDuplicateKey(file) {
   const name = normalizeImportMatchText(file.name);
   const service = normalizeImportMatchText(file.serviceType);
   const pan = normalizeImportMatchText(file.pan);
+  const fy = normalizeImportMatchText(file.fy);
   if (!name) return "";
-  if (pan && pan !== "na") return `pan:${pan}|name:${name}`;
-  if (service) return `name:${name}|service:${service}`;
+  if (pan && !["na", "not entered"].includes(pan)) return `pan:${pan}|name:${name}|service:${service}|fy:${fy}`;
+  if (service) return `name:${name}|service:${service}|fy:${fy}`;
   return `name:${name}`;
 }
 
@@ -10215,6 +10420,15 @@ function mergeImportedFileRecord(existingFile, importedFile, importBatchTime) {
     approved: importedFile.approved,
     filed: importedFile.filed,
     billed: importedFile.billed,
+    billedAmount: importedFile.billedAmount,
+    billed_amount: importedFile.billed_amount,
+    billAmount: importedFile.billAmount,
+    feeAmount: importedFile.feeAmount,
+    feeReceived: importedFile.feeReceived,
+    feeReceivedAmount: importedFile.feeReceivedAmount,
+    amountReceived: importedFile.amountReceived,
+    amount_received: importedFile.amount_received,
+    balanceAmount: importedFile.balanceAmount,
     stages: importedFile.stages,
     completionDate: importedFile.completionDate || existingFile.completionDate || "",
     checkedBy: importedFile.checkedBy || existingFile.checkedBy || "",
@@ -10277,18 +10491,19 @@ function sameImportedFile(existingFile, importedFile) {
   if (existingFile.importSerialNumber || importedFile.importSerialNumber) {
     return Boolean(existingFile.importSerialNumber && importedFile.importSerialNumber && Number(existingFile.importSerialNumber) === Number(importedFile.importSerialNumber));
   }
-  if (existingFile.excelRowNumber && importedFile.excelRowNumber && Number(existingFile.excelRowNumber) === Number(importedFile.excelRowNumber)) return true;
+  // Excel row numbers are diagnostics, not stable record identifiers across uploads.
   const existingPan = normalizeImportMatchText(existingFile.pan);
   const importedPan = normalizeImportMatchText(importedFile.pan);
   const sameName = normalizeImportMatchText(existingFile.name) === normalizeImportMatchText(importedFile.name);
   const sameService = normalizeImportMatchText(existingFile.serviceType) === normalizeImportMatchText(importedFile.serviceType);
-  const hasUsablePan = existingPan && importedPan && existingPan !== "na" && importedPan !== "na";
+  const sameFy = normalizeImportMatchText(existingFile.fy) === normalizeImportMatchText(importedFile.fy);
+  const hasUsablePan = existingPan && importedPan && !["na", "not entered"].includes(existingPan) && !["na", "not entered"].includes(importedPan);
   if (hasUsablePan && existingPan === importedPan) {
-    if (sameName) return true;
-    if (sameService && importNameTokenOverlap(existingFile.name, importedFile.name)) return true;
+    if (sameName && sameService && sameFy) return true;
+    if (sameService && sameFy && importNameTokenOverlap(existingFile.name, importedFile.name)) return true;
   }
-  if (sameName && existingImportDatesMissing(existingFile)) return true;
-  return sameName && sameService;
+  if (sameName && sameFy && existingImportDatesMissing(existingFile)) return true;
+  return sameName && sameService && sameFy;
 }
 
 function normalizeImportMatchText(value) {
@@ -10312,7 +10527,7 @@ function normalizeImportSerial(value) {
   return match ? Number(match[0]) : "";
 }
 
-function billingFromImport(billedValue, feeReceivedValue, billingTypeValue = "") {
+function billingFromImport(billedValue, feeReceivedValue, billingTypeValue = "", excelRowNumber = "") {
   const billedText = normalizeImportMatchText(billedValue);
   const feeText = normalizeImportMatchText(feeReceivedValue);
   const typeText = normalizeImportMatchText(billingTypeValue);
@@ -10320,8 +10535,9 @@ function billingFromImport(billedValue, feeReceivedValue, billingTypeValue = "")
   if (compact.includes("nonbillable") || compact.includes("nonbilled") || compact.includes("nonbilling")) {
     return { billed: false, feeReceived: false, billingType: "Non-Billable" };
   }
-  const billed = isYes(billedValue);
-  const feeReceived = billed && isYes(feeReceivedValue);
+  const billed = parseImportBoolean(billedValue, "Billed", excelRowNumber);
+  const requestedFeeReceived = parseImportBoolean(feeReceivedValue, "Fee Received", excelRowNumber);
+  const feeReceived = billed && requestedFeeReceived;
   return {
     billed,
     feeReceived,
@@ -10450,6 +10666,67 @@ function canUseVisitorModules() {
 
 function visitorSortTime(visitor) {
   return (Date.parse(visitor.date || "") || 0) * 1000000 + Number(visitor.createdAt || visitor.updatedAt || 0);
+}
+
+function parseImportBoolean(value, label, excelRowNumber = "") {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (["yes", "y", "true", "1"].includes(normalized)) return true;
+  if (["no", "n", "false", "0"].includes(normalized)) return false;
+  const rowLabel = excelRowNumber ? `Row ${excelRowNumber}: ` : "";
+  throw new Error(`${rowLabel}${label} must be Yes/No, Y/N, True/False, or 1/0.`);
+}
+
+function parseImportAmount(value, label, excelRowNumber = "") {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const normalized = raw.replace(/[,\s₹$£€]/g, "");
+  const amount = Number(normalized);
+  const rowLabel = excelRowNumber ? `Row ${excelRowNumber}: ` : "";
+  if (!Number.isFinite(amount)) throw new Error(`${rowLabel}${label} must be a valid number.`);
+  if (amount < 0) throw new Error(`${rowLabel}${label} cannot be negative.`);
+  return amount;
+}
+
+function normalizeImportFiscalYear(value, excelRowNumber, serviceType) {
+  const raw = String(value || "").trim();
+  if (!raw) return isItrFilingService(serviceType) ? "" : "NA";
+  const normalized = raw.replace(/^fy\s*/i, "").trim();
+  if (/^\d{4}-\d{2}$/.test(normalized)) return normalized;
+  if (/^na$/i.test(normalized)) return "NA";
+  throw new Error(`Row ${excelRowNumber}: FY must use the format YYYY-YY (for example 2025-26).`);
+}
+
+function isItrFilingService(value) {
+  return normalizeImportMatchText(value).replace(/[^a-z0-9]/g, "").includes("itrfiling");
+}
+
+function assignMissingItrFiscalYears(importedRecords) {
+  const groups = new Map();
+  importedRecords.forEach((record) => {
+    if (!record.importFyWasBlank || !isItrFilingService(record.serviceType)) return;
+    const key = `${normalizeImportMatchText(record.name)}|${normalizeImportMatchText(record.pan) || "not entered"}|itrfiling`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(record);
+  });
+  groups.forEach((records, key) => {
+    const [name, pan] = key.split("|");
+    const used = new Set(
+      [...(state.files || []), ...importedRecords]
+        .filter((file) => isItrFilingService(file.serviceType))
+        .filter((file) => normalizeImportMatchText(file.name) === name)
+        .filter((file) => (normalizeImportMatchText(file.pan) || "not entered") === pan)
+        .map((file) => String(file.fy || "").trim())
+        .filter((fy) => /^\d{4}-\d{2}$/.test(fy)),
+    );
+    let startYear = 2025;
+    records.forEach((record) => {
+      while (used.has(`${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`)) startYear -= 1;
+      record.fy = `${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}`;
+      used.add(record.fy);
+      startYear -= 1;
+    });
+  });
 }
 
 function visitorNewestFirst(a = {}, b = {}) {
@@ -12834,9 +13111,10 @@ function cleanReportRows(rows) {
   const fileReport = rows.some(isFileRecord);
   const normalized = rows.map((row) => isFileRecord(row) ? flattenFile(row) : row);
   const allowedHeaders = [
-    "Name",
-    "PAN / Regn Number",
+    "Client Name",
+    "PAN/Reg No",
     "Service Type",
+    "FY",
     "C/o",
     "Mode",
     "File Received Date",
@@ -12845,12 +13123,16 @@ function cleanReportRows(rows) {
     "Re Assigned",
     "Re Assigned Date",
     "Due Date",
-    "Billed Date",
-    "Fee Received Date",
-    "Fee Received Amount",
     "Priority",
     "Status",
-    "Last Updated Date",
+    "Completed Date",
+    "Checked By",
+    "Checking Remarks",
+    "Checked Date",
+    "Billed",
+    "Bill Amount",
+    "Fee Received",
+    "Received Amount",
     "Remarks",
   ];
   const blockedHeaders = new Set([
@@ -12907,6 +13189,7 @@ function fileListSectionTitle() {
     nonBilled: "Non-Billed Files",
     feePending: "Fee Pending Files",
     feeReceived: "Fee Received Files",
+    removed: "Removed Files",
   };
   const dashboardTitles = {
     pending: "Pending Files",
@@ -13221,12 +13504,14 @@ async function exportPdf(name, rows) {
 }
 
 function flattenFile(file) {
+  const billAmount = Number(file.billedAmount ?? file.billed_amount ?? file.billAmount ?? file.feeAmount ?? file.amount ?? 0) || 0;
+  const receivedAmount = Number(file.feeReceivedAmount ?? file.amountReceived ?? file.amount_received ?? 0) || 0;
   return {
-    Name: file.name,
-    "PAN / Regn Number": file.pan,
+    "Client Name": file.name,
+    "PAN/Reg No": file.pan || "Not Entered",
     "Service Type": file.serviceType,
-    "C/o": file.careOf || "Direct",
     FY: file.fy || "NA",
+    "C/o": file.careOf || "Direct",
     Mode: file.mode || "Whatsapp",
     "File Received Date": displayDate(file.fileReceivedDate),
     "Assigned Staff": file.assignedStaff,
@@ -13234,20 +13519,16 @@ function flattenFile(file) {
     "Re Assigned": file.reAssignedStaff || "",
     "Re Assigned Date": displayDate(file.reAssignedDate),
     "Due Date": displayDate(file.dueDate),
-    "Billed Date": displayDate(file.billedDate),
-    "Bill Date": displayDate(file.billDate || file.bill_date || file.billedDate),
-    "Bill No.": file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
-    "Billed Amount": file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || "",
-    "Fee Received Date": displayDate(file.feeReceivedDate),
-    "Fee Received Amount": file.feeReceivedAmount || "",
-    "Received Date": displayDate(file.feeReceivedDate || file.receivedOn || file.received_on),
-    "Received Amount": file.feeReceivedAmount || file.amountReceived || file.amount_received || "",
-    "Balance Amount": filePendingAmount(file),
-    "Payment Mode": file.paymentMode || file.receiptMode || "",
-    "Transaction Status": fileReceiptTransactionLabel(file),
     Priority: file.priority,
     Status: statusOf(file).label,
-    "Last Updated Date": displayDate(file.lastUpdatedDate),
+    "Completed Date": displayDate(file.completionDate || file.completedAt || file.completed_at),
+    "Checked By": file.checkedBy || "",
+    "Checking Remarks": file.checkingRemarks || "",
+    "Checked Date": displayDate(file.checkedDate || file.checkedAt || file.checked_at),
+    Billed: file.billed ? "Yes" : "No",
+    "Bill Amount": file.billed ? billAmount : 0,
+    "Fee Received": file.feeReceived ? "Yes" : "No",
+    "Received Amount": file.feeReceived ? receivedAmount : 0,
     Remarks: file.remarks,
   };
 }

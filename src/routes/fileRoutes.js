@@ -1,7 +1,15 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { getAppState } = require("../services/appStateService");
-const { listFiles, upsertFile, markFileChecked, returnFileForCorrection, deleteFile } = require("../services/fileService");
+const {
+  listFiles,
+  upsertFile,
+  markFileChecked,
+  returnFileForCorrection,
+  removeFile,
+  restoreRemovedFile,
+  deleteFile,
+} = require("../services/fileService");
 
 const router = express.Router();
 
@@ -53,6 +61,26 @@ router.post("/:id/return-correction", requireAuth, requireRole("Admin", "Manager
       correctionHistory: state.correctionHistory || [],
       fileNotifications: state.fileNotifications || [],
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/remove", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
+  try {
+    const state = await removeFile(req.params.id, req.body || {}, req.user.id, req.profile);
+    const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
+    res.json({ ok: true, file: savedFile });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/restore", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
+  try {
+    const state = await restoreRemovedFile(req.params.id, req.user.id, req.profile);
+    const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
+    res.json({ ok: true, file: savedFile });
   } catch (error) {
     next(error);
   }

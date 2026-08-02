@@ -14,6 +14,7 @@ const WORKFLOW_STAGES = [
   "Correction Required",
   "Corrected & Completed",
   "Billed",
+  "Removed",
 ];
 
 async function listFiles(state, options = {}) {
@@ -25,6 +26,8 @@ function sortFilesForRequest(files, options = {}) {
   const direction = String(options.direction || options.sortDirection || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   const listView = String(options.listView || options.view || "").trim();
   let rows = [...files];
+  if (listView === "removed") rows = rows.filter(isRemovedFile);
+  else rows = rows.filter((file) => !isRemovedFile(file));
   if (listView === "completed") rows = rows.filter((file) => isCompletedFile(file) && !hasOpenCorrection(file) && !(isCorrectedCompleted(file) && !isCheckedFile(file)));
   if (listView === "active") rows = rows.filter((file) => !isCompletedFile(file) || hasOpenCorrection(file));
   if (listView === "correctionRequired") rows = rows.filter(hasOpenCorrection);
@@ -37,7 +40,18 @@ function sortFilesForRequest(files, options = {}) {
   if (sortField === "fee_received_at") return [...rows].sort((a, b) => direction === "asc" ? sortFeeReceivedAsc(a, b) : sortFeeReceivedDesc(a, b));
   if (listView === "completed") return [...rows].sort(sortCompletedFilesDesc);
   if (listView === "feeReceived") return [...rows].sort(sortFeeReceivedDesc);
+  if (listView === "removed") return sortFilesByDate(rows, removedTime, "desc", fileCreatedTime);
   return sortFilesNewestFirst(rows);
+}
+
+function isRemovedFile(file = {}) {
+  return Boolean(file.is_removed || file.isRemoved)
+    || String(file.status || file.workflowStatus || "").trim().toLowerCase() === "removed"
+    || Boolean(file.stages?.Removed);
+}
+
+function removedTime(file = {}) {
+  return dateOrNumber(file.removed_at || file.removedAt || file.removal_checked_at || file.removalCheckedAt);
 }
 
 function sortFilesByDate(files, dateGetter, direction = "desc", tieGetter = fileCreatedTime) {
@@ -183,6 +197,12 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
+    if ((!before || !isRemovedFile(before)) && isRemovedFile(record)) {
+      throw httpError("Use the Remove action to move a file to Removed Files.", 400);
+    }
+    if (before && isRemovedFile(before) && !isRemovedFile(record)) {
+      throw httpError("Use Take Back to restore a removed file.", 400);
+    }
     preserveCheckingDetailsForGeneralSave(record, before);
     validateReassignmentTarget(before, file);
     const nowIso = new Date(now).toISOString();
@@ -205,6 +225,185 @@ async function upsertFile(file, userId, profile = {}) {
     }
     const savedRecord = index >= 0 ? files[index] : record;
     appendFileUpdateNotifications(state, before, savedRecord, profile, new Date(now));
+    state.files = sortFilesNewestFirst(files);
+    return state;
+  }, userId);
+}
+
+function assertRemovalPermission(profile = {}) {
+  if (!["Admin", "Manager"].includes(String(profile?.role || "").trim())) {
+    throw httpError("Only Admin or Manager can remove or restore files.", 403);
+  }
+}
+
+function activeWorkflowStatus(file = {}) {
+  const explicit = String(file.workflowStatus || file.status || "").trim();
+  if (explicit && explicit.toLowerCase() !== "removed") return explicit;
+  return WORKFLOW_STAGES.filter((stage) => !["Billed", "Removed"].includes(stage) && file.stages?.[stage]).pop() || "Received";
+}
+
+async function removeFile(fileId, payload, userId, profile = {}) {
+  return patchAppState((state) => {
+    assertRemovalPermission(profile);
+    const files = state.files || [];
+    let index = files.findIndex((file) => file.id === fileId);
+    if (index < 0 && payload.file && payload.file.id === fileId) {
+      files.push({ ...payload.file, id: fileId });
+      index = files.length - 1;
+    }
+    if (index < 0) throw httpError("File record not found.", 404);
+    if (isRemovedFile(files[index])) throw httpError("This file is already in Removed Files.", 409);
+    const removalReason = String(payload.removalReason || payload.removal_reason || "").trim();
+    if (!removalReason) throw httpError("Removal reason is required.", 400);
+
+    const before = { ...files[index] };
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const date = nowIso.slice(0, 10);
+    const actorId = profile?.id || profile?.auth_user_id || userId || "";
+    const actorName = String(profile?.name || "").trim() || "Admin";
+    const previousAssignee = currentFileAssignee(before);
+    const removalEvent = {
+      id: crypto.randomUUID(),
+      fileId,
+      file_id: fileId,
+      action: "Removed",
+      removedAt: nowIso,
+      removed_at: nowIso,
+      removedBy: actorName,
+      removed_by: actorName,
+      removedByUserId: actorId,
+      removed_by_user_id: actorId,
+      removalReason,
+      removal_reason: removalReason,
+      previousStatus: activeWorkflowStatus(before),
+      previous_status: activeWorkflowStatus(before),
+      previousAssignedStaff: previousAssignee.name || "Not Assigned",
+      previous_assigned_staff_id: previousAssignee.id || "",
+      previousChecking: {
+        checkedBy: before.checkedBy || "",
+        checkedDate: before.checkedDate || "",
+        checkedAt: before.checkedAt || before.checked_at || "",
+        checkingRemarks: before.checkingRemarks || "",
+        completionDate: before.completionDate || "",
+        completedAt: before.completedAt || before.completed_at || "",
+      },
+    };
+    files[index] = {
+      ...before,
+      status: "Removed",
+      workflowStatus: "Removed",
+      stages: { ...(before.stages || {}), Removed: true },
+      is_removed: true,
+      isRemoved: true,
+      removed_at: nowIso,
+      removedAt: nowIso,
+      removed_by_user_id: actorId,
+      removedByUserId: actorId,
+      removedBy: actorName,
+      removal_reason: removalReason,
+      removalReason,
+      previous_status: removalEvent.previousStatus,
+      previousStatus: removalEvent.previousStatus,
+      previous_assigned_staff_id: previousAssignee.id || "",
+      previousAssignedStaffId: previousAssignee.id || "",
+      previousAssignedStaff: previousAssignee.name || "Not Assigned",
+      removal_checked_at: nowIso,
+      removalCheckedAt: nowIso,
+      completedAt: nowIso,
+      completed_at: nowIso,
+      completionDate: date,
+      checkedBy: actorName,
+      checkedDate: date,
+      checkedAt: nowIso,
+      checked_at: nowIso,
+      removalHistory: [...(before.removalHistory || []), removalEvent],
+      lastUpdatedDate: date,
+      updatedAt: now.getTime(),
+    };
+    state.auditLog = [...(state.auditLog || []), {
+      id: crypto.randomUUID(),
+      action: "File moved to Removed Files",
+      details: { fileId, fileName: before.name, removalReason, previousStatus: removalEvent.previousStatus, previousAssignedStaff: removalEvent.previousAssignedStaff },
+      user: actorName,
+      role: profile?.role || "",
+      at: nowIso,
+    }].slice(-1000);
+    state.files = sortFilesNewestFirst(files);
+    return state;
+  }, userId);
+}
+
+async function restoreRemovedFile(fileId, userId, profile = {}) {
+  return patchAppState((state) => {
+    assertRemovalPermission(profile);
+    const files = state.files || [];
+    const index = files.findIndex((file) => file.id === fileId);
+    if (index < 0) throw httpError("File record not found.", 404);
+    const before = files[index];
+    if (!isRemovedFile(before)) throw httpError("This file has already been restored.", 409);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const date = nowIso.slice(0, 10);
+    const actorId = profile?.id || profile?.auth_user_id || userId || "";
+    const actorName = String(profile?.name || "").trim() || "Admin";
+    const history = [...(before.removalHistory || []), {
+      id: crypto.randomUUID(),
+      fileId,
+      file_id: fileId,
+      action: "Restored",
+      restoredAt: nowIso,
+      restored_at: nowIso,
+      restoredBy: actorName,
+      restored_by: actorName,
+      restoredByUserId: actorId,
+      restored_by_user_id: actorId,
+    }];
+    files[index] = {
+      ...before,
+      status: "Not Assigned",
+      workflowStatus: "Not Assigned",
+      stages: { ...Object.fromEntries(WORKFLOW_STAGES.map((stage) => [stage, false])), Received: true },
+      is_removed: false,
+      isRemoved: false,
+      assignedStaff: "Not Assigned",
+      assignedStaffId: "",
+      assignedStaffEmail: "",
+      currentAssignedStaff: "Not Assigned",
+      current_assigned_to: "Not Assigned",
+      reAssignedStaff: "",
+      reAssignedStaffId: "",
+      reAssignedStaffEmail: "",
+      restored_at: nowIso,
+      restoredAt: nowIso,
+      restored_by_user_id: actorId,
+      restoredByUserId: actorId,
+      restoredBy: actorName,
+      workDone: false,
+      shared: false,
+      reportPrepared: false,
+      approved: false,
+      filed: false,
+      checkedBy: "",
+      checkedDate: "",
+      checkedAt: "",
+      checked_at: "",
+      checkingRemarks: "",
+      completionDate: "",
+      completedAt: "",
+      completed_at: "",
+      removalHistory: history,
+      lastUpdatedDate: date,
+      updatedAt: now.getTime(),
+    };
+    state.auditLog = [...(state.auditLog || []), {
+      id: crypto.randomUUID(),
+      action: "Removed file restored",
+      details: { fileId, fileName: before.name, restoredAs: "Not Assigned" },
+      user: actorName,
+      role: profile?.role || "",
+      at: nowIso,
+    }].slice(-1000);
     state.files = sortFilesNewestFirst(files);
     return state;
   }, userId);
@@ -769,4 +968,13 @@ async function deleteFile(fileId, userId, profile = {}) {
   }, userId);
 }
 
-module.exports = { listFiles, upsertFile, markFileChecked, returnFileForCorrection, deleteFile, sortFilesForRequest };
+module.exports = {
+  listFiles,
+  upsertFile,
+  markFileChecked,
+  returnFileForCorrection,
+  removeFile,
+  restoreRemovedFile,
+  deleteFile,
+  sortFilesForRequest,
+};
