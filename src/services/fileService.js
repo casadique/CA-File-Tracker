@@ -8,6 +8,9 @@ const {
 const {
   hasOpenCorrection,
   isActiveFile,
+  isCheckedFile,
+  isCompletedFile,
+  isCorrectedCompleted,
   isDisplayCompletedFile,
   isNotCheckedFile,
   isRemovedFile,
