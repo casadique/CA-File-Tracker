@@ -5432,7 +5432,7 @@ function staffReportRow(file, listView = "") {
       "Client Name": file.name,
       Service: file.serviceType,
       FY: file.fy || "NA",
-      ...feeReceiptReportFields(file),
+      ...feeReceiptReportFields(file, "Balance"),
       "Received By": file.feeReceivedBy || file.collectionStaff || "-",
     };
   }
@@ -5575,21 +5575,27 @@ async function exportActiveFilesExcel(files = filteredFiles()) {
 }
 
 async function exportStaffPageExcel(listView, files) {
-  const rows = files.map((file) => staffReportRow(file, listView));
+  const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
+  const rows = listView === "feeReceived" ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadXlsxRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("Excel file downloaded");
 }
 
 async function exportStaffPagePdf(listView, files) {
-  const rows = files.map((file) => staffReportRow(file, listView));
+  const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
+  const rows = listView === "feeReceived" ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadPdfRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("PDF file downloaded");
 }
 
 function printStaffPageReport(listView, files) {
-  const rows = files.map((file) => staffReportRow(file, listView));
+  const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
+  const rows = listView === "feeReceived" ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to print.");
   printReport(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("Print report opened");
@@ -5779,10 +5785,11 @@ function renderReAssignedFileTable(files) {
 
 function renderFeeReceivedFileTable(files) {
   const rows = sortFilesByFeeReceivedNewestFirst(files);
+  const totals = feeReceiptTotals(rows);
   return `
     <div class="table-wrap file-table-wrap">
-      <table class="file-table file-table-compact">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th>Billed Amount</th><th>Received Amount</th><th>Balance</th><th>Received Date</th><th>Mode</th><th>Transaction</th></tr></thead>
+      <table class="file-table file-table-compact fee-received-table">
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Received Amount</th><th class="amount-column">Balance</th><th>Received Date</th><th>Mode</th><th>Transaction</th></tr></thead>
         <tbody>
           ${rows.map((file, index) => {
             const linked = linkedFeeReceiptCollection(file);
@@ -5793,15 +5800,24 @@ function renderFeeReceivedFileTable(files) {
               <td>${escapeHtml(fileFy(file) || "-")}</td>
               <td>${fmt(file.billDate || file.bill_date || file.billedDate)}</td>
               <td>${escapeHtml(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-")}</td>
-              <td class="amount-cell">${rupee(dashboardFileAmount(file, "billed"))}</td>
-              <td class="amount-cell">${rupee(dashboardFileAmount(file, "received"))}</td>
-              <td class="amount-cell">${rupee(filePendingAmount(file))}</td>
+              <td class="amount-cell amount-column">${rupee(dashboardFileAmount(file, "billed"))}</td>
+              <td class="amount-cell amount-column">${rupee(dashboardFileAmount(file, "received"))}</td>
+              <td class="amount-cell amount-column">${rupee(filePendingAmount(file))}</td>
               <td>${fmt(file.feeReceivedDate || file.receivedOn || file.received_on)}</td>
               <td>${escapeHtml(file.paymentMode || file.receiptMode || "-")}</td>
               <td>${linked ? `<span class="badge filed">Pushed</span>` : `<span class="badge pending">Receipt only</span>`}</td>
             </tr>`;
           }).join("")}
         </tbody>
+        <tfoot>
+          <tr class="fee-received-total-row">
+            <td colspan="6">Totals</td>
+            <td class="amount-cell amount-column">${rupee(totals.billed)}</td>
+            <td class="amount-cell amount-column">${rupee(totals.received)}</td>
+            <td class="amount-cell amount-column">${rupee(totals.balance)}</td>
+            <td colspan="3"></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   `;
@@ -6006,17 +6022,43 @@ function fileReceiptTransactionLabel(file = {}) {
   return feeReceiptCollectionExists(file) ? "Pushed to Transactions" : "Receipt only";
 }
 
-function feeReceiptReportFields(file = {}) {
+function feeReceiptReportFields(file = {}, balanceLabel = "Balance Amount") {
   return {
     "Bill Date": displayDate(file.billDate || file.bill_date || file.billedDate),
     "Bill No.": file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-",
     "Billed Amount": money(dashboardFileAmount(file, "billed")),
     "Received Amount": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
-    "Balance Amount": money(filePendingAmount(file)),
+    [balanceLabel]: money(filePendingAmount(file)),
     "Received Date": displayDate(file.feeReceivedDate || file.receivedOn || file.received_on),
     "Payment Mode": file.paymentMode || file.receiptMode || "-",
     "Transaction Status": fileReceiptTransactionLabel(file),
   };
+}
+
+function feeReceiptTotals(files = []) {
+  return (files || []).reduce((totals, file) => {
+    totals.billed += dashboardFileAmount(file, "billed");
+    totals.received += dashboardFileAmount(file, "received");
+    totals.balance += filePendingAmount(file);
+    return totals;
+  }, { billed: 0, received: 0, balance: 0 });
+}
+
+function appendFeeReceiptTotals(rows = [], files = []) {
+  if (!rows.length) return rows;
+  const totals = feeReceiptTotals(files);
+  const totalRow = Object.fromEntries(Object.keys(rows[0]).map((header) => [header, ""]));
+  if (Object.hasOwn(totalRow, "SN")) totalRow.SN = "";
+  if (Object.hasOwn(totalRow, "Client Name")) totalRow["Client Name"] = "TOTAL";
+  totalRow["Billed Amount"] = money(totals.billed);
+  totalRow["Received Amount"] = money(totals.received);
+  if (Object.hasOwn(totalRow, "Balance")) totalRow.Balance = money(totals.balance);
+  if (Object.hasOwn(totalRow, "Balance Amount")) totalRow["Balance Amount"] = money(totals.balance);
+  return [...rows, totalRow];
+}
+
+function isFeeAmountReportHeader(header = "") {
+  return ["Billed Amount", "Received Amount", "Balance", "Balance Amount"].includes(header);
 }
 
 function fileSerialNumber(file, fallbackIndex = 0) {
@@ -9169,6 +9211,14 @@ async function downloadPdfSections(name, sections, title = "") {
       styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
       headStyles: { fillColor: [30, 58, 138], textColor: 255 },
       margin: { left: 40, right: 40 },
+      didParseCell: (data) => {
+        const header = headers[data.column.index];
+        if (isFeeAmountReportHeader(header)) data.cell.styles.halign = "right";
+        if (data.section === "body" && rows[data.row.index]?.["Client Name"] === "TOTAL") {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fillColor = [239, 246, 255];
+        }
+      },
     });
     y = doc.lastAutoTable.finalY + 18;
     if (section.total) {
@@ -9239,6 +9289,8 @@ function reportTableHtml(name, rows, title = "") {
           th { background: #1e3a8a; color: #fff; padding: 8px; border: 1px solid #1e3a8a; text-align: left; }
           td { padding: 7px; border: 1px solid #d1d5db; }
           tr:nth-child(even) td { background: #f8fafc; }
+          .amount-column { text-align: right; white-space: nowrap; }
+          .report-total-row td { background: #eff6ff !important; border-top: 2px solid #93c5fd; font-weight: 700; }
       @page { size: A4 landscape; margin: 10mm; }
       @media print { body { padding: 12px; } button { display: none; } }
         </style>
@@ -9246,8 +9298,8 @@ function reportTableHtml(name, rows, title = "") {
       <body>
         ${renderReportHeadingHtml(headingLines.length ? headingLines : [reportTitle])}
         <table>
-          <thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
-          <tbody>${rows.map((row) => `<tr>${headers.map((h) => `<td>${escapeHtml(row[h] || "")}</td>`).join("")}</tr>`).join("")}</tbody>
+          <thead><tr>${headers.map((h) => `<th class="${isFeeAmountReportHeader(h) ? "amount-column" : ""}">${escapeHtml(h)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr class="${row["Client Name"] === "TOTAL" ? "report-total-row" : ""}">${headers.map((h) => `<td class="${isFeeAmountReportHeader(h) ? "amount-column" : ""}">${escapeHtml(row[h] || "")}</td>`).join("")}</tr>`).join("")}</tbody>
         </table>
       </body>
     </html>
@@ -13648,7 +13700,7 @@ function fileListReportRows(files) {
   const sourceFiles = section === "feeReceived"
     ? sortFilesByFeeReceivedNewestFirst(files || [])
     : (section === "notChecked" ? sortFilesByCompletionNewestFirst(files || []) : (files || []));
-  return sourceFiles.map((file, index) => {
+  const rows = sourceFiles.map((file, index) => {
     const base = {
       SN: index + 1,
       "Client Name": section === "notChecked" ? clientDetailsReportText(file) : filePdfText(file.name),
@@ -13732,7 +13784,7 @@ function fileListReportRows(files) {
         "Client Name": base["Client Name"],
         "Service Type": base["Service Type"],
         FY: base.FY,
-        ...feeReceiptReportFields(file),
+        ...feeReceiptReportFields(file, "Balance"),
         "Received By": filePdfText(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy, "-"),
         "Payment Status": "Received",
       };
@@ -13751,6 +13803,7 @@ function fileListReportRows(files) {
       "Due Date": base["Due Date"],
     };
   });
+  return section === "feeReceived" ? appendFeeReceiptTotals(rows, sourceFiles) : rows;
 }
 
 async function exportFilteredFilesPdf(files, button) {
@@ -13816,9 +13869,17 @@ async function exportFilteredFilesPdf(files, button) {
         "Payment Status": { halign: "center", cellWidth: 62 },
         "Billed Amount": { halign: "right", cellWidth: 66 },
         "Received Amount": { halign: "right", cellWidth: 70 },
+        "Balance": { halign: "right", cellWidth: 66 },
+        "Balance Amount": { halign: "right", cellWidth: 70 },
         "Pending Amount": { halign: "right", cellWidth: 70 },
         Remarks: { cellWidth: 118 },
         "Correction Reason": { cellWidth: 150 },
+      },
+      didParseCell: (data) => {
+        if (rows[data.row.index]?.["Client Name"] === "TOTAL" && data.section === "body") {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fillColor = [239, 246, 255];
+        }
       },
     });
     const totalPages = doc.internal.getNumberOfPages();

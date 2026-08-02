@@ -3555,6 +3555,27 @@ textarea {
   font-size: 10px;
 }
 
+.fee-received-table .amount-column {
+  min-width: 118px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.fee-received-table tfoot td {
+  padding: 9px 10px;
+  border: 1px solid #bfdbfe;
+  border-top: 2px solid #60a5fa;
+  background: #eff6ff;
+  color: #0f172a;
+  font-weight: 900;
+}
+
+.fee-received-table tfoot td:first-child {
+  text-align: right;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* Responsive polish */
 @media (max-width: 1180px) {
   .app-shell {
