@@ -8717,6 +8717,16 @@ function renderBackupPage() {
       ${metric("Visitors", (state.visitors || []).length, "Visitor records included", "grad-green")}
       ${metric("Expenses", (state.expenses || []).length, "Expense records included", "grad-yellow")}
     </div>
+    ${adminOnly ? `
+      <div class="panel file-reset-danger-zone">
+        <div class="file-reset-danger-copy">
+          <span class="eyebrow">ADMIN DANGER ZONE</span>
+          <h3>Clear All File Records</h3>
+          <p>Creates a file-data backup, then removes every operational file record and linked fee collection. Users, masters, chat, visitors, settings, opening balances, expenses and manual collections are retained.</p>
+        </div>
+        <button class="danger-button" id="clearAllFileData">Clear File Data</button>
+      </div>
+    ` : ""}
   `;
   document.querySelector("#downloadBackup").onclick = downloadFullBackup;
   document.querySelector("#restoreBackup").onclick = () => {
@@ -8726,6 +8736,42 @@ function renderBackupPage() {
   document.querySelector("#restoreBackupInput").onchange = handleBackupRestore;
   document.querySelector("#syncSiteData").onclick = syncDataToSite;
   document.querySelector("#pullSiteData").onclick = pullDataFromSite;
+  if (adminOnly) document.querySelector("#clearAllFileData").onclick = clearAllFileData;
+}
+
+async function clearAllFileData() {
+  if (state.currentRole !== "Admin") return toast("Only Admin can clear file data.");
+  const warning = "This will permanently remove all existing file records and related file data. User accounts, masters, settings, and unrelated transactions will not be affected. Do you want to continue?";
+  if (!confirm(warning)) return;
+  const confirmation = prompt("Type DELETE ALL FILES to confirm this permanent action:", "");
+  if (confirmation !== "DELETE ALL FILES") return toast("File-data reset cancelled. The confirmation text did not match.");
+
+  const button = document.querySelector("#clearAllFileData");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating backup and clearing...";
+  }
+  try {
+    const result = await apiJson("/api/state/files/reset", {
+      method: "POST",
+      body: JSON.stringify({ confirmation }),
+    });
+    if (result.backup) {
+      const stamp = String(result.backup.exportedAt || new Date().toISOString()).replace(/[:.]/g, "-");
+      downloadJson(`ca-file-tracker-file-data-backup-${stamp}`, result.backup);
+    }
+    const latest = await apiJson("/api/state");
+    restoreSharedData(latest.state || {}, "All file records have been cleared successfully. Application settings, users, master data, and unrelated transactions have been retained. You can now import the new Excel file.", {
+      targetPage: "dashboard",
+      skipRemote: true,
+    });
+  } catch (error) {
+    toast(error.message || "File data could not be cleared. No partial reset was applied.");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Clear File Data";
+    }
+  }
 }
 
 function renderInvitesPage() {

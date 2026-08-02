@@ -58,6 +58,33 @@ async function saveAppState(state, updatedBy = null) {
   return data.state;
 }
 
+async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt = null) {
+  if (!expectedUpdatedAt) {
+    const error = new Error("Central data version is unavailable. Reload and try again.");
+    error.status = 409;
+    throw error;
+  }
+  const normalized = normalizeServerState(state || emptyState());
+  const { data, error } = await supabaseAdmin
+    .from("app_state")
+    .update({
+      state: normalized,
+      updated_by: updatedBy,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", APP_STATE_ID)
+    .eq("updated_at", expectedUpdatedAt)
+    .select("state, updated_at")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    const conflict = new Error("Central data changed while the reset was being prepared. Reload and try again.");
+    conflict.status = 409;
+    throw conflict;
+  }
+  return { state: data.state, updatedAt: data.updated_at };
+}
+
 async function patchAppState(mutator, updatedBy = null) {
   const startedAt = perfStart();
   const state = await getAppState();
@@ -402,6 +429,7 @@ module.exports = {
   getAppState,
   getAppStateRecord,
   saveAppState,
+  saveAppStateIfCurrent,
   patchAppState,
   backupPayload,
   sortFilesNewestFirst,

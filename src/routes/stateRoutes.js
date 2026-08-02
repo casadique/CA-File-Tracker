@@ -2,6 +2,7 @@ const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { getAppState, getAppStateRecord, saveAppState, backupPayload } = require("../services/appStateService");
 const { visibleChatMessages } = require("../services/chatService");
+const { resetAllFileData } = require("../services/fileDataResetService");
 
 const router = express.Router();
 
@@ -79,14 +80,29 @@ router.post("/restore", requireAuth, requireRole("Admin"), async (req, res, next
   }
 });
 
+router.post("/files/reset", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const result = await resetAllFileData({
+      confirmation: req.body.confirmation,
+      userId: req.user.id,
+      profile: req.profile,
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
 
 function stateForProfile(state, profile, userId) {
-  return {
+  const visibleState = {
     ...state,
     chatMessages: visibleChatMessages(state, profile, userId),
     correctionHistory: visibleCorrectionHistory(state, profile, userId),
   };
+  if (profile?.role !== "Admin") delete visibleState.fileDataBackups;
+  return visibleState;
 }
 
 function visibleCorrectionHistory(state, profile, userId) {
