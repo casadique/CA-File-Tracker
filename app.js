@@ -10551,25 +10551,47 @@ function importRows(rows, options = {}) {
     return { total: finalImportedRecords.length, added: finalImportedRecords.length, updated: 0, skipped: 0, importDataSummary, masterSummary: finalizeImportMasterSummary(masterSummary) };
   }
   const existingFiles = state.files || [];
+  const updatedExistingFiles = [...existingFiles];
   const matchedExistingIndexes = new Set();
   const addedRecords = [];
   let skipped = 0;
+  let panUpdated = 0;
   finalImportedRecords.forEach((record) => {
     // Treat imports as a multiset: an existing row can satisfy only one workbook
     // row. This preserves legitimate repeated monthly/periodic assignments while
     // still preventing a second upload of the same workbook from duplicating it.
-    const existingIndex = existingFiles.findIndex((file, index) => (
+    const exactRowIndex = existingFiles.findIndex((file, index) => (
+      !matchedExistingIndexes.has(index)
+      && Number(record.excelRowNumber || 0) > 0
+      && Number(file.excelRowNumber || 0) > 0
+      && Number(file.excelRowNumber || 0) === Number(record.excelRowNumber || 0)
+      && normalizeImportMatchText(file.name) === normalizeImportMatchText(record.name)
+    ));
+    const existingIndex = exactRowIndex >= 0 ? exactRowIndex : existingFiles.findIndex((file, index) => (
       !matchedExistingIndexes.has(index) && sameImportedFile(file, record)
     ));
     if (existingIndex >= 0) {
       matchedExistingIndexes.add(existingIndex);
+      const importedPan = String(record.pan || "").trim();
+      if (
+        isUsableImportedPan(importedPan)
+        && normalizeImportMatchText(updatedExistingFiles[existingIndex].pan) !== normalizeImportMatchText(importedPan)
+      ) {
+        // PAN/Registration correction imports must not overwrite workflow,
+        // assignment, checking, billing or transaction data on the file.
+        updatedExistingFiles[existingIndex] = {
+          ...updatedExistingFiles[existingIndex],
+          pan: importedPan.toUpperCase(),
+        };
+        panUpdated += 1;
+      }
       skipped += 1;
       return;
     }
     addedRecords.push(record);
   });
-  state.files = [...existingFiles, ...addedRecords];
-  return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped, importDataSummary, masterSummary: finalizeImportMasterSummary(masterSummary) };
+  state.files = [...updatedExistingFiles, ...addedRecords];
+  return { total: finalImportedRecords.length, added: addedRecords.length, updated: panUpdated, skipped, importDataSummary, masterSummary: finalizeImportMasterSummary(masterSummary) };
 }
 
 function fillMissingPanFromImportPeers(files) {
@@ -10603,6 +10625,7 @@ function showFileImportSummary(imported, replaced = false) {
     "Import completed successfully.",
     `${imported.total} workbook file row(s) processed.`,
     `${replaced ? imported.total : imported.added} new file record(s) imported.`,
+    `${Number(imported.updated || 0)} existing PAN/Registration No. value(s) updated.`,
     `${Number(dataSummary.panPresent || 0)} row(s) have PAN/Registration No.; ${Number(dataSummary.panUnavailable || 0)} row(s) contain NA or no PAN/Registration No.`,
     `${Number(dataSummary.removed || 0)} removed file record(s) recognised.`,
     `${addedServices.length} new service type(s) added${addedServices.length ? `: ${addedServices.join(", ")}` : ""}.`,
@@ -10618,12 +10641,16 @@ function showFileImportSummary(imported, replaced = false) {
 
 function summarizeImportedFileRows(files) {
   return files.reduce((summary, file) => {
-    const pan = normalizeImportMatchText(file.pan);
-    if (pan && !["na", "n/a", "not entered"].includes(pan)) summary.panPresent += 1;
+    if (isUsableImportedPan(file.pan)) summary.panPresent += 1;
     else summary.panUnavailable += 1;
     if (isRemovedFileRecord(file)) summary.removed += 1;
     return summary;
   }, { panPresent: 0, panUnavailable: 0, removed: 0 });
+}
+
+function isUsableImportedPan(value) {
+  const pan = normalizeImportMatchText(value);
+  return Boolean(pan && !["na", "n/a", "not entered", "not available", "regn no. not available"].includes(pan));
 }
 
 function collapseDuplicateImportedFiles(files) {
