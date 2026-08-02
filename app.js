@@ -3723,6 +3723,7 @@ function renderAll() {
   if (activePage === "files" && state.filters.listView === "billed") titles.files[0] = "Billed Files";
   if (activePage === "files" && state.filters.listView === "feePending") titles.files[0] = "Fee Pending";
   if (activePage === "files" && state.filters.listView === "feeReceived") titles.files[0] = "Fee Received";
+  if (activePage === "files" && state.filters.listView === "removed") titles.files[0] = "Removed Files";
   document.querySelector("#pageTitle").textContent = titles[activePage][0];
   const subtitle = document.querySelector("#pageSubtitle");
   subtitle.textContent = titles[activePage][1];
@@ -4828,13 +4829,24 @@ function removedFileRows(files) {
   return files.map((file, index) => ({
     SN: index + 1,
     "Client Name": file.name || "",
-    "PAN/Reg No": file.pan || "Not Entered",
+    "PAN/Reg No": fileRegistrationNumber(file) || "Regn No. Not Available",
     FY: file.fy || "",
+    "Service Type": file.serviceType || "",
     "C/o": file.careOf || "Direct",
     "Removed On": formatDateTime(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || ""),
-    Reason: file.removal_reason || file.removalReason || "",
-    "Removed By": file.removedBy || file.removed_by || "",
+    Reason: removedFileReason(file),
+    "Removed By": removedFileUser(file),
   }));
+}
+
+function removedFileUser(file = {}) {
+  const value = String(file.removedBy || file.removed_by || "").trim();
+  return !value || /^(unknown|imported record)$/i.test(value) ? "Chindu" : value;
+}
+
+function removedFileReason(file = {}) {
+  const value = String(file.removal_reason || file.removalReason || "").trim();
+  return !value || value === "-" || /^imported as removed$/i.test(value) ? "Not Service Required" : value;
 }
 
 function renderRemovedFilesPage() {
@@ -4850,7 +4862,7 @@ function renderRemovedFilesPage() {
     .filter(isRemovedFileRecord)
     .filter((file) => {
       const removedDate = normalizeImportDate(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || "");
-      const haystack = `${file.name || ""} ${file.pan || ""} ${file.fy || ""} ${file.careOf || ""} ${file.removal_reason || file.removalReason || ""} ${file.removedBy || file.removed_by || ""}`.toLowerCase();
+      const haystack = `${file.name || ""} ${file.pan || ""} ${file.fy || ""} ${file.serviceType || ""} ${file.careOf || ""} ${removedFileReason(file)} ${removedFileUser(file)}`.toLowerCase();
       if (search && !haystack.includes(search)) return false;
       if (from && removedDate < from) return false;
       if (to && removedDate > to) return false;
@@ -4868,7 +4880,7 @@ function renderRemovedFilesPage() {
     <div class="panel removed-files-panel">
       <div class="filter-hero"><div><h3>Removed Files</h3><p class="small-muted">Files removed by authorised users. Removal history remains preserved.</p></div><span>${allRows.length} File(s)</span></div>
       <div class="filters colourful-filters">
-        ${inputFilter("removedSearch", "Search", "Client, PAN/Reg No, reason or remover")}
+        ${inputFilter("removedSearch", "Search", "Client, PAN/Reg No, service, reason or remover")}
         ${inputFilter("removedFrom", "Removed From", "", "date")}
         ${inputFilter("removedTo", "Removed To", "", "date")}
         ${selectFilter("removedFy", "FY", ["", ...fyOptions])}
@@ -4882,14 +4894,14 @@ function renderRemovedFilesPage() {
       </div>
       <div class="table-wrap file-table-wrap">
         <table class="file-table file-table-compact">
-          <thead><tr><th>SN</th><th>Client Name</th><th>PAN/Reg No</th><th>FY</th><th>C/o</th><th>Removed On</th><th>Reason</th><th>Actions</th></tr></thead>
+          <thead><tr><th>SN</th><th>Client Name</th><th>Service Type</th><th>C/o</th><th>Removed On</th><th>Reason</th><th>Actions</th></tr></thead>
           <tbody>${rows.map((file, index) => `<tr>
             <td>${(page - 1) * pageSize + index + 1}</td>
-            <td>${escapeHtml(file.name || "")}</td><td>${escapeHtml(file.pan || "Not Entered")}</td><td>${escapeHtml(file.fy || "-")}</td><td>${escapeHtml(file.careOf || "Direct")}</td>
-            <td title="Removed by ${escapeHtml(file.removedBy || file.removed_by || "Unknown")}">${escapeHtml(formatDateTime(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || ""))}<span class="subtext">By ${escapeHtml(file.removedBy || file.removed_by || "Unknown")}</span></td>
-            <td>${escapeHtml(file.removal_reason || file.removalReason || "-")}</td>
+            <td class="client-details-cell">${clientDetailsCell(file)}</td><td>${escapeHtml(file.serviceType || "-")}</td><td>${escapeHtml(file.careOf || "Direct")}</td>
+            <td title="Removed by ${escapeHtml(removedFileUser(file))}">${escapeHtml(formatDateTime(file.removed_at || file.removedAt || file.checkedAt || file.checkedDate || ""))}<span class="subtext">By ${escapeHtml(removedFileUser(file))}</span></td>
+            <td>${escapeHtml(removedFileReason(file))}</td>
             <td><button class="mini-button" data-restore-removed="${file.id}">Take Back</button></td>
-          </tr>`).join("") || `<tr><td colspan="8">${empty("No removed files match these filters.")}</td></tr>`}</tbody>
+          </tr>`).join("") || `<tr><td colspan="7">${empty("No removed files match these filters.")}</td></tr>`}</tbody>
         </table>
       </div>
       <div class="pagination"><button class="secondary-button" id="removedPrev" ${page <= 1 ? "disabled" : ""}>Previous</button><span>Page ${page} of ${totalPages}</span><button class="secondary-button" id="removedNext" ${page >= totalPages ? "disabled" : ""}>Next</button></div>
@@ -5512,7 +5524,7 @@ function renderCheckingStatusBadge(file) {
 }
 
 function inputFilter(key, label, placeholder, type = "text") {
-  return `<div class="field"><label>${label}</label><input type="${type}" data-filter="${key}" value="${state.filters[key]}" placeholder="${placeholder}"></div>`;
+  return `<div class="field"><label>${label}</label><input type="${type}" data-filter="${key}" value="${escapeHtml(state.filters[key] || "")}" placeholder="${escapeHtml(placeholder || "")}"></div>`;
 }
 
 function comboFilter(key, label, options, placeholder = "") {
@@ -10478,8 +10490,8 @@ function importRows(rows, options = {}) {
     const removedAt = isRemovedImport
       ? (normalizeImportDate(get("Removed Date", "Removed On")) || normalizeImportDate(get("Checked Date")) || completedDate || fileReceivedDate)
       : "";
-    const removedBy = isRemovedImport ? (get("Removed By") || get("Checked By") || "Imported Record") : "";
-    const removalReason = isRemovedImport ? (get("Removal Reason", "Removed Reason") || get("Remarks", "Remark", "Notes") || "Imported as Removed") : "";
+    const removedBy = isRemovedImport ? (get("Removed By") || get("Checked By") || "Chindu") : "";
+    const removalReason = isRemovedImport ? (get("Removal Reason", "Removed Reason") || get("Remarks", "Remark", "Notes") || "Not Service Required") : "";
     const record = {
       id: crypto.randomUUID(),
       name,
