@@ -273,7 +273,7 @@ async function applyMigration(actorId, confirmation) {
       if (fileClientId(file)) return file;
       const key = filePan(file) ? `pan:${filePan(file)}` : `name:${normalizeName(file.name)}`;
       const client = linked.get(key);
-      return client ? { ...file, clientId: client.id, client_id: client.id, clientSnapshot: snapshot(client), client_snapshot: snapshot(client) } : file;
+      return client ? { ...file, clientId: client.id, client_id: client.id, contactNo: file.contactNo || file.contact_no || client.contact_number || "", contact_no: file.contact_no || file.contactNo || client.contact_number || "", clientSnapshot: snapshot(client), client_snapshot: snapshot(client) } : file;
     });
     return next;
   }, actorId);
@@ -309,7 +309,7 @@ async function linkUnlinkedFiles(actorId) {
       const client = cache.get(key) || byPan.get(pan) || byName.get(normalizeName(file.name));
       if (!client) return file;
       linked += 1;
-      return { ...file, clientId: client.id, client_id: client.id, clientSnapshot: snapshot(client), client_snapshot: snapshot(client) };
+      return { ...file, clientId: client.id, client_id: client.id, contactNo: file.contactNo || file.contact_no || client.contact_number || "", contact_no: file.contact_no || file.contactNo || client.contact_number || "", clientSnapshot: snapshot(client), client_snapshot: snapshot(client) };
     });
     return next;
   }, actorId);
@@ -323,7 +323,7 @@ async function syncClientToActiveFiles(clientId, actorId) {
     state.files = (state.files || []).map((file) => {
       if (fileClientId(file) !== clientId || file.removed || file.stages?.Removed || file.filed || file.stages?.Completed || file.billed) return file;
       updated += 1;
-      return { ...file, name: client.client_name, pan: client.pan_reg_no || "", careOf: client.care_of || file.careOf, clientSnapshot: snapshot(client), client_snapshot: snapshot(client), updatedAt: Date.now() };
+      return { ...file, name: client.client_name, pan: client.pan_reg_no || "", careOf: client.care_of || file.careOf, contactNo: file.contactNo || file.contact_no || client.contact_number || "", contact_no: file.contact_no || file.contactNo || client.contact_number || "", clientSnapshot: snapshot(client), client_snapshot: snapshot(client), updatedAt: Date.now() };
     });
     return state;
   }, actorId);

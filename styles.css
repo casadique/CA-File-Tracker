@@ -956,6 +956,26 @@ th {
   justify-content: flex-end;
 }
 
+.checking-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid #d7e3f1;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.checking-summary strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.checking-summary span {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .backdrop {
   display: none;
   position: fixed;

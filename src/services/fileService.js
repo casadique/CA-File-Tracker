@@ -424,7 +424,8 @@ async function markFileChecked(fileId, payload, userId, profile = {}) {
     if (!isCompletedFile(before) || hasOpenCorrection(before) || isCheckedFile(before)) {
       throw httpError("This file is not pending checking.", 400);
     }
-    if (fileWasCompletedBy(before, profile)) {
+    const checkerRole = String(profile?.role || "").trim().toLowerCase();
+    if (checkerRole !== "admin" && fileWasCompletedBy(before, profile)) {
       throw httpError("You cannot check a file completed by yourself. This file must be checked by another authorised user.", 403);
     }
     const checkingRemarks = String(payload?.checkingRemarks || "").trim();
@@ -438,7 +439,14 @@ async function markFileChecked(fileId, payload, userId, profile = {}) {
     }
     const checkedBy = String(profile?.name || "").trim();
     if (!checkedBy) throw httpError("Checker profile name is unavailable.", 400);
-    const checkedDate = checkedAt.slice(0, 10);
+    const requestedCheckedDate = String(payload?.checkingDate || payload?.checkedDate || "").trim();
+    const checkedDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedCheckedDate)
+      ? requestedCheckedDate
+      : checkedAt.slice(0, 10);
+    const completionDate = String(before.completionDate || before.completedDate || before.completed_at || before.completedAt || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(completionDate) && checkedDate < completionDate) {
+      throw httpError("Checked date cannot be earlier than Work Completed date.", 400);
+    }
     const after = {
       ...before,
       checkedBy,
@@ -458,7 +466,17 @@ async function markFileChecked(fileId, payload, userId, profile = {}) {
     state.auditLog = [...(state.auditLog || []), {
       id: crypto.randomUUID(),
       action: "File marked Checked",
-      details: { fileId, fileName: after.name, checkedBy, checkedDate, checkedAt, checkingRemarks },
+      details: {
+        fileId,
+        fileName: after.name,
+        previousCheckingStatus: "Not Checked",
+        newCheckingStatus: "Checked",
+        checkedBy,
+        checkerUserId: profile?.id || profile?.auth_user_id || userId || "",
+        checkedDate,
+        checkedAt,
+        checkingRemarks,
+      },
       user: checkedBy,
       role: profile?.role || "",
       at: checkedAt,

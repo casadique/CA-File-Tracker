@@ -1104,10 +1104,10 @@ async function syncFileRecordToApi(file) {
   return result;
 }
 
-async function markFileCheckedInApi(fileId, checkingRemarks) {
+async function markFileCheckedInApi(fileId, checkingRemarks, checkingDate) {
   return apiJson(`/api/files/${encodeURIComponent(fileId)}/check`, {
     method: "POST",
-    body: JSON.stringify({ checkingRemarks }),
+    body: JSON.stringify({ checkingRemarks, checkingDate }),
   });
 }
 
@@ -2896,7 +2896,7 @@ function workDoneByUser(file = {}, user = loggedInUser()) {
 
 function canCheckFile(file = {}) {
   if (!canManageChecking()) return false;
-  if (["Admin", "Manager"].includes(state.currentRole)) return true;
+  if (normalizeRole(state.currentRole) === "Admin") return true;
   return !workDoneByUser(file);
 }
 
@@ -6255,10 +6255,7 @@ function bindFileActions() {
     btn.onclick = () => updateFileBilling(btn.dataset.feeNonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as Non Billable.");
   });
   document.querySelectorAll("[data-mark-billed]").forEach((btn) => {
-    btn.onclick = () => {
-      const file = state.files.find((item) => item.id === btn.dataset.markBilled);
-      updateFileBilling(btn.dataset.markBilled, { billingType: "Billable", billed: true, billedDate: normalizeImportDate(workCompletedDate(file)) || todayDate(), feeReceived: false, feeReceivedDate: "" }, "File marked as billed");
-    };
+    btn.onclick = () => openBilledFileModal(btn.dataset.markBilled);
   });
   document.querySelectorAll("[data-mark-received]").forEach((btn) => {
     btn.onclick = () => openMarkReceivedModal(btn.dataset.markReceived);
@@ -6360,7 +6357,7 @@ function bindFileActions() {
   });
 }
 
-async function checkCompletedFile(fileId) {
+function checkCompletedFile(fileId) {
   if (!canManageChecking()) return toast("Only authorised checkers can check completed files.");
   const index = state.files.findIndex((file) => file.id === fileId);
   if (index < 0) return toast("File record not found.");
@@ -6376,35 +6373,87 @@ async function checkCompletedFile(fileId) {
     saveState();
     return toast("You cannot check a file completed by yourself. This file must be checked by another authorised user.");
   }
+  openCheckingModal(file);
+}
+
+function openCheckingModal(file) {
   const checkedBy = state.currentUser || loggedInUser()?.name || "";
-  const checkedAt = new Date().toISOString();
-  const checkedDate = checkedAt.slice(0, 10);
-  const checkingRemarks = prompt("Checking Remarks", file.checkingRemarks || "")?.trim() || "";
+  const drawer = document.querySelector("#fileDrawer");
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <div><h3>Check File</h3><p class="small-muted">Confirm the checking details for ${escapeHtml(file.name || "this file")}.</p></div>
+      <button class="icon-button" id="closeCheckingModal" title="Close">X</button>
+    </div>
+    <form id="checkingForm" class="drawer-body">
+      <div class="checking-summary">
+        <strong>${escapeHtml(file.name || "")}</strong>
+        <span>${escapeHtml(file.serviceType || "")}${file.fy ? ` · FY ${escapeHtml(file.fy)}` : ""}</span>
+      </div>
+      <div class="field">
+        <label>Checking Date</label>
+        <input type="date" name="checkingDate" value="${todayDate()}" required>
+      </div>
+      <div class="field">
+        <label>Checking Remarks</label>
+        <textarea name="checkingRemarks" rows="5" placeholder="Enter verification notes or observations" required>${escapeHtml(file.checkingRemarks || "")}</textarea>
+      </div>
+      ${checkingDetailField("Checked By", checkedBy || "-")}
+    </form>
+    <div class="drawer-actions">
+      <button class="secondary-button" id="cancelChecking">Cancel</button>
+      <button class="primary-button" id="confirmChecking">Confirm Check</button>
+    </div>`;
+  drawer.classList.add("open");
+  document.querySelector("#backdrop").classList.add("show");
+  document.querySelector("#closeCheckingModal").onclick = closeOverlays;
+  document.querySelector("#cancelChecking").onclick = closeOverlays;
+  document.querySelector("#confirmChecking").onclick = () => submitCheckingForm(file.id);
+}
+
+async function submitCheckingForm(fileId) {
+  const form = document.querySelector("#checkingForm");
+  const button = document.querySelector("#confirmChecking");
+  if (!form || !button) return;
+  const data = new FormData(form);
+  const checkingDate = String(data.get("checkingDate") || "").trim();
+  const checkingRemarks = String(data.get("checkingRemarks") || "").trim();
+  if (!checkingDate) return toast("Please select a Checking Date.");
   if (!validCheckingRemark(checkingRemarks)) return toast("Please enter a valid Checking Remark containing at least two characters before marking this file as Checked.");
+  const index = state.files.findIndex((file) => file.id === fileId);
+  if (index < 0) return toast("File record not found.");
+  const file = { ...state.files[index] };
+  if (!isNotCheckedFile(file)) return toast("This file is no longer pending checking.");
+  button.disabled = true;
+  button.textContent = "Checking...";
   if (isSupabaseMode()) {
     try {
-      const result = await markFileCheckedInApi(fileId, checkingRemarks);
+      const result = await markFileCheckedInApi(fileId, checkingRemarks, checkingDate);
       if (result?.file) state.files = state.files.map((item) => (item.id === fileId ? { ...item, ...result.file } : item));
       if (result?.fileNotifications) state.fileNotifications = mergeFileNotifications(state.fileNotifications || [], result.fileNotifications).slice(0, 500);
       saveState({ skipMerge: true, skipRemote: true });
       toast("File marked as checked and synced");
+      closeOverlays();
       renderAll();
       return;
     } catch (error) {
       console.error("Checking update failed", { fileId, message: error.message });
+      button.disabled = false;
+      button.textContent = "Confirm Check";
       return toast(`Checking update failed: ${error.message || "Please retry."}`);
     }
   }
+  const checkedAt = new Date().toISOString();
+  const checkedBy = state.currentUser || loggedInUser()?.name || "";
   const updated = {
     ...file,
     checkedBy,
-    checkedDate,
+    checkedDate: checkingDate,
     checkedAt,
     checked_at: checkedAt,
     finalCompletedAt: file.finalCompletedAt || file.final_completed_at || checkedAt,
     final_completed_at: file.final_completed_at || file.finalCompletedAt || checkedAt,
     checkingRemarks,
-    lastUpdatedDate: todayDate(),
+    lastUpdatedDate: checkingDate,
     updatedAt: Date.now(),
     taskActivityAt: checkedAt,
     task_activity_at: checkedAt,
@@ -6417,7 +6466,9 @@ async function checkCompletedFile(fileId) {
     previousCheckingStatus: checkingStatusOf(file).label,
     newCheckingStatus: "Checked",
     checkedBy,
-    checkedDate,
+    checkedDate: checkingDate,
+    checkedAt,
+    checkerUserId: state.session?.userId || loggedInUser()?.id || "",
     checkingRemarks,
   });
   saveState();
@@ -6427,6 +6478,7 @@ async function checkCompletedFile(fileId) {
     return toast("Checked locally, but central sync failed. Please retry.");
   }
   toast("File marked as checked and synced");
+  closeOverlays();
   renderAll();
 }
 
@@ -6751,6 +6803,71 @@ async function updateFileBilling(fileId, updates, message, nextListView = "") {
   toast(/successfully/i.test(message) ? message : `${message} and synced`);
   renderAll();
   return true;
+}
+
+function openBilledFileModal(fileId) {
+  if (!rolePerm().assign) return toast("This role cannot update billing.");
+  const file = state.files.find((item) => item.id === fileId);
+  if (!file) return toast("File record not found.");
+  if (file.billed) return toast("This file is already marked as billed.");
+  const drawer = document.querySelector("#fileDrawer");
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <div><h3>Mark File as Billed</h3><p class="small-muted">Save billing details without changing the completed status.</p></div>
+      <button class="icon-button" id="closeBillingModal" title="Close">X</button>
+    </div>
+    <form id="billingForm" class="drawer-body">
+      <div class="checking-summary"><strong>${escapeHtml(file.name || "")}</strong><span>${escapeHtml(file.serviceType || "")}${file.fy ? ` · FY ${escapeHtml(file.fy)}` : ""}</span></div>
+      <div class="two-col">
+        ${formField("billingDate", "Billing Date", todayDate(), "date")}
+        ${formField("billAmount", "Bill Amount", file.billedAmount || file.billAmount || file.feeAmount || "", "number")}
+      </div>
+      ${formField("invoiceNumber", "Invoice Number / Bill Reference", file.invoiceNumber || file.billReference || "", "text", false)}
+      <div class="field"><label>Billing Remarks</label><textarea name="billingRemarks" rows="4">${escapeHtml(file.billingRemarks || "")}</textarea></div>
+    </form>
+    <div class="drawer-actions">
+      <button class="secondary-button" id="cancelBilling">Cancel</button>
+      <button class="primary-button" id="confirmBilling">Confirm Billed</button>
+    </div>`;
+  drawer.classList.add("open");
+  document.querySelector("#backdrop").classList.add("show");
+  document.querySelector("#closeBillingModal").onclick = closeOverlays;
+  document.querySelector("#cancelBilling").onclick = closeOverlays;
+  document.querySelector("#confirmBilling").onclick = () => submitBilledFile(file.id);
+}
+
+async function submitBilledFile(fileId) {
+  const form = document.querySelector("#billingForm");
+  const button = document.querySelector("#confirmBilling");
+  if (!form || !button) return;
+  const data = new FormData(form);
+  const billingDate = String(data.get("billingDate") || "").trim();
+  const billAmount = Number(data.get("billAmount"));
+  if (!billingDate) return toast("Please select a Billing Date.");
+  if (!Number.isFinite(billAmount) || billAmount <= 0) return toast("Please enter a Bill Amount greater than zero.");
+  button.disabled = true;
+  button.textContent = "Saving...";
+  const ok = await updateFileBilling(fileId, {
+    billingType: "Billable",
+    billed: true,
+    billedDate: billingDate,
+    billingDate,
+    billedAmount: billAmount,
+    billed_amount: billAmount,
+    billAmount,
+    feeAmount: billAmount,
+    balanceAmount: billAmount,
+    invoiceNumber: String(data.get("invoiceNumber") || "").trim(),
+    billReference: String(data.get("invoiceNumber") || "").trim(),
+    billingRemarks: String(data.get("billingRemarks") || "").trim(),
+    feeReceived: false,
+    feeReceivedDate: "",
+  }, "File marked as billed");
+  if (ok) closeOverlays();
+  else {
+    button.disabled = false;
+    button.textContent = "Confirm Billed";
+  }
 }
 
 function billingChangeText(before, after) {
@@ -7099,6 +7216,7 @@ function selectClientForFile(client) {
   setValue("name", client.client_name || client.clientName);
   setValue("pan", client.pan_reg_no || client.panRegNo);
   setValue("careOf", client.care_of || client.careOf);
+  setValue("contactNo", client.contact_number || client.contactNumber);
   apiJson(`/api/clients/${client.id}/selection`, { method: "POST", body: JSON.stringify({ context: editingId ? "Edit File" : "Add File" }) }).catch(() => {});
   const search = document.querySelector("#fileClientSearch");
   if (search) search.value = client.client_name || client.clientName || "";
@@ -7341,6 +7459,7 @@ function openFileDrawer(id) {
     client_name: file.name || "",
     pan_reg_no: file.pan || "",
     care_of: file.careOf || "",
+    contact_number: file.contactNo || file.contact_no || file.clientSnapshot?.contactNumber || "",
   } : null;
   if (id ? !canEditFileRecord(file) : !canCreateFile()) return toast("You do not have permission to edit this file.");
   const canAssignThisFile = canAssignFile(id ? file : null);
@@ -7356,8 +7475,9 @@ function openFileDrawer(id) {
         ${formField("name", "Client Name", file.name)}
         ${formField("pan", "PAN/Reg No", file.pan)}
         ${serviceField(file.serviceType)}
-        ${careOfField(file.careOf || "Direct")}
         ${fyField(file.fy || "NA")}
+        ${careOfField(file.careOf || "Direct")}
+        ${formField("contactNo", "Contact No", file.contactNo || file.contact_no || file.clientSnapshot?.contactNumber || "", "text", false)}
         ${selectField("mode", "Mode", modeDropdownOptions(file.mode), file.mode || "Whatsapp")}
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
         ${workflowStatusField(file)}
@@ -7408,6 +7528,8 @@ function openFileDrawer(id) {
   document.querySelector("#closeDrawer").onclick = closeOverlays;
   document.querySelector("#cancelFile").onclick = closeOverlays;
   document.querySelector("#saveFile").onclick = saveFileFromDrawer;
+  const contactInput = document.querySelector('#fileForm [name="contactNo"]');
+  if (contactInput) contactInput.maxLength = 40;
   bindFileClientLinker();
   document.querySelector("#serviceSelect").onchange = (e) => {
     const input = document.querySelector("#newServiceInput");
@@ -7477,6 +7599,8 @@ function blankFile() {
     pan: "",
     serviceType: serviceDropdownOptions()[0] || "Other Services",
     careOf: "Direct",
+    contactNo: "",
+    contact_no: "",
     fy: "NA",
     mode: "Whatsapp",
     fileReceivedDate: todayDate(),
@@ -7946,6 +8070,8 @@ async function saveFileFromDrawer() {
     pan: data.get("pan").trim(),
     serviceType,
     careOf,
+    contactNo: String(data.get("contactNo") || "").trim(),
+    contact_no: String(data.get("contactNo") || "").trim(),
     fy,
     mode: data.get("mode"),
     fileReceivedDate: data.get("fileReceivedDate"),
@@ -9446,6 +9572,7 @@ async function downloadImportTemplate() {
       "Service Type": "ITR Filing",
       FY: "2025-26",
       "C/o": "Direct",
+      "Contact No": "+91 98765 43210",
       Mode: "Whatsapp",
       "File Received Date": todayDate(),
       "Assigned Staff": "Not Assigned",
@@ -9471,6 +9598,7 @@ async function downloadImportTemplate() {
       "Service Type": "Form 15 Filing",
       FY: "2025-26",
       "C/o": "Taxmate",
+      "Contact No": "0497-1234567",
       Mode: "Email",
       "File Received Date": todayDate(),
       "Assigned Staff": "Nisha",
@@ -10970,6 +11098,7 @@ function importRows(rows, options = {}) {
       "C/o",
       masterSummary,
     );
+    const contactNo = get("Contact No", "Contact Number", "Mobile No", "Mobile Number", "Phone");
     const rawFy = get("FY", "Financial Year", "F.Y", "Assessment Year");
     const fy = normalizeImportFiscalYear(rawFy, excelRowNumber, serviceType);
     const mode = normalizeMode(get("Mode"), masterSummary) || "Whatsapp";
@@ -11025,6 +11154,8 @@ function importRows(rows, options = {}) {
       pan: get("PAN/Reg No", "PAN / Regn Number", "PAN", "Regn Number", "Registration Number") || "Not Entered",
       serviceType,
       careOf,
+      contactNo,
+      contact_no: contactNo,
       fy,
       mode,
       fileReceivedDate,
@@ -13997,6 +14128,7 @@ function cleanReportRows(rows) {
     "Service Type",
     "FY",
     "C/o",
+    "Contact No",
     "Mode",
     "File Received Date",
     "Assigned Staff",
@@ -14022,6 +14154,8 @@ function cleanReportRows(rows) {
     "pan",
     "serviceType",
     "careOf",
+    "contactNo",
+    "contact_no",
     "mode",
     "fileReceivedDate",
     "workDone",
@@ -14393,6 +14527,7 @@ function flattenFile(file) {
     "Service Type": file.serviceType,
     FY: file.fy || "NA",
     "C/o": file.careOf || "Direct",
+    "Contact No": file.contactNo || file.contact_no || file.clientSnapshot?.contactNumber || file.client_snapshot?.contactNumber || "",
     Mode: file.mode || "Whatsapp",
     "File Received Date": displayDate(file.fileReceivedDate),
     "Assigned Staff": file.assignedStaff,
