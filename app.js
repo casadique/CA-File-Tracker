@@ -342,6 +342,7 @@ let filterTimer = null;
 let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
+let centralImportInFlight = false;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
 let lastDashboardScrollAt = 0;
@@ -1240,6 +1241,7 @@ async function loadStateFromApi() {
 
 async function refreshCentralState(options = {}) {
   if (!state.session?.loggedIn || !isSupabaseMode()) return false;
+  if (centralImportInFlight) return false;
   if (!options.force && Date.now() - lastCentralRefreshAt < 12000) return false;
   if (!options.force && document.hidden) return false;
   if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
@@ -1329,6 +1331,7 @@ function scheduleDashboardRefreshRender() {
 
 async function checkCentralStateVersion() {
   if (!state.session?.loggedIn || !isSupabaseMode()) return false;
+  if (centralImportInFlight) return false;
   if (document.hidden) return false;
   if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
   if (Date.now() - lastCentralVersionCheckAt < 5000) return false;
@@ -9272,6 +9275,10 @@ function handleImportFile(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
+  if (centralImportInFlight) {
+    toast("A file import is already being saved. Please wait for it to finish.");
+    return;
+  }
   const lowerName = file.name.toLowerCase();
   if ((lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) && window.PREPARED_IMPORT_CSV && isPreparedTrackerWorkbookName(lowerName)) {
     importPreparedCsvFile();
@@ -9295,10 +9302,10 @@ function isPreparedTrackerWorkbookName(lowerName) {
 
 function readImportTextFile(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const rows = parseImportRows(String(reader.result || ""));
-      finishImport(rows);
+      await finishImport(rows);
     } catch (error) {
       toast("Import failed. Please check the Excel/CSV column format.");
     }
@@ -9308,7 +9315,7 @@ function readImportTextFile(file) {
 
 function readMaybeHtmlImportFile(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     const text = String(reader.result || "");
     if (isExcelHtmlFramesetWithoutSheetRows(text)) {
       toast("This Excel web file only points to another sheet. Please upload ca-file-tracker-import-template (8)_files/sheet001.htm instead.");
@@ -9316,7 +9323,7 @@ function readMaybeHtmlImportFile(file) {
     }
     if (/<table[\s>]/i.test(text) || /\.html?$/i.test(file.name)) {
       try {
-        finishImport(parseImportRows(text));
+        await finishImport(parseImportRows(text));
       } catch {
         toast("Import failed. Please check the Excel/HTML table format.");
       }
@@ -9338,14 +9345,14 @@ function isExcelHtmlFramesetWithoutSheetRows(text) {
 async function importPreparedCsvFile() {
   try {
     if (window.PREPARED_IMPORT_CSV) {
-      finishImport(parseImportRows(window.PREPARED_IMPORT_CSV), { forceFreshImport: true });
+      await finishImport(parseImportRows(window.PREPARED_IMPORT_CSV), { forceFreshImport: true });
       return;
     }
     const response = await fetch("CA%20File%20tracker%2015.07.2026%20import.csv", { cache: "no-store" });
     if (!response.ok) throw new Error("Prepared CSV file not found.");
     const text = await response.text();
     const rows = parseImportRows(text);
-    finishImport(rows, { forceFreshImport: true });
+    await finishImport(rows, { forceFreshImport: true });
   } catch (error) {
     toast("Prepared CSV could not load. Please open the app through the local server, then try again.");
   }
@@ -9381,7 +9388,7 @@ function importWorkbookFile(file) {
         }
       }
       if (!Array.isArray(rows) || !rows.length) throw new Error("The workbook does not contain any import rows.");
-      finishImport(rows);
+      await finishImport(rows);
     } catch (error) {
       console.error("Excel import failed", error);
       toast(`Excel upload failed: ${error.message || "Please check the workbook and try again."}`);
@@ -9609,29 +9616,17 @@ function loadPdfTools() {
   });
 }
 
-function finishImport(rows, options = {}) {
+async function finishImport(rows, options = {}) {
   const compactRows = compactImportRows(rows);
   const cleanedRows = compactRows
     .map((row) => row.map((cell) => String(cell ?? "").trim()))
     .filter((row) => row.some(Boolean));
   if (options.forceFreshImport) {
-    const imported = importRows(cleanedRows, { replace: true, assignSerials: true });
-    if (!imported.total) return toast("No valid file records found. Please keep the Name column in the first row.");
-    saveState({ skipMerge: true });
-    showFileImportSummary(imported, true);
-    activePage = "files";
-    resetFilters();
-    renderAll();
+    await commitFileRowsImport(cleanedRows, { replace: true, assignSerials: true });
     return;
   }
   if (isTrackerFileImportRows(cleanedRows)) {
-    const imported = importRows(cleanedRows);
-    if (!imported.total && !imported.skipped) return toast("No valid file records found. Please keep the Name column in the first row.");
-    saveState({ skipMerge: true });
-    showFileImportSummary(imported);
-    activePage = "files";
-    resetFilters();
-    renderAll();
+    await commitFileRowsImport(cleanedRows);
     return;
   }
   if (isBulkFeeReceivedUpdateRows(cleanedRows)) {
@@ -9661,13 +9656,65 @@ function finishImport(rows, options = {}) {
     }
     return;
   }
-  const imported = importRows(cleanedRows);
-  if (!imported.total) return toast("No valid file records found. Please keep the Name column in the first row.");
-  saveState({ skipMerge: true });
-  showFileImportSummary(imported);
-  activePage = "files";
-  resetFilters();
-  renderAll();
+  await commitFileRowsImport(cleanedRows);
+}
+
+async function commitFileRowsImport(cleanedRows, importOptions = {}) {
+  const stateBeforeImport = structuredClone(state);
+  const replaced = Boolean(importOptions.replace);
+  try {
+    const imported = importRows(cleanedRows, importOptions);
+    if (!imported.total && !imported.skipped) {
+      state = stateBeforeImport;
+      toast("No valid file records found. Please keep the Name column in the first row.");
+      return false;
+    }
+
+    saveState({ skipMerge: true, skipRemote: true });
+    if (isSupabaseMode()) {
+      toast(`Excel read successfully. Saving ${state.files.length} file record(s) to the central database...`);
+      await persistImportedStateToApi(state.files.length);
+    }
+
+    showFileImportSummary(imported, replaced);
+    activePage = "files";
+    resetFilters();
+    renderAll();
+    return true;
+  } catch (error) {
+    console.error("Central file import failed", error);
+    state = stateBeforeImport;
+    saveState({ skipMerge: true, skipRemote: true });
+    renderAll();
+    toast(`Import was not saved: ${error.message || "Central database update failed. Please try again."}`);
+    return false;
+  }
+}
+
+async function persistImportedStateToApi(expectedFileCount) {
+  if (!isSupabaseMode()) return;
+  centralImportInFlight = true;
+  clearTimeout(remoteSaveTimer);
+  try {
+    const shared = sharedStateForStorage(state);
+    const snapshot = JSON.stringify(shared);
+    const payload = await apiJson("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ state: shared }),
+    });
+    const savedFiles = payload?.state?.files;
+    if (!Array.isArray(savedFiles)) {
+      throw new Error("The central database did not confirm the imported file records.");
+    }
+    if (savedFiles.length !== expectedFileCount) {
+      throw new Error(`The central database confirmed ${savedFiles.length} of ${expectedFileCount} file records.`);
+    }
+    lastRemoteSaveSnapshot = snapshot;
+    lastCentralRefreshAt = Date.now();
+    applyCentralState(payload.state, { rerender: false });
+  } finally {
+    centralImportInFlight = false;
+  }
 }
 
 function isTrackerFileImportRows(rows) {
