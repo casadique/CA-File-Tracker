@@ -64,15 +64,20 @@ const defaultServices = sortList([
   "12A/80G Registration",
   "Accounts Preparation",
   "Accounts Review",
+  "Aadhaar PAN Linking",
   "Annual Compliance",
   "Bookkeeping",
   "Certificate- Others",
   "Company Incorporation",
   "Deed Drafting",
+  "DPT-3 Filing",
   "DSC",
-  "ESI/EPF Registration",
+  "EPF Registration",
+  "ESI Registration",
   "ESI/EPF Return Filing",
   "Feasibility Studies",
+  "Form 15 Filing",
+  "Form 3 Filing",
   "GST Audit",
   "GST Notice",
   "GSTR Filing",
@@ -82,7 +87,10 @@ const defaultServices = sortList([
   "ITR Filing",
   "KGST Audit",
   "LLP Incorporation",
+  "Networth Certificate",
+  "NRI Status Updation",
   "NSS Certification",
+  "NSS Utilization Certificate",
   "PAN Application",
   "Project Report",
   "Share Transfer",
@@ -93,6 +101,19 @@ const defaultServices = sortList([
   "Trade Mark",
   "Utilization Certificate",
 ]);
+
+const RETIRED_COMBINED_REGISTRATION = "ESI/EPF Registration";
+
+function canonicalServiceType(value) {
+  const serviceType = String(value || "").trim().replace(/\s+/g, " ");
+  if (/^net\s*worth certificate$/i.test(serviceType)) return "Networth Certificate";
+  if (/^independend audit$/i.test(serviceType)) return "Independent Audit";
+  return serviceType;
+}
+
+function isRetiredCombinedRegistration(value) {
+  return canonicalServiceType(value).toLowerCase() === RETIRED_COMBINED_REGISTRATION.toLowerCase();
+}
 
 const defaultCareOfList = sortList([
   "Bin",
@@ -121,6 +142,7 @@ const defaultCareOfList = sortList([
 const defaultFyList = ["2024-25", "2025-26", "2026-27", "2027-28", "NA"];
 
 const modes = ["Whatsapp", "Physical", "Email"];
+const defaultStaffMaster = ["Lakshmi", "Munazza", "Rishana"];
 const collectionTypeLabels = {
   fee_collection: "Fee Collection",
   other_cash_collection: "Other Cash Collection",
@@ -265,6 +287,17 @@ function normalizeDropdownKey(value) {
   return String(value || "").trim().toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function cleanMasterValue(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function canonicalMasterValue(value, masterValues = []) {
+  const cleanValue = cleanMasterValue(value);
+  if (!cleanValue) return "";
+  const key = normalizeDropdownKey(cleanValue);
+  return (masterValues || []).find((item) => normalizeDropdownKey(item) === key) || cleanValue;
+}
+
 function sortByName(items) {
   return [...items].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 }
@@ -394,6 +427,8 @@ function loadState() {
     files: seedFiles,
     services: defaultServices,
     careOfList: defaultCareOfList,
+    staffMaster: defaultStaffMaster,
+    modeList: modes,
     users: staff,
     invites: [],
     revokedAccess: [],
@@ -494,6 +529,8 @@ function normalizeState(appState) {
     appState.invites = (appState.invites || []).filter((invite) => approvedStaffNames.has(String(invite.name || "").toLowerCase()));
     appState.services = defaultServices;
     appState.careOfList = defaultCareOfList;
+    appState.staffMaster = dedupeByNormalizedText([...(appState.staffMaster || []), ...defaultStaffMaster]);
+    appState.modeList = dedupeByNormalizedText([...(appState.modeList || []), ...modes]);
     appState.masterListResetVersion = MASTER_LIST_RESET_VERSION;
   }
   const mergedUsers = [...staff];
@@ -555,8 +592,14 @@ function normalizeState(appState) {
   }
   appState.users = sortByName(mergedUsers.map((user) => ({ ...user, name: properCaseName(user.name) })));
   restoreMasterTeamUsers(appState);
-  appState.services = sortList([...(appState.services || []), ...defaultServices]);
+  appState.files = (appState.files || []).map((file) => ({
+    ...file,
+    serviceType: canonicalServiceType(file.serviceType),
+  }));
+  appState.services = sortList([...(appState.services || []).map(canonicalServiceType), ...defaultServices]);
   appState.careOfList = sortList([...(appState.careOfList || []), ...defaultCareOfList]);
+  appState.staffMaster = dedupeByNormalizedText([...(appState.staffMaster || []), ...defaultStaffMaster]);
+  appState.modeList = dedupeByNormalizedText([...(appState.modeList || []), ...modes]);
   appState.currentUser = properCaseName(oldToNewStaff[appState.currentUser] || appState.currentUser || "CA Sadique");
   if (!appState.users.some((user) => user.name === appState.currentUser)) appState.currentUser = "CA Sadique";
   if (appState.currentRole === "Viewer") appState.currentRole = "Guest";
@@ -770,7 +813,7 @@ function normalizeState(appState) {
       ...file,
       careOf: file.careOf || "Direct",
       fy: file.fy || file.financialYear || "NA",
-      mode: modes.includes(file.mode) ? file.mode : "Whatsapp",
+      mode: canonicalMasterValue(file.mode, appState.modeList || modes) || "Whatsapp",
       fileReceivedDate,
       assignedStaff,
       assignedStaffId: assignedUser.id || "",
@@ -872,11 +915,15 @@ function cleanDropdownMasterData(appState = state) {
   const before = {
     services: [...(appState.services || [])],
     careOfList: [...(appState.careOfList || [])],
+    staffMaster: [...(appState.staffMaster || [])],
+    modeList: [...(appState.modeList || [])],
   };
-  const usedServices = dedupeByNormalizedText((appState.files || []).map((file) => file.serviceType));
+  const usedServices = dedupeByNormalizedText((appState.files || []).map((file) => canonicalServiceType(file.serviceType)));
   const usedCareOf = dedupeByNormalizedText((appState.files || []).map((file) => file.careOf || "Direct"));
-  appState.services = usedServices.length ? usedServices : dedupeByNormalizedText(appState.services || defaultServices);
+  appState.services = dedupeByNormalizedText([...defaultServices, ...usedServices]);
   appState.careOfList = usedCareOf.length ? usedCareOf : dedupeByNormalizedText(appState.careOfList || defaultCareOfList);
+  appState.staffMaster = dedupeByNormalizedText([...(appState.staffMaster || []), ...defaultStaffMaster]);
+  appState.modeList = dedupeByNormalizedText([...(appState.modeList || []), ...modes, ...(appState.files || []).map((file) => file.mode)]);
   if (JSON.stringify(before.services) !== JSON.stringify(appState.services) || JSON.stringify(before.careOfList) !== JSON.stringify(appState.careOfList)) {
     appState.auditLog = [
       ...(appState.auditLog || []),
@@ -1364,6 +1411,8 @@ function mergeLatestSharedStateBeforeSave() {
     state.invites = mergeInvitesByEmail([...(latest.invites || []), ...(state.invites || [])]).filter((invite) => !isRevokedAccess(invite, state.revokedAccess));
     state.services = sortList([...(latest.services || []), ...(state.services || [])]);
     state.careOfList = sortList([...(latest.careOfList || []), ...(state.careOfList || [])]);
+    state.staffMaster = dedupeByNormalizedText([...(latest.staffMaster || []), ...(state.staffMaster || [])]);
+    state.modeList = dedupeByNormalizedText([...(latest.modeList || []), ...(state.modeList || [])]);
     state.company = { ...(latest.company || {}), ...(state.company || {}) };
   } catch {
     // If stored data cannot be read, continue with the current tab state.
@@ -2004,6 +2053,8 @@ function sharedSnapshot(appState) {
     fileNotifications: appState.fileNotifications || [],
     services: appState.services || [],
     careOfList: appState.careOfList || [],
+    staffMaster: appState.staffMaster || [],
+    modeList: appState.modeList || [],
     deletedFileIds: appState.deletedFileIds || [],
     company: appState.company || {},
     dailyQuotes: appState.dailyQuotes || [],
@@ -4712,7 +4763,7 @@ function renderFilesPage() {
         ${inputFilter("search", "Global Search", "Search name, PAN, staff, remarks")}
         ${inputFilter("client", "Client Name", "Client")}
         ${comboFilter("careOfFilter", "C/o", careOfDropdownOptions(), "Search or select C/o")}
-        ${selectFilter("service", "Service Type", ["", ...serviceDropdownOptions()])}
+        ${selectFilter("service", "Service Type", ["", ...serviceFilterOptions()])}
         ${selectFilter("workflow", "Workflow", ["", ...stages])}
         ${selectFilter("status", "Status", ["", "Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Corrected & Completed", "Approved", "Completed", "Billed", "Overdue"])}
         ${selectFilter("staff", "Staff", ["", ...assignableStaffNames()])}
@@ -6785,7 +6836,7 @@ function openFileDrawer(id) {
         ${serviceField(file.serviceType)}
         ${careOfField(file.careOf || "Direct")}
         ${fyField(file.fy || "NA")}
-        ${selectField("mode", "Mode", modes, file.mode || "Whatsapp")}
+        ${selectField("mode", "Mode", modeDropdownOptions(file.mode), file.mode || "Whatsapp")}
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
         ${workflowStatusField(file)}
         ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile)}
@@ -6999,7 +7050,17 @@ function selectField(name, label, options, value, disabled = false) {
 }
 
 function serviceDropdownOptions() {
-  return dedupeByNormalizedText(state.services || []);
+  return sortList(dedupeByNormalizedText([
+    ...defaultServices,
+    ...(state.services || []).map(canonicalServiceType),
+  ]).filter((serviceType) => !isRetiredCombinedRegistration(serviceType)));
+}
+
+function serviceFilterOptions() {
+  return sortList(dedupeByNormalizedText([
+    ...defaultServices,
+    ...(state.files || []).map((file) => canonicalServiceType(file.serviceType)),
+  ]));
 }
 
 function careOfDropdownOptions(currentValue = "") {
@@ -7012,10 +7073,14 @@ function assignableStaffNames(currentValue = "") {
     .filter((user) => user.isActive !== false && user.is_active !== false)
     .filter((user) => !isRemovedStaff(user.name))
     .map((user) => user.name);
-  return dedupeByNormalizedText([currentValue, ...names].filter((name) => {
+  return dedupeByNormalizedText([currentValue, ...(state.staffMaster || []), ...names].filter((name) => {
     const normalized = String(name || "").trim().toLowerCase();
     return normalized && normalized !== "not assigned" && normalized !== "not started";
   }));
+}
+
+function modeDropdownOptions(currentValue = "") {
+  return dedupeByNormalizedText([currentValue, ...(state.modeList || []), ...modes].filter(Boolean));
 }
 
 function serviceField(value) {
@@ -7250,10 +7315,19 @@ async function saveFileFromDrawer() {
     return toast("Staff cannot remove existing checking details.");
   }
   const selectedService = data.get("serviceType");
-  const serviceType = selectedService === "__new" ? document.querySelector("#newServiceInput").value.trim() : selectedService.trim();
+  const serviceType = canonicalServiceType(
+    selectedService === "__new" ? document.querySelector("#newServiceInput").value.trim() : selectedService
+  );
   if (!serviceType) {
     restoreSaveFileButton(saveButton);
     return toast("Please enter service type.");
+  }
+  if (
+    isRetiredCombinedRegistration(serviceType)
+    && (!existingFile || !isRetiredCombinedRegistration(existingFile.serviceType))
+  ) {
+    restoreSaveFileButton(saveButton);
+    return toast("ESI/EPF Registration is retired. Select ESI Registration or EPF Registration.");
   }
   if (!state.services.includes(serviceType)) state.services.push(serviceType);
   state.services = sortList(state.services);
@@ -8819,7 +8893,7 @@ async function downloadImportTemplate() {
     {
       "Client Name": "XYZ Pvt Ltd",
       "PAN/Reg No": "U12345KL2024PTC000001",
-      "Service Type": "Statutory Audit",
+      "Service Type": "Form 15 Filing",
       FY: "2025-26",
       "C/o": "Taxmate",
       Mode: "Email",
@@ -8842,7 +8916,16 @@ async function downloadImportTemplate() {
       Remarks: "",
     },
   ];
-  await downloadXlsxRows("ca-file-tracker-import-template", rows);
+  await downloadXlsxSheets("ca-file-tracker-import-template", [
+    { name: "Import Template", rows },
+    {
+      name: "Service Type Options",
+      rows: defaultServices.map((serviceType, index) => ({
+        SN: index + 1,
+        "Active Service Type": serviceType,
+      })),
+    },
+  ]);
   toast("Sample XLSX template downloaded");
 }
 
@@ -9478,7 +9561,7 @@ function finishImport(rows, options = {}) {
     const imported = importRows(cleanedRows, { replace: true, assignSerials: true });
     if (!imported.total) return toast("No valid file records found. Please keep the Name column in the first row.");
     saveState({ skipMerge: true });
-    toast(`${imported.total} file record(s) freshly imported`);
+    showFileImportSummary(imported, true);
     activePage = "files";
     resetFilters();
     renderAll();
@@ -9488,7 +9571,7 @@ function finishImport(rows, options = {}) {
     const imported = importRows(cleanedRows);
     if (!imported.total && !imported.skipped) return toast("No valid file records found. Please keep the Name column in the first row.");
     saveState({ skipMerge: true });
-    toast(`${imported.added} new file(s) imported${imported.skipped ? `, ${imported.skipped} duplicate(s) skipped` : ""}`);
+    showFileImportSummary(imported);
     activePage = "files";
     resetFilters();
     renderAll();
@@ -9524,7 +9607,7 @@ function finishImport(rows, options = {}) {
   const imported = importRows(cleanedRows);
   if (!imported.total) return toast("No valid file records found. Please keep the Name column in the first row.");
   saveState({ skipMerge: true });
-  toast(`${imported.added} new file(s) imported${imported.skipped ? `, ${imported.skipped} duplicate(s) skipped` : ""}`);
+  showFileImportSummary(imported);
   activePage = "files";
   resetFilters();
   renderAll();
@@ -10215,10 +10298,11 @@ function parseDelimitedRows(text) {
 }
 
 function importRows(rows, options = {}) {
-  if (!rows.length) return 0;
+  if (!rows.length) return { total: 0, added: 0, updated: 0, skipped: 0, masterSummary: createImportMasterSummary() };
   const headers = rows[0].map(normalizeImportHeader);
   const importedRecords = [];
   const importBatchTime = Date.now();
+  const masterSummary = createImportMasterSummary();
   rows.slice(1).forEach((row, rowIndex) => {
     const excelRowNumber = rowIndex + 2;
     const get = (...keys) => {
@@ -10231,13 +10315,22 @@ function importRows(rows, options = {}) {
     const name = get("Client Name", "Name", "Client");
     if (!name) return;
     const importSerialNumber = normalizeImportSerial(get("SN", "S.N", "S No", "S.No", "Sl No", "Sl.No", "Serial No", "Serial Number", "No")) || (options.assignSerials ? rowIndex + 1 : "");
-    const serviceType = get("Service Type", "Service") || state.services[0] || "Other Services";
-    const careOf = get("C/o", "Care Of", "CO", "C O") || "Direct";
+    const rawServiceType = get("Service Type", "Service") || defaultServices[0] || "Other Services";
+    const serviceType = normalizeImportedServiceType(rawServiceType, masterSummary);
+    if (isRetiredCombinedRegistration(serviceType)) {
+      throw new Error(`Row ${excelRowNumber}: ESI/EPF Registration is retired. Use ESI Registration or EPF Registration.`);
+    }
+    const careOf = normalizeImportedMasterValue(
+      get("C/o", "Care Of", "CO", "C O") || "Direct",
+      state.careOfList || [],
+      "C/o",
+      masterSummary,
+    );
     const rawFy = get("FY", "Financial Year", "F.Y", "Assessment Year");
     const fy = normalizeImportFiscalYear(rawFy, excelRowNumber, serviceType);
-    const mode = normalizeMode(get("Mode")) || "Whatsapp";
-    const assignedStaff = canonicalStaffName(normalizeImportStaff(get("Assigned Staff", "Staff")), "Not Assigned");
-    const reAssignedStaff = canonicalStaffName(normalizeImportStaff(get("Re Assigned", "Reassigned", "Re Assigned Staff")), "");
+    const mode = normalizeMode(get("Mode"), masterSummary) || "Whatsapp";
+    const assignedStaff = canonicalStaffName(normalizeImportStaff(get("Assigned Staff", "Staff"), masterSummary), "Not Assigned");
+    const reAssignedStaff = canonicalStaffName(normalizeImportStaff(get("Re Assigned", "Reassigned", "Re Assigned Staff"), masterSummary), "");
     const status = get("Status", "Workflow", "Final Status");
     const fileReceivedDate = normalizeImportDate(get(
       "File Received Date",
@@ -10323,7 +10416,7 @@ function importRows(rows, options = {}) {
       lastUpdatedDate: "2026-07-14",
       updatedAt: importBatchTime,
     };
-    rememberImportedLists(record);
+    rememberImportedLists(record, masterSummary);
     importedRecords.push(record);
   });
   assignMissingItrFiscalYears(importedRecords);
@@ -10332,7 +10425,7 @@ function importRows(rows, options = {}) {
   if (options.replace) {
     state.files = finalImportedRecords;
     state.deletedFileIds = [];
-    return { total: finalImportedRecords.length, added: finalImportedRecords.length, updated: 0, skipped: 0 };
+    return { total: finalImportedRecords.length, added: finalImportedRecords.length, updated: 0, skipped: 0, masterSummary: finalizeImportMasterSummary(masterSummary) };
   }
   const existingFiles = state.files || [];
   const addedRecords = [];
@@ -10346,7 +10439,29 @@ function importRows(rows, options = {}) {
     addedRecords.push(record);
   });
   state.files = [...existingFiles, ...addedRecords];
-  return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped };
+  return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped, masterSummary: finalizeImportMasterSummary(masterSummary) };
+}
+
+function showFileImportSummary(imported, replaced = false) {
+  const summary = imported.masterSummary || {};
+  const addedServices = summary.addedServices || [];
+  const addedStaff = summary.addedStaff || [];
+  const addedCareOf = summary.addedCareOf || [];
+  const addedModes = summary.addedModes || [];
+  const corrected = summary.correctedValues || [];
+  const duplicateValues = summary.skippedDuplicateValues || [];
+  const lines = [
+    "Import completed successfully.",
+    `${replaced ? imported.total : imported.added} files imported.`,
+    `${addedServices.length} new service type(s) added${addedServices.length ? `: ${addedServices.join(", ")}` : ""}.`,
+    `${addedStaff.length} new staff name(s) added${addedStaff.length ? `: ${addedStaff.join(", ")}` : ""}.`,
+    `${addedCareOf.length} new C/o value(s) added${addedCareOf.length ? `: ${addedCareOf.join(", ")}` : ""}.`,
+    `${addedModes.length} new mode value(s) added${addedModes.length ? `: ${addedModes.join(", ")}` : ""}.`,
+  ];
+  if (imported.skipped) lines.push(`${imported.skipped} duplicate file(s) skipped.`);
+  if (corrected.length) lines.push(`Corrected values: ${corrected.join("; ")}.`);
+  if (duplicateValues.length) lines.push(`Matched duplicate master values: ${duplicateValues.join("; ")}.`);
+  toast(lines.join(" "));
 }
 
 function collapseDuplicateImportedFiles(files) {
@@ -10598,8 +10713,8 @@ function normalizePriority(value) {
   return found || "";
 }
 
-function normalizeMode(value) {
-  return modes.find((item) => item.toLowerCase() === String(value || "").trim().toLowerCase()) || "";
+function normalizeMode(value, summary = null) {
+  return normalizeImportedMasterValue(value, [...modes, ...(state.modeList || [])], "Mode", summary);
 }
 
 function isYes(value) {
@@ -10607,20 +10722,13 @@ function isYes(value) {
   return ["yes", "y", "true", "1", "received", "paid"].includes(clean);
 }
 
-function normalizeImportStaff(value) {
-  const name = String(value || "").trim();
+function normalizeImportStaff(value, summary = null) {
+  const name = cleanMasterValue(value);
   if (!name) return "";
   if (name.toLowerCase() === "not assigned") return "Not Assigned";
-  const existing = state.users.find((user) => user.name.toLowerCase() === name.toLowerCase());
+  const existing = state.users.find((user) => normalizeDropdownKey(user.name) === normalizeDropdownKey(name));
   if (existing) return existing.name;
-  state.users.push({
-    id: crypto.randomUUID(),
-    name,
-    email: `${name.toLowerCase().replaceAll(" ", ".")}@mandaca.in`,
-    role: "Staff",
-    password: "Password@123",
-  });
-  return name;
+  return normalizeImportedMasterValue(name, state.staffMaster || [], "Staff", summary, { properCase: true });
 }
 
 function stagesFromImport(status, flags) {
@@ -10653,11 +10761,65 @@ function yesValue(value) {
   return ["yes", "true", "1", "y", "completed", "billed"].includes(String(value || "").trim().toLowerCase());
 }
 
-function rememberImportedLists(record) {
-  if (record.serviceType && !state.services.includes(record.serviceType)) state.services.push(record.serviceType);
-  if (record.careOf && !state.careOfList.includes(record.careOf)) state.careOfList.push(record.careOf);
-  state.services = sortList(state.services);
-  state.careOfList = sortList(state.careOfList);
+function createImportMasterSummary() {
+  return {
+    addedServices: new Set(),
+    addedStaff: new Set(),
+    addedCareOf: new Set(),
+    addedModes: new Set(),
+    correctedValues: new Set(),
+    skippedDuplicateValues: new Set(),
+  };
+}
+
+function noteImportCorrection(summary, category, rawValue, cleanValue) {
+  if (!summary || !rawValue || !cleanValue || rawValue === cleanValue) return;
+  summary.correctedValues.add(`${category}: "${rawValue}" -> "${cleanValue}"`);
+}
+
+function normalizeImportedMasterValue(value, masterValues, category, summary = null, options = {}) {
+  const rawValue = String(value || "");
+  const cleanValue = cleanMasterValue(rawValue);
+  if (!cleanValue) return "";
+  const match = (masterValues || []).find((item) => normalizeDropdownKey(item) === normalizeDropdownKey(cleanValue));
+  if (match) {
+    if (cleanValue !== match) {
+      noteImportCorrection(summary, category, rawValue, match);
+      summary?.skippedDuplicateValues.add(`${category}: "${rawValue}" matched "${match}"`);
+    }
+    return match;
+  }
+  const normalized = options.properCase ? properCaseName(cleanValue) : cleanValue;
+  noteImportCorrection(summary, category, rawValue, normalized);
+  return normalized;
+}
+
+function normalizeImportedServiceType(value, summary = null) {
+  const rawValue = String(value || "");
+  const canonicalValue = canonicalServiceType(rawValue);
+  noteImportCorrection(summary, "Service Type", rawValue, canonicalValue);
+  return normalizeImportedMasterValue(canonicalValue, [...defaultServices, ...(state.services || [])], "Service Type", summary);
+}
+
+function addImportedMasterValue(list, value, summarySet) {
+  if (!value) return list;
+  const existing = (list || []).find((item) => normalizeDropdownKey(item) === normalizeDropdownKey(value));
+  if (existing) return list;
+  summarySet?.add(value);
+  return dedupeByNormalizedText([...(list || []), value]);
+}
+
+function rememberImportedLists(record, summary = null) {
+  state.services = addImportedMasterValue(state.services || [], record.serviceType, summary?.addedServices);
+  state.careOfList = addImportedMasterValue(state.careOfList || [], record.careOf, summary?.addedCareOf);
+  state.modeList = addImportedMasterValue(state.modeList || modes, record.mode, summary?.addedModes);
+  state.staffMaster = addImportedMasterValue(state.staffMaster || [], record.assignedStaff, summary?.addedStaff);
+  state.staffMaster = addImportedMasterValue(state.staffMaster || [], record.reAssignedStaff, summary?.addedStaff);
+  state.staffMaster = dedupeByNormalizedText((state.staffMaster || []).filter(hasAssignedStaffValue));
+}
+
+function finalizeImportMasterSummary(summary) {
+  return Object.fromEntries(Object.entries(summary || createImportMasterSummary()).map(([key, value]) => [key, [...value]]));
 }
 
 function canUseVisitorModules() {

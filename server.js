@@ -11,7 +11,7 @@ const rateLimit = require("express-rate-limit");
 const { env } = require("./src/config/env");
 const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
-const { migrateDisplayNames } = require("./src/services/appStateService");
+const { migrateDisplayNames, migrateServiceTypes } = require("./src/services/appStateService");
 
 const app = express();
 const publicRoot = __dirname;
@@ -68,8 +68,10 @@ async function startServer() {
   try {
     const migration = await migrateDisplayNames();
     if (migration.changed) console.log("Staff display-name migration applied.");
+    const serviceMigration = await migrateServiceTypes();
+    if (serviceMigration.changed) console.log("Service-type migration applied.");
   } catch (error) {
-    console.error("Staff display-name migration failed:", error.message);
+    console.error("Startup data migration failed:", error.message);
   }
   app.listen(env.port, () => {
     console.log(`CA File Tracker running on port ${env.port}`);

@@ -1,5 +1,10 @@
 const crypto = require("crypto");
 const { patchAppState, sortFilesNewestFirst, normalizeFileNotifications } = require("./appStateService");
+const {
+  RETIRED_COMBINED_REGISTRATION,
+  canonicalServiceType,
+  isRetiredCombinedRegistration,
+} = require("../constants/serviceTypes");
 
 const WORKFLOW_STAGES = [
   "Received",
@@ -197,6 +202,18 @@ async function upsertFile(file, userId, profile = {}) {
     const files = state.files || [];
     const index = files.findIndex((item) => item.id === record.id);
     const before = index >= 0 ? { ...files[index] } : null;
+    record.serviceType = canonicalServiceType(
+      record.serviceType || record.service_type || before?.serviceType || before?.service_type
+    );
+    if (
+      isRetiredCombinedRegistration(record.serviceType)
+      && (!before || !isRetiredCombinedRegistration(before.serviceType || before.service_type))
+    ) {
+      throw httpError(
+        `${RETIRED_COMBINED_REGISTRATION} is retired. Select ESI Registration or EPF Registration.`,
+        400
+      );
+    }
     if ((!before || !isRemovedFile(before)) && isRemovedFile(record)) {
       throw httpError("Use the Remove action to move a file to Removed Files.", 400);
     }

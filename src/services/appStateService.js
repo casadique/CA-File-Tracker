@@ -1,5 +1,10 @@
 const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
+const {
+  ACTIVE_SERVICE_TYPES,
+  RETIRED_COMBINED_REGISTRATION,
+  canonicalServiceType,
+} = require("../constants/serviceTypes");
 
 const APP_STATE_ID = "default";
 const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
@@ -89,13 +94,15 @@ function emptyState() {
     auditLog: [],
     services: [],
     careOfList: [],
+    staffMaster: [],
+    modeList: [],
     company: {},
     theme: "professional",
   };
 }
 
 function normalizeServerState(state) {
-  const displayNormalizedState = normalizeDisplayNames(state);
+  const displayNormalizedState = normalizeServiceTypes(normalizeDisplayNames(state));
   return {
     ...displayNormalizedState,
     files: sortFilesNewestFirst(displayNormalizedState.files || []),
@@ -108,7 +115,63 @@ function normalizeServerState(state) {
     fileNotifications: normalizeFileNotifications(displayNormalizedState.fileNotifications || []),
     staffDetails: sortStaffDetailsNewestFirst(displayNormalizedState.staffDetails || []),
     correctionHistory: sortCorrectionsNewestFirst(displayNormalizedState.correctionHistory || []),
+    careOfList: normalizeMasterList(displayNormalizedState.careOfList || []),
+    staffMaster: normalizeMasterList(displayNormalizedState.staffMaster || []),
+    modeList: normalizeMasterList(displayNormalizedState.modeList || []),
   };
+}
+
+function normalizeMasterList(values = []) {
+  const uniqueValues = new Map();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const cleaned = String(value || "").trim().replace(/\s+/g, " ");
+    if (!cleaned) return;
+    const key = cleaned.toLocaleLowerCase("en-IN");
+    if (!uniqueValues.has(key)) uniqueValues.set(key, cleaned);
+  });
+  return [...uniqueValues.values()].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeServiceTypes(state = {}) {
+  const renamedState = replaceServiceLabels(state);
+  const files = (renamedState.files || []).map((file) => {
+    const serviceType = canonicalServiceType(file.serviceType || file.service_type);
+    return {
+      ...file,
+      serviceType,
+      ...(Object.prototype.hasOwnProperty.call(file, "service_type") ? { service_type: serviceType } : {}),
+    };
+  });
+  const legacyCombinedIsUsed = files.some(
+    (file) => file.serviceType.toLowerCase() === RETIRED_COMBINED_REGISTRATION.toLowerCase()
+  );
+  const services = [
+    ...ACTIVE_SERVICE_TYPES,
+    ...(renamedState.services || []).map(canonicalServiceType),
+    ...files.map((file) => file.serviceType),
+  ].filter((serviceType) => serviceType && (
+    serviceType.toLowerCase() !== RETIRED_COMBINED_REGISTRATION.toLowerCase()
+    || legacyCombinedIsUsed
+  ));
+  return {
+    ...renamedState,
+    files,
+    services: [...new Map(services.map((serviceType) => [serviceType.toLowerCase(), serviceType])).values()]
+      .sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+function replaceServiceLabels(value) {
+  if (Array.isArray(value)) return value.map(replaceServiceLabels);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, childValue]) => [key, replaceServiceLabels(childValue)])
+    );
+  }
+  if (typeof value !== "string") return value;
+  return value
+    .replace(/\bNet\s*Worth Certificate\b/gi, "Networth Certificate")
+    .replace(/\bIndependend Audit\b/gi, "Independent Audit");
 }
 
 function normalizeDisplayNames(value, key = "") {
@@ -143,6 +206,24 @@ async function migrateDisplayNames() {
   if (error) throw error;
   if (!data?.state) return { changed: false };
   const migrated = normalizeDisplayNames(data.state);
+  if (JSON.stringify(migrated) === JSON.stringify(data.state)) return { changed: false };
+  const { error: updateError } = await supabaseAdmin
+    .from("app_state")
+    .update({ state: migrated, updated_at: new Date().toISOString() })
+    .eq("id", APP_STATE_ID);
+  if (updateError) throw updateError;
+  return { changed: true };
+}
+
+async function migrateServiceTypes() {
+  const { data, error } = await supabaseAdmin
+    .from("app_state")
+    .select("state")
+    .eq("id", APP_STATE_ID)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.state) return { changed: false };
+  const migrated = normalizeServiceTypes(data.state);
   if (JSON.stringify(migrated) === JSON.stringify(data.state)) return { changed: false };
   const { error: updateError } = await supabaseAdmin
     .from("app_state")
@@ -327,4 +408,6 @@ module.exports = {
   normalizeFileNotifications,
   normalizeDisplayNames,
   migrateDisplayNames,
+  normalizeServiceTypes,
+  migrateServiceTypes,
 };
