@@ -9357,34 +9357,49 @@ function importWorkbookFile(file) {
     try {
       const arrayBuffer = reader.result;
       let rows = [];
+      let browserReadError = null;
       try {
         await loadSheetJs();
         const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellDates: true });
+        if (!workbook.SheetNames?.length) throw new Error("The workbook does not contain a worksheet.");
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         trimWorksheetToUsedImportRange(firstSheet);
         rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false, defval: "", dateNF: "yyyy-mm-dd" });
-      } catch {
+      } catch (error) {
+        browserReadError = error;
         try {
-          rows = await readWorkbookRowsFromServer(arrayBuffer);
-        } catch {
-          rows = await readWorkbookRowsOffline(arrayBuffer);
+          rows = await readWorkbookRowsFromServer(file, arrayBuffer);
+        } catch (serverError) {
+          if (!/\.xlsx$/i.test(file.name)) {
+            throw new Error(serverError.message || browserReadError.message || "The legacy Excel workbook could not be read.");
+          }
+          try {
+            rows = await readWorkbookRowsOffline(arrayBuffer);
+          } catch (offlineError) {
+            throw new Error(serverError.message || browserReadError.message || offlineError.message || "The workbook could not be read.");
+          }
         }
       }
+      if (!Array.isArray(rows) || !rows.length) throw new Error("The workbook does not contain any import rows.");
       finishImport(rows);
     } catch (error) {
-      toast("Excel upload failed. Please check that the file is a valid .xlsx workbook.");
+      console.error("Excel import failed", error);
+      toast(`Excel upload failed: ${error.message || "Please check the workbook and try again."}`);
     }
   };
   reader.onerror = () => toast("Excel upload failed. Please try selecting the file again.");
   reader.readAsArrayBuffer(file);
 }
 
-async function readWorkbookRowsFromServer(arrayBuffer) {
+async function readWorkbookRowsFromServer(file, arrayBuffer) {
   if (location.protocol === "file:") throw new Error("Local server is not available");
+  const formData = new FormData();
+  formData.append("file", new Blob([arrayBuffer]), file?.name || "import.xlsx");
+  const token = apiToken();
   const response = await fetch("/api/import-xlsx", {
     method: "POST",
-    headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-    body: arrayBuffer,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !Array.isArray(payload.rows)) throw new Error(payload.error || "Server Excel import failed");
@@ -9519,24 +9534,20 @@ function excelSerialDate(serial) {
 function trimWorksheetToUsedImportRange(sheet) {
   if (!sheet || !sheet["!ref"] || !window.XLSX) return;
   const range = XLSX.utils.decode_range(sheet["!ref"]);
+  const populatedCells = Object.keys(sheet)
+    .filter((address) => !address.startsWith("!"))
+    .map((address) => ({ address, position: XLSX.utils.decode_cell(address), cell: sheet[address] }))
+    .filter(({ cell }) => String(cell?.v ?? "").trim());
   let lastHeaderCol = -1;
-  for (let col = range.s.c; col <= range.e.c; col += 1) {
-    const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: col })];
-    if (cell && String(cell.v ?? "").trim()) lastHeaderCol = col;
-  }
+  populatedCells.forEach(({ position }) => {
+    if (position.r === range.s.r) lastHeaderCol = Math.max(lastHeaderCol, position.c);
+  });
   if (lastHeaderCol < range.s.c) return;
-  let lastRow = range.s.r;
-  for (let row = range.s.r; row <= range.e.r; row += 1) {
-    let hasValue = false;
-    for (let col = range.s.c; col <= lastHeaderCol; col += 1) {
-      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
-      if (cell && String(cell.v ?? "").trim()) {
-        hasValue = true;
-        break;
-      }
-    }
-    if (hasValue) lastRow = row;
-  }
+  const lastRow = populatedCells.reduce((maximum, { position }) => (
+    position.c >= range.s.c && position.c <= lastHeaderCol
+      ? Math.max(maximum, position.r)
+      : maximum
+  ), range.s.r);
   sheet["!ref"] = XLSX.utils.encode_range({
     s: { r: range.s.r, c: range.s.c },
     e: { r: lastRow, c: lastHeaderCol },

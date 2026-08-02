@@ -46,9 +46,16 @@ router.post("/backup", requireAuth, requireRole("Admin", "Manager"), async (req,
 
 router.post("/import-xlsx", requireAuth, upload.single("file"), async (req, res, next) => {
   try {
-    const buffer = req.file?.buffer || Buffer.from(await requestArrayBuffer(req));
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: "No Excel workbook was uploaded." });
+    }
+    const buffer = req.file.buffer;
     const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+    if (!workbook.SheetNames?.length) {
+      return res.status(400).json({ error: "The workbook does not contain a worksheet." });
+    }
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    trimWorksheetToUsedRange(firstSheet);
     const rows = XLSX.utils.sheet_to_json(firstSheet, {
       header: 1,
       raw: false,
@@ -61,12 +68,26 @@ router.post("/import-xlsx", requireAuth, upload.single("file"), async (req, res,
   }
 });
 
-function requestArrayBuffer(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
+function trimWorksheetToUsedRange(sheet) {
+  if (!sheet?.["!ref"]) return;
+  const declaredRange = XLSX.utils.decode_range(sheet["!ref"]);
+  const populatedCells = Object.keys(sheet)
+    .filter((address) => !address.startsWith("!"))
+    .map((address) => ({ position: XLSX.utils.decode_cell(address), cell: sheet[address] }))
+    .filter(({ cell }) => String(cell?.v ?? "").trim());
+  let lastHeaderColumn = -1;
+  populatedCells.forEach(({ position }) => {
+    if (position.r === declaredRange.s.r) lastHeaderColumn = Math.max(lastHeaderColumn, position.c);
+  });
+  if (lastHeaderColumn < declaredRange.s.c) return;
+  const lastRow = populatedCells.reduce((maximum, { position }) => (
+    position.c >= declaredRange.s.c && position.c <= lastHeaderColumn
+      ? Math.max(maximum, position.r)
+      : maximum
+  ), declaredRange.s.r);
+  sheet["!ref"] = XLSX.utils.encode_range({
+    s: declaredRange.s,
+    e: { r: lastRow, c: lastHeaderColumn },
   });
 }
 
