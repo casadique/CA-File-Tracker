@@ -10541,6 +10541,7 @@ function importRows(rows, options = {}) {
     importedRecords.push(record);
   });
   assignMissingItrFiscalYears(importedRecords);
+  fillMissingPanFromImportPeers(importedRecords);
   importedRecords.forEach((record) => delete record.importFyWasBlank);
   const finalImportedRecords = collapseDuplicateImportedFiles(importedRecords);
   const importDataSummary = summarizeImportedFileRows(finalImportedRecords);
@@ -10569,6 +10570,24 @@ function importRows(rows, options = {}) {
   });
   state.files = [...existingFiles, ...addedRecords];
   return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped, importDataSummary, masterSummary: finalizeImportMasterSummary(masterSummary) };
+}
+
+function fillMissingPanFromImportPeers(files) {
+  const panByClient = new Map();
+  files.forEach((file) => {
+    const clientKey = normalizeImportMatchText(file.name);
+    const pan = String(file.pan || "").trim();
+    const normalizedPan = normalizeImportMatchText(pan);
+    if (!clientKey || !pan || ["na", "n/a", "not entered", "not available"].includes(normalizedPan)) return;
+    if (!panByClient.has(clientKey)) panByClient.set(clientKey, new Set());
+    panByClient.get(clientKey).add(pan.toUpperCase());
+  });
+  files.forEach((file) => {
+    const normalizedPan = normalizeImportMatchText(file.pan);
+    if (normalizedPan && !["na", "n/a", "not entered", "not available"].includes(normalizedPan)) return;
+    const candidates = panByClient.get(normalizeImportMatchText(file.name));
+    if (candidates?.size === 1) file.pan = [...candidates][0];
+  });
 }
 
 function showFileImportSummary(imported, replaced = false) {
