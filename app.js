@@ -5586,7 +5586,7 @@ async function exportActiveFilesExcel(files = filteredFiles()) {
 
 async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
-  const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
+  const baseRows = reportFiles.map((file, index) => listView === "nonBilled" ? nonBilledReportRow(file, index) : staffReportRow(file, listView));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadXlsxRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -5595,7 +5595,7 @@ async function exportStaffPageExcel(listView, files) {
 
 async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
-  const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
+  const baseRows = reportFiles.map((file, index) => listView === "nonBilled" ? nonBilledReportRow(file, index) : staffReportRow(file, listView));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadPdfRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -5604,7 +5604,7 @@ async function exportStaffPagePdf(listView, files) {
 
 function printStaffPageReport(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
-  const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
+  const baseRows = reportFiles.map((file, index) => listView === "nonBilled" ? nonBilledReportRow(file, index) : staffReportRow(file, listView));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to print.");
   printReport(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -6051,6 +6051,19 @@ function feePendingReportFields(file = {}) {
     "Billed Amount": money(dashboardFileAmount(file, "billed")),
     "Received Amount": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
     "Balance Amount": money(filePendingAmount(file)),
+  };
+}
+
+function nonBilledReportRow(file = {}, index = 0) {
+  return {
+    SN: index + 1,
+    "Client Name": filePdfText(file.name),
+    "PAN/Reg No": filePdfText(fileRegistrationNumber(file), "NA"),
+    FY: filePdfText(fileFy(file), "NA"),
+    "Service Type": filePdfText(file.serviceType),
+    "C/o": filePdfText(file.careOf, "Direct"),
+    "Completion Date": filePdfCompletionDate(file),
+    Remarks: filePdfText(file.remarks),
   };
 }
 
@@ -13776,15 +13789,7 @@ function fileListReportRows(files) {
       };
     }
     if (section === "nonBilled") {
-      return {
-        SN: base.SN,
-        "Client Name": base["Client Name"],
-        "Service Type": base["Service Type"],
-        "Assigned Staff": base["Assigned Staff"],
-        "Completion Date": filePdfCompletionDate(file),
-        "Billing Type": filePdfText(file.billingType, "Non-Billable"),
-        Remarks: base.Remarks,
-      };
+      return nonBilledReportRow(file, index);
     }
     if (section === "feePending") {
       return {
