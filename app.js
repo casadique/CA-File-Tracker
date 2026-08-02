@@ -2359,6 +2359,7 @@ function normalizeStages(file) {
     Approved: Boolean(old.Approved),
     Completed: Boolean(old.Completed || old.Filed),
     "Corrected & Completed": Boolean(old["Corrected & Completed"] || old.corrected_completed || file.correctedCompleted || file.corrected_completed),
+    Removed: Boolean(old.Removed || file.status === "Removed" || file.workflowStatus === "Removed" || file.isRemoved || file.is_removed),
     Billed: Boolean(old.Billed || old["Billed / Completed"] || file.billed),
   };
 }
@@ -9722,7 +9723,7 @@ function isTrackerFileImportRows(rows) {
   const headers = rows[0].map(normalizeImportHeader);
   const has = (...keys) => keys.some((key) => headers.includes(normalizeImportHeader(key)));
   return has("Name", "Client", "Client Name")
-    && has("PAN / Regn Number", "PAN", "Regn Number", "Registration Number")
+    && has("PAN/Reg No", "PAN / Regn Number", "PAN", "Regn Number", "Registration Number")
     && has("Service Type", "Service")
     && (
       has("Due Date", "Due") ||
@@ -10436,6 +10437,7 @@ function importRows(rows, options = {}) {
     const assignedStaff = canonicalStaffName(normalizeImportStaff(get("Assigned Staff", "Staff"), masterSummary), "Not Assigned");
     const reAssignedStaff = canonicalStaffName(normalizeImportStaff(get("Re Assigned", "Reassigned", "Re Assigned Staff"), masterSummary), "");
     const status = get("Status", "Workflow", "Final Status");
+    const isRemovedImport = normalizeImportMatchText(status) === "removed";
     const fileReceivedDate = normalizeImportDate(get(
       "File Received Date",
       "Received Date",
@@ -10473,6 +10475,11 @@ function importRows(rows, options = {}) {
     const finalAssignedStaff = reAssignedStaff || assignedStaff;
     if (hasAssignedStaffValue(finalAssignedStaff)) stagesObj.Allotted = true;
     else stagesObj.Allotted = false;
+    const removedAt = isRemovedImport
+      ? (normalizeImportDate(get("Removed Date", "Removed On")) || normalizeImportDate(get("Checked Date")) || completedDate || fileReceivedDate)
+      : "";
+    const removedBy = isRemovedImport ? (get("Removed By") || get("Checked By") || "Imported Record") : "";
+    const removalReason = isRemovedImport ? (get("Removal Reason", "Removed Reason") || get("Remarks", "Remark", "Notes") || "Imported as Removed") : "";
     const record = {
       id: crypto.randomUUID(),
       name,
@@ -10501,6 +10508,16 @@ function importRows(rows, options = {}) {
       balanceAmount: Math.max(0, billAmount - receivedAmount),
       feeReceivedDate: billingImport.feeReceived ? (normalizeImportDate(get("Fee Received Date", "Payment Received Date", "Fee Payment Date")) || completedDate || "") : "",
       stages: stagesObj,
+      status: isRemovedImport ? "Removed" : "",
+      workflowStatus: isRemovedImport ? "Removed" : "",
+      isRemoved: isRemovedImport,
+      is_removed: isRemovedImport,
+      removedAt,
+      removed_at: removedAt,
+      removedBy,
+      removed_by: removedBy,
+      removalReason,
+      removal_reason: removalReason,
       assignedStaff: finalAssignedStaff,
       workAllotmentDate,
       workStartedDate: importedWorkStartedDate || (stagesObj.WIP ? workAllotmentDate : ""),
@@ -10526,28 +10543,37 @@ function importRows(rows, options = {}) {
   assignMissingItrFiscalYears(importedRecords);
   importedRecords.forEach((record) => delete record.importFyWasBlank);
   const finalImportedRecords = collapseDuplicateImportedFiles(importedRecords);
+  const importDataSummary = summarizeImportedFileRows(finalImportedRecords);
   if (options.replace) {
     state.files = finalImportedRecords;
     state.deletedFileIds = [];
-    return { total: finalImportedRecords.length, added: finalImportedRecords.length, updated: 0, skipped: 0, masterSummary: finalizeImportMasterSummary(masterSummary) };
+    return { total: finalImportedRecords.length, added: finalImportedRecords.length, updated: 0, skipped: 0, importDataSummary, masterSummary: finalizeImportMasterSummary(masterSummary) };
   }
   const existingFiles = state.files || [];
+  const matchedExistingIndexes = new Set();
   const addedRecords = [];
   let skipped = 0;
   finalImportedRecords.forEach((record) => {
-    const duplicate = [...existingFiles, ...addedRecords].some((file) => sameImportedFile(file, record));
-    if (duplicate) {
+    // Treat imports as a multiset: an existing row can satisfy only one workbook
+    // row. This preserves legitimate repeated monthly/periodic assignments while
+    // still preventing a second upload of the same workbook from duplicating it.
+    const existingIndex = existingFiles.findIndex((file, index) => (
+      !matchedExistingIndexes.has(index) && sameImportedFile(file, record)
+    ));
+    if (existingIndex >= 0) {
+      matchedExistingIndexes.add(existingIndex);
       skipped += 1;
       return;
     }
     addedRecords.push(record);
   });
   state.files = [...existingFiles, ...addedRecords];
-  return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped, masterSummary: finalizeImportMasterSummary(masterSummary) };
+  return { total: finalImportedRecords.length, added: addedRecords.length, updated: 0, skipped, importDataSummary, masterSummary: finalizeImportMasterSummary(masterSummary) };
 }
 
 function showFileImportSummary(imported, replaced = false) {
   const summary = imported.masterSummary || {};
+  const dataSummary = imported.importDataSummary || {};
   const addedServices = summary.addedServices || [];
   const addedStaff = summary.addedStaff || [];
   const addedCareOf = summary.addedCareOf || [];
@@ -10556,7 +10582,10 @@ function showFileImportSummary(imported, replaced = false) {
   const duplicateValues = summary.skippedDuplicateValues || [];
   const lines = [
     "Import completed successfully.",
-    `${replaced ? imported.total : imported.added} files imported.`,
+    `${imported.total} workbook file row(s) processed.`,
+    `${replaced ? imported.total : imported.added} new file record(s) imported.`,
+    `${Number(dataSummary.panPresent || 0)} row(s) have PAN/Registration No.; ${Number(dataSummary.panUnavailable || 0)} row(s) contain NA or no PAN/Registration No.`,
+    `${Number(dataSummary.removed || 0)} removed file record(s) recognised.`,
     `${addedServices.length} new service type(s) added${addedServices.length ? `: ${addedServices.join(", ")}` : ""}.`,
     `${addedStaff.length} new staff name(s) added${addedStaff.length ? `: ${addedStaff.join(", ")}` : ""}.`,
     `${addedCareOf.length} new C/o value(s) added${addedCareOf.length ? `: ${addedCareOf.join(", ")}` : ""}.`,
@@ -10568,22 +10597,21 @@ function showFileImportSummary(imported, replaced = false) {
   toast(lines.join(" "));
 }
 
+function summarizeImportedFileRows(files) {
+  return files.reduce((summary, file) => {
+    const pan = normalizeImportMatchText(file.pan);
+    if (pan && !["na", "n/a", "not entered"].includes(pan)) summary.panPresent += 1;
+    else summary.panUnavailable += 1;
+    if (isRemovedFileRecord(file)) summary.removed += 1;
+    return summary;
+  }, { panPresent: 0, panUnavailable: 0, removed: 0 });
+}
+
 function collapseDuplicateImportedFiles(files) {
-  const map = new Map();
-  const passthrough = [];
-  files.forEach((file) => {
-    const key = importedDuplicateKey(file);
-    if (!key) {
-      passthrough.push(file);
-      return;
-    }
-    if (!map.has(key)) {
-      map.set(key, file);
-      return;
-    }
-    map.set(key, mergeDuplicateFileRecord(map.get(key), file));
-  });
-  return [...map.values(), ...passthrough].sort((a, b) => fileChangeTime(b) - fileChangeTime(a));
+  // Every populated spreadsheet row represents a file/work item. The same
+  // client, service and FY may legitimately recur on different dates, or even
+  // more than once on the same date, so never collapse rows inside one import.
+  return [...files].sort((a, b) => fileChangeTime(b) - fileChangeTime(a));
 }
 
 function importedDuplicateKey(file) {
@@ -10842,7 +10870,9 @@ function stagesFromImport(status, flags) {
   const matchedStage = stages.find((stage) => stage.toLowerCase() === normalizedStatus)
     || (normalizedStatus === "file received" ? "Received" : "")
     || (normalizedStatus === "filed" ? "Completed" : "");
-  if (matchedStage) {
+  if (matchedStage === "Removed") {
+    stageObj.Removed = true;
+  } else if (matchedStage) {
     const index = stages.indexOf(matchedStage);
     stages.forEach((stage, stageIndex) => {
       if (stageIndex <= index) stageObj[stage] = true;
