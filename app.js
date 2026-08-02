@@ -5436,6 +5436,16 @@ function staffReportRow(file, listView = "") {
       "Received By": file.feeReceivedBy || file.collectionStaff || "-",
     };
   }
+  if (listView === "feePending") {
+    return {
+      "Client Name": file.name,
+      Service: file.serviceType,
+      FY: file.fy || "NA",
+      "Assigned Staff": file.assignedStaff || "Not Assigned",
+      "Completion Date": displayDate(workCompletedDate(file)),
+      ...feePendingReportFields(file),
+    };
+  }
   if (listView === "active") {
     return {
       "Client Name": clientDetailsReportText(file),
@@ -5577,7 +5587,7 @@ async function exportActiveFilesExcel(files = filteredFiles()) {
 async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
-  const rows = listView === "feeReceived" ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
+  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadXlsxRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("Excel file downloaded");
@@ -5586,7 +5596,7 @@ async function exportStaffPageExcel(listView, files) {
 async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
-  const rows = listView === "feeReceived" ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
+  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadPdfRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("PDF file downloaded");
@@ -5595,7 +5605,7 @@ async function exportStaffPagePdf(listView, files) {
 function printStaffPageReport(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   const baseRows = reportFiles.map((file) => staffReportRow(file, listView));
-  const rows = listView === "feeReceived" ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
+  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to print.");
   printReport(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("Print report opened");
@@ -6032,6 +6042,15 @@ function feeReceiptReportFields(file = {}, balanceLabel = "Balance Amount") {
     "Received Date": displayDate(file.feeReceivedDate || file.receivedOn || file.received_on),
     "Payment Mode": file.paymentMode || file.receiptMode || "-",
     "Transaction Status": fileReceiptTransactionLabel(file),
+  };
+}
+
+function feePendingReportFields(file = {}) {
+  return {
+    "Bill Date": displayDate(file.billDate || file.bill_date || file.billedDate),
+    "Billed Amount": money(dashboardFileAmount(file, "billed")),
+    "Received Amount": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
+    "Balance Amount": money(filePendingAmount(file)),
   };
 }
 
@@ -13774,8 +13793,7 @@ function fileListReportRows(files) {
         "Service Type": base["Service Type"],
         "Assigned Staff": base["Assigned Staff"],
         "Completion Date": filePdfCompletionDate(file),
-        ...feeReceiptReportFields(file),
-        "Payment Status": file.feeReceived ? "Received" : "Pending",
+        ...feePendingReportFields(file),
       };
     }
     if (section === "feeReceived") {
@@ -13803,7 +13821,7 @@ function fileListReportRows(files) {
       "Due Date": base["Due Date"],
     };
   });
-  return section === "feeReceived" ? appendFeeReceiptTotals(rows, sourceFiles) : rows;
+  return ["feePending", "feeReceived"].includes(section) ? appendFeeReceiptTotals(rows, sourceFiles) : rows;
 }
 
 async function exportFilteredFilesPdf(files, button) {
