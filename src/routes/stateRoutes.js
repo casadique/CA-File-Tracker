@@ -4,6 +4,7 @@ const { getAppState, getAppStateRecord, saveAppState, backupPayload } = require(
 const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
 const { calculateDashboardCounts } = require("../services/fileViewRules");
+const { allClients, restoreClients } = require("../services/clientService");
 
 const router = express.Router();
 
@@ -43,7 +44,9 @@ router.put("/", requireAuth, requireRole("Admin"), async (req, res, next) => {
 
 router.get("/backup", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const payload = backupPayload(await getAppState(), req.profile.name);
+    const payload = backupPayload(await getAppState(), req.profile.name, {
+      clientMaster: await allClients({ status: "All" }),
+    });
     res.json(payload);
   } catch (error) {
     next(error);
@@ -78,7 +81,9 @@ router.post("/restore", requireAuth, requireRole("Admin"), async (req, res, next
   try {
     const incoming = req.body.state || req.body;
     const state = await saveAppState(incoming, req.user.id);
-    res.json({ ok: true, state });
+    const clientMaster = req.body.clientMaster || req.body.client_master || [];
+    const clients = await restoreClients(clientMaster, req.user.id);
+    res.json({ ok: true, state, clients });
   } catch (error) {
     next(error);
   }

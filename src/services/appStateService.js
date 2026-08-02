@@ -399,7 +399,7 @@ function dateOrNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function backupPayload(state, exportedBy = "") {
+function backupPayload(state, exportedBy = "", extras = {}) {
   return {
     app: "CA File Tracker",
     version: "supabase-central-state-v1",
@@ -419,9 +419,11 @@ function backupPayload(state, exportedBy = "") {
       auditLog: state.auditLog?.length || 0,
       billedFiles: (state.files || []).filter((file) => file.billed).length,
       completedFiles: (state.files || []).filter((file) => file.filed || file.stages?.Completed).length,
+      clients: Array.isArray(extras.clientMaster) ? extras.clientMaster.length : 0,
     },
     includedKeys: Object.keys(state).sort(),
     state,
+    clientMaster: Array.isArray(extras.clientMaster) ? extras.clientMaster : [],
   };
 }
 
