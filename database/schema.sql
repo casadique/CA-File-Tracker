@@ -6,6 +6,7 @@ create table if not exists public.app_users (
   email text unique not null,
   name text not null,
   role text not null check (role in ('Admin', 'Manager', 'Staff Manager', 'Staff', 'Guest')),
+  permissions jsonb not null default '[]'::jsonb,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

@@ -354,7 +354,7 @@ let lastChatFastSyncAt = 0;
 let chatSearchTimer = null;
 let selectedDrawerClient = null;
 let clientSearchTimer = null;
-const clientMasterUi = { search: "", status: "Active", page: 1, pageSize: 20, total: 0, rows: [], loading: false };
+const clientMasterUi = { search: "", status: "Active", page: 1, pageSize: 20, total: 0, rows: [], loading: false, masters: null };
 const fileSaveRequests = new Set();
 const PERF_LOG_ENABLED = (() => {
   try {
@@ -7119,14 +7119,56 @@ function clientSnapshotFromApi(client = {}) {
     clientCode: client.client_code || client.clientCode || "",
     clientName: client.client_name || client.clientName || "",
     panRegNo: client.pan_reg_no || client.panRegNo || "",
+    tan: client.tan || "",
+    gstNo: client.gst_no || client.gstNo || "",
+    cin: client.cin || "",
+    otherRegnNo: client.other_regn_no || client.otherRegnNo || "",
     clientType: client.client_type || client.clientType || "",
+    clientTypes: client.client_types || client.clientTypes || [],
+    constitution: client.constitution || "",
     contactPerson: client.contact_person || client.contactPerson || "",
     contactNumber: client.contact_number || client.contactNumber || "",
     email: client.email || "",
     place: client.place || "",
     careOf: client.care_of || client.careOf || "",
+    address: client.address || "",
+    status: client.status || "Active",
+    remarks: client.remarks || "",
     capturedAt: new Date().toISOString(),
   };
+}
+
+function registrationForService(client = {}, serviceType = "") {
+  const service = String(serviceType || "").toLowerCase();
+  const snapshot = client.clientSnapshot || client.client_snapshot || {};
+  if (/gst/.test(service)) return client.gst_no || client.gstNo || snapshot.gstNo || "";
+  if (/tds|tcs|tan|trace/.test(service)) return client.tan || snapshot.tan || "";
+  if (/epf|esi|other/.test(service)) return client.other_regn_no || client.otherRegnNo || snapshot.otherRegnNo || "";
+  return client.pan_reg_no || client.panRegNo || snapshot.panRegNo || "";
+}
+
+function applySelectedClientRegistration() {
+  const form = document.querySelector("#fileForm");
+  if (!form || !selectedDrawerClient) return;
+  const service = form.elements.serviceType?.value || "";
+  if (service === "__new") return;
+  form.elements.pan.value = registrationForService(selectedDrawerClient, service);
+}
+
+function canViewClientCredentials() {
+  if (normalizeRole(state.currentRole) === "Admin") return true;
+  const current = (state.users || []).find((user) => user.id === state.session?.userId || String(user.email || "").toLowerCase() === String(state.session?.userEmail || "").toLowerCase()) || {};
+  const raw = current.permissions || current.role_permissions || state.session?.permissions || [];
+  const values = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.keys(raw).filter((key) => raw[key]) : String(raw || "").split(","));
+  return values.map((value) => String(value).trim()).includes("view_client_credentials");
+}
+
+function canEditClientCredentials() {
+  if (normalizeRole(state.currentRole) === "Admin") return true;
+  const current = (state.users || []).find((user) => user.id === state.session?.userId || String(user.email || "").toLowerCase() === String(state.session?.userEmail || "").toLowerCase()) || {};
+  const raw = current.permissions || current.role_permissions || state.session?.permissions || [];
+  const values = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.keys(raw).filter((key) => raw[key]) : String(raw || "").split(","));
+  return values.map((value) => String(value).trim()).includes("edit_client_credentials");
 }
 
 function renderFileClientLinker(file = {}, editing = false) {
@@ -7147,6 +7189,7 @@ function renderFileClientLinker(file = {}, editing = false) {
         <div class="linked-client-chip ${linked ? "" : "hidden"}" id="linkedClientChip">
           <span><strong>${escapeHtml(linked?.client_name || linked?.clientName || file.name || "")}</strong><small>${escapeHtml(linked?.client_code || linked?.clientCode || "Linked client")}${linked?.pan_reg_no || linked?.panRegNo ? ` · ${escapeHtml(linked.pan_reg_no || linked.panRegNo)}` : ""}</small></span>
           <button type="button" class="mini-button" id="changeLinkedClient">Change Client</button>
+          ${canViewClientCredentials() ? `<button type="button" class="mini-button client-credential-action" id="fileClientCredentials">View Portal Credentials</button>` : ""}
         </div>
         <p class="small-muted">${editing && linked ? "This file keeps its saved client snapshot. Use Change Client only when the link is incorrect." : "Select a central client to fill identity fields. Work details remain specific to this file."}</p>
       </div>
@@ -7182,6 +7225,9 @@ function bindFileClientLinker() {
     search.focus();
   });
   document.querySelector("#inlineAddClientButton")?.addEventListener("click", () => openClientEditor(null, { onSelect: selectClientForFile }));
+  document.querySelector("#fileClientCredentials")?.addEventListener("click", () => {
+    if (selectedDrawerClient?.id) openClientCredentials(selectedDrawerClient.id, document.querySelector("#fileForm")?.elements.serviceType?.value || "");
+  });
 }
 
 async function searchClientsForFile(term) {
@@ -7214,9 +7260,13 @@ function selectClientForFile(client) {
   if (!form) return;
   const setValue = (name, value) => { const input = form.elements[name]; if (input && value) input.value = value; };
   setValue("name", client.client_name || client.clientName);
-  setValue("pan", client.pan_reg_no || client.panRegNo);
+  setValue("pan", registrationForService(client, form.elements.serviceType?.value));
   setValue("careOf", client.care_of || client.careOf);
   setValue("contactNo", client.contact_number || client.contactNumber);
+  setValue("contactPerson", client.contact_person || client.contactPerson);
+  setValue("clientEmail", client.email);
+  setValue("clientPlace", client.place);
+  setValue("clientAddress", client.address);
   apiJson(`/api/clients/${client.id}/selection`, { method: "POST", body: JSON.stringify({ context: editingId ? "Edit File" : "Add File" }) }).catch(() => {});
   const search = document.querySelector("#fileClientSearch");
   if (search) search.value = client.client_name || client.clientName || "";
@@ -7226,14 +7276,16 @@ function selectClientForFile(client) {
     chip.classList.remove("hidden");
     chip.querySelector("span").innerHTML = `<strong>${escapeHtml(client.client_name || client.clientName)}</strong><small>${escapeHtml(client.client_code || client.clientCode || "Linked client")}${client.pan_reg_no || client.panRegNo ? ` · ${escapeHtml(client.pan_reg_no || client.panRegNo)}` : ""}</small>`;
   }
+  const credentialsButton = document.querySelector("#fileClientCredentials");
+  if (credentialsButton) credentialsButton.classList.remove("hidden");
 }
 
-function renderClientMasterPage() {
+async function renderClientMasterPage() {
   const page = document.querySelector("#clientMaster");
   page.innerHTML = `
     <div class="client-master-toolbar panel-card">
       <div class="client-toolbar-primary">
-        <div class="field"><label>Search Clients</label><input id="clientMasterSearch" value="${escapeHtml(clientMasterUi.search)}" placeholder="Name, PAN/Regn No., contact, email or Client ID"></div>
+        <div class="field"><label>Search Clients</label><input id="clientMasterSearch" value="${escapeHtml(clientMasterUi.search)}" placeholder="Name, PAN, TAN, GST, CIN, contact, email or Client ID"></div>
         <div class="field"><label>Status</label><select id="clientMasterStatus"><option>Active</option><option>Inactive</option><option>All</option></select></div>
       </div>
       <div class="client-toolbar-actions">
@@ -7243,17 +7295,19 @@ function renderClientMasterPage() {
         <input class="hidden" id="clientImportInput" type="file" accept=".xlsx,.xls">
         <button class="secondary-button" id="clientExportButton">Export Excel</button>
         <button class="secondary-button" id="clientPdfButton">Export PDF</button>
+        ${state.currentRole === "Admin" ? `<button class="secondary-button" id="clientMastersButton">Manage Types & Constitutions</button>` : ""}
         ${state.currentRole === "Admin" ? `<button class="secondary-button" id="clientMigrationButton">Generate from Existing Files</button>` : ""}
       </div>
     </div>
     <div class="client-master-summary"><strong id="clientMasterCount">0 clients</strong><span>Central client records. File snapshots remain unchanged.</span></div>
     <div class="table-wrap client-master-table-wrap">
-      <table class="client-master-table"><thead><tr><th>Client ID</th><th>Client Name</th><th>PAN / Regn No.</th><th>Type</th><th>Contact</th><th>Place / C/o</th><th>Status</th><th>Actions</th></tr></thead><tbody id="clientMasterRows"><tr><td colspan="8">Loading clients...</td></tr></tbody></table>
+      <table class="client-master-table"><thead><tr><th>Client Name</th><th>Client Type</th><th>C/o</th><th>PAN</th><th>TAN</th><th>GST No.</th><th>Constitution</th><th>Contact Person</th><th>Contact No.</th><th>Email ID</th><th>Place</th><th>Status</th><th>Actions</th></tr></thead><tbody id="clientMasterRows"><tr><td colspan="13">Loading clients...</td></tr></tbody></table>
     </div>
     <div class="client-pagination"><button class="mini-button" id="clientPrevPage">Previous</button><span id="clientPageLabel">Page 1</span><button class="mini-button" id="clientNextPage">Next</button></div>
   `;
   document.querySelector("#clientMasterStatus").value = clientMasterUi.status;
   bindClientMasterPage();
+  loadClientMasters().catch(() => {});
   loadClientMaster();
 }
 
@@ -7273,35 +7327,35 @@ function bindClientMasterPage() {
   document.querySelector("#clientImportButton").onclick = () => document.querySelector("#clientImportInput").click();
   document.querySelector("#clientImportInput").onchange = importClientWorkbook;
   document.querySelector("#clientMigrationButton")?.addEventListener("click", migrateExistingClients);
+  document.querySelector("#clientMastersButton")?.addEventListener("click", openClientMasterManager);
 }
 
 async function loadClientMaster() {
   const body = document.querySelector("#clientMasterRows");
   if (!body || clientMasterUi.loading) return;
   clientMasterUi.loading = true;
-  body.innerHTML = `<tr><td colspan="8">Loading clients...</td></tr>`;
+  body.innerHTML = `<tr><td colspan="13">Loading clients...</td></tr>`;
   try {
     const query = new URLSearchParams({ search: clientMasterUi.search, status: clientMasterUi.status, page: clientMasterUi.page, pageSize: clientMasterUi.pageSize });
     const payload = await apiJson(`/api/clients?${query}`);
     clientMasterUi.rows = payload.clients || []; clientMasterUi.total = payload.total || 0;
-    body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="8">No clients found.</td></tr>`;
+    body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="13">No clients found.</td></tr>`;
     document.querySelector("#clientMasterCount").textContent = `${clientMasterUi.total} client(s)`;
     document.querySelector("#clientPageLabel").textContent = `Page ${clientMasterUi.page} of ${Math.max(1, Math.ceil(clientMasterUi.total / clientMasterUi.pageSize))}`;
     document.querySelector("#clientPrevPage").disabled = clientMasterUi.page <= 1;
     document.querySelector("#clientNextPage").disabled = clientMasterUi.page * clientMasterUi.pageSize >= clientMasterUi.total;
     bindClientMasterRows();
   } catch (error) {
-    body.innerHTML = `<tr><td colspan="8"><strong>${escapeHtml(error.message)}</strong>${error.status === 503 ? `<br><small>Run database/20260802_client_master.sql in Supabase SQL Editor, then refresh.</small>` : ""}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="13"><strong>${escapeHtml(error.message)}</strong>${error.status === 503 ? `<br><small>Run database/20260803_client_master_secure_upgrade.sql in Supabase SQL Editor, then refresh.</small>` : ""}</td></tr>`;
   } finally { clientMasterUi.loading = false; }
 }
 
 function clientMasterRow(client) {
   return `<tr>
-    <td><button class="text-button" data-client-profile="${client.id}">${escapeHtml(client.client_code)}</button></td>
-    <td><strong>${escapeHtml(client.client_name)}</strong><small class="table-secondary">${escapeHtml(client.email || "")}</small></td>
-    <td>${escapeHtml(client.pan_reg_no || "Not available")}</td><td>${escapeHtml(client.client_type || "-")}</td>
-    <td>${escapeHtml(client.contact_person || "-")}<small class="table-secondary">${escapeHtml(client.contact_number || "")}</small></td>
-    <td>${escapeHtml(client.place || "-")}<small class="table-secondary">${escapeHtml(client.care_of || "")}</small></td>
+    <td><button class="text-button" data-client-profile="${client.id}">${escapeHtml(client.client_name)}</button><small class="table-secondary">${escapeHtml(client.client_code || "")}</small></td>
+    <td>${escapeHtml((client.client_types || []).join(" | ") || client.client_type || "-")}</td>
+    <td>${escapeHtml(client.care_of || "-")}</td><td>${escapeHtml(client.pan_reg_no || "-")}</td><td>${escapeHtml(client.tan || "-")}</td><td>${escapeHtml(client.gst_no || "-")}</td>
+    <td>${escapeHtml(client.constitution || "-")}</td><td>${escapeHtml(client.contact_person || "-")}</td><td>${escapeHtml(client.contact_number || "-")}</td><td>${escapeHtml(client.email || "-")}</td><td>${escapeHtml(client.place || "-")}</td>
     <td><span class="badge ${client.status === "Active" ? "checked" : "neutral"}">${escapeHtml(client.status)}</span></td>
     <td><div class="table-actions"><button class="mini-button" data-client-edit="${client.id}">Edit</button><button class="mini-button" data-client-status="${client.id}" data-status="${client.status === "Active" ? "Inactive" : "Active"}">${client.status === "Active" ? "Deactivate" : "Activate"}</button></div></td>
   </tr>`;
@@ -7323,43 +7377,109 @@ function bindClientMasterRows() {
   });
 }
 
-function openClientEditor(client = null, options = {}) {
+async function loadClientMasters(force = false) {
+  if (clientMasterUi.masters && !force) return clientMasterUi.masters;
+  const payload = await apiJson("/api/clients/masters");
+  clientMasterUi.masters = {
+    clientTypes: (payload.clientTypes || []).filter((item) => item.is_active !== false),
+    constitutions: (payload.constitutions || []).filter((item) => item.is_active !== false),
+    clientTypesAll: payload.clientTypes || [],
+    constitutionsAll: payload.constitutions || [],
+    careOf: payload.careOf || [],
+  };
+  return clientMasterUi.masters;
+}
+
+async function openClientMasterManager() {
+  if (normalizeRole(state.currentRole) !== "Admin") return toast("Only Admin can manage client masters.");
+  try { await loadClientMasters(true); } catch (error) { return toast(error.message); }
+  document.querySelector("#clientMasterManagerModal")?.remove();
+  const masters = clientMasterUi.masters || {};
+  const modal = document.createElement("div");
+  modal.id = "clientMasterManagerModal";
+  modal.className = "client-modal-backdrop";
+  const rows = (kind, values) => values.map((item) => `<div class="client-master-edit-row" data-master-row data-kind="${kind}" data-id="${item.id}"><input name="name" value="${escapeHtml(item.name)}" aria-label="Name"><input name="order" type="number" min="1" value="${Number(item.display_order) || 100}" aria-label="Display order"><label class="permission-check"><input name="active" type="checkbox" ${item.is_active !== false ? "checked" : ""}> Active</label><button type="button" class="mini-button" data-save-master>Save</button></div>`).join("");
+  modal.innerHTML = `<div class="client-modal client-master-manager"><div class="drawer-head"><div><h3>Client Master Settings</h3><p class="small-muted">Maintain dropdown names, availability and display order.</p></div><button class="icon-button" data-close-master-manager>X</button></div><div class="client-master-settings-grid"><section><h4>Client Types</h4><div class="client-master-add-row" data-new-master="client-type"><input placeholder="New client type"><input type="number" min="1" value="100" aria-label="Display order"><button type="button" class="primary-button">Add</button></div>${rows("client-type", masters.clientTypesAll || [])}</section><section><h4>Constitutions</h4><div class="client-master-add-row" data-new-master="constitution"><input placeholder="New constitution"><input type="number" min="1" value="100" aria-label="Display order"><button type="button" class="primary-button">Add</button></div>${rows("constitution", masters.constitutionsAll || [])}</section></div></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector("[data-close-master-manager]").onclick = () => modal.remove();
+  modal.querySelectorAll("[data-save-master]").forEach((button) => button.onclick = async () => {
+    const row = button.closest("[data-master-row]");
+    button.disabled = true;
+    try {
+      await apiJson(`/api/clients/masters/${row.dataset.kind}/${row.dataset.id}`, { method: "PUT", body: JSON.stringify({ name: row.querySelector("[name=name]").value, displayOrder: row.querySelector("[name=order]").value, isActive: row.querySelector("[name=active]").checked }) });
+      clientMasterUi.masters = null; await loadClientMasters(true); toast("Client master updated.");
+    } catch (error) { toast(error.message); } finally { button.disabled = false; }
+  });
+  modal.querySelectorAll("[data-new-master]").forEach((row) => row.querySelector("button").onclick = async () => {
+    const name = row.querySelector("input:not([type=number])").value.trim();
+    if (!name) return toast("Enter a name.");
+    try {
+      await apiJson(`/api/clients/masters/${row.dataset.newMaster}`, { method: "POST", body: JSON.stringify({ name, displayOrder: row.querySelector("input[type=number]").value, isActive: true }) });
+      clientMasterUi.masters = null; modal.remove(); toast("Client master value added."); openClientMasterManager();
+    } catch (error) { toast(error.message); }
+  });
+}
+
+async function openClientEditor(client = null, options = {}) {
   document.querySelector("#clientEditorModal")?.remove();
+  try { await loadClientMasters(); } catch (error) { toast(error.message); return; }
+  const masters = clientMasterUi.masters || { clientTypes: [], constitutions: [], careOf: [] };
+  const selectedTypes = new Set(client?.client_types || String(client?.client_type || "").split(/\s*\|\s*/).filter(Boolean));
+  const canEditCredentials = canEditClientCredentials();
   const modal = document.createElement("div");
   modal.id = "clientEditorModal"; modal.className = "client-modal-backdrop";
   modal.innerHTML = `<div class="client-modal"><div class="drawer-head"><div><h3>${client ? "Edit Client" : "Add Client"}</h3><p class="small-muted">Client identity is stored centrally. Files keep a historical snapshot.</p></div><button class="icon-button" data-close-client-modal>X</button></div>
     <form id="clientEditorForm" class="client-editor-form">
-      <div class="two-col">${clientFormInput("clientName", "Client Name", client?.client_name, true)}${clientFormInput("panRegNo", "PAN / Registration No.", client?.pan_reg_no)}${clientFormSelect("clientType", "Client Type", ["Individual", "Company", "LLP", "Firm", "Trust", "Society", "Association", "Other"], client?.client_type || "Other")}${clientFormInput("constitution", "Constitution / Entity Type", client?.constitution)}${clientFormInput("aadhaarNo", "Aadhaar No.", client?.aadhaar_no)}${clientFormInput("contactPerson", "Contact Person", client?.contact_person)}${clientFormInput("contactNumber", "Contact Number", client?.contact_number)}${clientFormInput("email", "Email", client?.email, false, "email")}${clientFormInput("place", "Place", client?.place)}${clientFormInput("district", "District", client?.district)}${clientFormInput("careOf", "C/o", client?.care_of)}${clientFormInput("category", "Category (Audit / ITR / Other)", client?.category)}${clientFormSelect("status", "Status", ["Active", "Inactive"], client?.status || "Active")}</div>
-      ${clientFormInput("address", "Address", client?.address)}${clientFormInput("remarks", "Remarks", client?.remarks)}
+      <section class="client-form-section"><h4>Basic Information</h4><div class="two-col">
+        ${clientFormInput("clientName", "Client Name", client?.client_name, true)}
+        <div class="field client-type-picker"><label>Client Type</label><input id="clientTypeSearch" type="search" autocomplete="off" placeholder="Search client types"><select name="clientTypes" multiple size="6" required>${masters.clientTypes.map((item) => `<option value="${escapeHtml(item.name)}" ${selectedTypes.has(item.name) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select><input name="newClientType" placeholder="Add new Client Type"><small>Select one or more types. Imported multiple values use the | separator.</small></div>
+        <div class="field"><label>C/o</label><select name="careOf" id="clientCareOfSelect"><option value="">Select C/o</option>${masters.careOf.map((value) => `<option ${value === client?.care_of ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}<option value="__new">+ Add New C/o</option></select><input class="hidden" id="clientNewCareOf" placeholder="Enter new C/o"></div>
+      </div></section>
+      <section class="client-form-section"><h4>Registration and Tax Details</h4><p class="small-muted">Registration numbers are used to fill the correct identifier in Add File. Credentials are encrypted and restricted.</p><div class="two-col">${clientFormInput("panRegNo", "PAN", client?.pan_reg_no)}${canEditCredentials ? clientCredentialInput("itPassword", "IT PW") : ""}${clientFormInput("tan", "TAN", client?.tan)}${clientFormInput("gstNo", "GST No.", client?.gst_no)}${canEditCredentials ? clientCredentialInput("gstPassword", "GST PW") : ""}${clientFormInput("cin", "CIN", client?.cin)}${clientFormInput("otherRegnNo", "Other Regn No.", client?.other_regn_no)}<div class="field"><label>Constitution</label><select name="constitution" id="clientConstitutionSelect"><option value="">Select Constitution</option>${masters.constitutions.map((item) => `<option value="${escapeHtml(item.name)}" ${item.name === client?.constitution ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}<option value="__new">+ Add New Constitution</option></select><input class="hidden" id="clientNewConstitution" placeholder="Enter new constitution"></div></div></section>
+      <section class="client-form-section"><h4>Contact and Additional Details</h4><div class="two-col">${clientFormInput("contactPerson", "Contact Person", client?.contact_person)}${clientFormInput("contactNumber", "Contact No.", client?.contact_number)}${clientFormInput("email", "Email ID", client?.email, false, "email")}${canEditCredentials ? clientCredentialInput("tracesLogin", "Traces Login") + clientCredentialInput("tracesPassword", "Traces PW") : ""}${clientFormInput("place", "Place", client?.place)}${clientFormSelect("status", "Status", ["Active", "Inactive"], client?.status || "Active")}</div>${clientFormTextarea("address", "Address", client?.address)}${clientFormTextarea("remarks", "Remarks", client?.remarks)}</section>
       <div class="client-form-warning hidden" id="clientDuplicateWarning"></div>
       <div class="drawer-actions"><button type="button" class="secondary-button" data-close-client-modal>Cancel</button><button type="submit" class="primary-button">${client ? "Save Client" : "Create Client"}</button></div>
     </form></div>`;
   document.body.appendChild(modal);
   modal.querySelectorAll("[data-close-client-modal]").forEach((button) => button.onclick = () => modal.remove());
-  const syncIdentityFields = () => {
-    const individual = modal.querySelector("[name='clientType']")?.value === "Individual";
-    const aadhaarField = modal.querySelector("[name='aadhaarNo']")?.closest(".field");
-    if (aadhaarField) aadhaarField.classList.toggle("hidden", !individual);
-    const panLabel = modal.querySelector("[name='panRegNo']")?.closest(".field")?.querySelector("label");
-    if (panLabel) panLabel.textContent = individual ? "PAN" : "PAN / Registration No.";
-  };
-  modal.querySelector("[name='clientType']")?.addEventListener("change", syncIdentityFields);
-  syncIdentityFields();
+  const bindNewMaster = (selectId, inputId) => modal.querySelector(selectId)?.addEventListener("change", (event) => {
+    const input = modal.querySelector(inputId); input.classList.toggle("hidden", event.target.value !== "__new"); if (event.target.value === "__new") input.focus();
+  });
+  bindNewMaster("#clientCareOfSelect", "#clientNewCareOf");
+  bindNewMaster("#clientConstitutionSelect", "#clientNewConstitution");
+  modal.querySelector("#clientTypeSearch")?.addEventListener("input", (event) => {
+    const term = event.target.value.trim().toLowerCase();
+    modal.querySelectorAll("select[name='clientTypes'] option").forEach((option) => {
+      option.hidden = Boolean(term) && !option.textContent.toLowerCase().includes(term) && !option.selected;
+    });
+  });
+  modal.querySelectorAll("[data-toggle-client-secret]").forEach((button) => button.onclick = () => {
+    const input = modal.querySelector(`[name='${button.dataset.toggleClientSecret}']`); input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? "Show" : "Hide";
+  });
   modal.querySelector("#clientEditorForm").onsubmit = (event) => saveClientEditor(event, client, options);
 }
 
 function clientFormInput(name, label, value = "", required = false, type = "text") { return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${escapeHtml(value || "")}" ${required ? "required" : ""}></div>`; }
 function clientFormSelect(name, label, options, value) { return `<div class="field"><label>${label}</label><select name="${name}">${options.map((option) => `<option ${option === value ? "selected" : ""}>${option}</option>`).join("")}</select></div>`; }
+function clientFormTextarea(name, label, value = "") { return `<div class="field client-wide-field"><label>${label}</label><textarea name="${name}">${escapeHtml(value || "")}</textarea></div>`; }
+function clientCredentialInput(name, label) { return `<div class="field"><label>${label}</label><div class="client-secret-input"><input name="${name}" type="password" value="" autocomplete="new-password" placeholder="${label}"><button type="button" class="mini-button" data-toggle-client-secret="${name}">Show</button></div></div>`; }
 
 async function saveClientEditor(event, client, options, acceptWarnings = false) {
   event.preventDefault();
   const form = event.currentTarget;
-  const payload = Object.fromEntries(new FormData(form)); payload.acceptWarnings = acceptWarnings;
+  const data = new FormData(form);
+  const payload = Object.fromEntries(data); payload.clientTypes = data.getAll("clientTypes"); payload.acceptWarnings = acceptWarnings;
+  if (payload.newClientType?.trim()) payload.clientTypes.push(payload.newClientType.trim());
+  delete payload.newClientType;
+  if (payload.careOf === "__new") payload.careOf = document.querySelector("#clientNewCareOf")?.value.trim() || "";
+  if (payload.constitution === "__new") payload.constitution = document.querySelector("#clientNewConstitution")?.value.trim() || "";
+  ["itPassword", "gstPassword", "tracesLogin", "tracesPassword"].forEach((key) => { if (!payload[key]) delete payload[key]; });
   const submit = form.querySelector("button[type=submit]"); submit.disabled = true; submit.textContent = "Saving...";
   try {
     const result = await apiJson(client ? `/api/clients/${client.id}` : "/api/clients", { method: client ? "PUT" : "POST", body: JSON.stringify(payload) });
     document.querySelector("#clientEditorModal")?.remove();
     toast(client ? "Client updated." : "Client created.");
+    clientMasterUi.masters = null;
     if (options.onSelect) options.onSelect(result.client); else loadClientMaster();
   } catch (error) {
     if (error.payload?.warnings?.length && !acceptWarnings) {
@@ -7373,20 +7493,41 @@ async function openClientProfile(id) {
   const page = document.querySelector("#clientMaster"); page.innerHTML = `<div class="panel-card">Loading client profile...</div>`;
   try {
     const [data, auditData] = await Promise.all([apiJson(`/api/clients/${id}/profile`), apiJson(`/api/clients/${id}/audit`)]); const client = data.client; const summary = data.summary;
-    page.innerHTML = `<div class="client-profile-head panel-card"><button class="mini-button" id="clientProfileBack">Back</button><div><span class="eyebrow">${escapeHtml(client.client_code)}</span><h2>${escapeHtml(client.client_name)}</h2><p>${escapeHtml(client.pan_reg_no || "PAN/Regn No. not available")} · ${escapeHtml(client.client_type)}</p></div><div class="client-toolbar-actions"><button class="primary-button" id="clientProfileAddFile">Add New File for This Client</button><button class="secondary-button" id="clientProfileSync">Sync Latest Details to Active Files</button></div></div>
+    page.innerHTML = `<div class="client-profile-head panel-card"><button class="mini-button" id="clientProfileBack">Back</button><div><span class="eyebrow">${escapeHtml(client.client_code)}</span><h2>${escapeHtml(client.client_name)}</h2><p>${escapeHtml(client.pan_reg_no || "PAN/Regn No. not available")} - ${escapeHtml((client.client_types || []).join(" | ") || client.client_type)}</p></div><div class="client-toolbar-actions"><button class="primary-button" id="clientProfileAddFile">Add New File for This Client</button><button class="secondary-button" id="clientProfileSync">Sync Latest Details to Active Files</button>${canViewClientCredentials() ? `<button class="secondary-button client-credential-action" id="clientProfileCredentials">View Portal Credentials</button>` : ""}</div></div>
       <div class="client-profile-grid">${Object.entries({ "Total Files": summary.totalFiles, "Active Files": summary.activeFiles, "Completed Files": summary.completedFiles, "Overdue Files": summary.overdueFiles, "Non-Billed": summary.nonBilledFiles, "Fee Pending": summary.feePendingFiles }).map(([label, value]) => `<div class="client-profile-stat"><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>
-      <div class="panel-card client-detail-panel"><h3>Client Details</h3><dl>${Object.entries({ "Contact Person": client.contact_person, "Contact Number": client.contact_number, Email: client.email, Address: client.address, Place: client.place, District: client.district, "C/o": client.care_of, Status: client.status }).map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value || "-")}</dd></div>`).join("")}</dl></div>
-      <div class="client-profile-content"><div class="panel-card"><h3>Recent Files</h3><div class="table-wrap"><table><thead><tr><th>Client</th><th>Service</th><th>FY</th><th>Status</th><th>Last Updated</th></tr></thead><tbody>${data.recentFiles.length ? data.recentFiles.map((file) => `<tr><td>${escapeHtml(file.name)}</td><td>${escapeHtml(file.serviceType || "-")}</td><td>${escapeHtml(file.fy || "-")}</td><td>${escapeHtml(currentWorkflowStage(file))}</td><td>${escapeHtml(fmt(file.updatedAt || file.lastUpdatedDate))}</td></tr>`).join("") : `<tr><td colspan="5">No linked files.</td></tr>`}</tbody></table></div></div>
-      <div class="panel-card client-audit-panel"><h3>Client Activity</h3><div class="client-audit-list">${auditData.events?.length ? auditData.events.map((event) => `<article><span><strong>${escapeHtml(event.action)}</strong><small>${escapeHtml(event.actor_name || "System")}</small></span><time>${escapeHtml(fmt(event.created_at))}</time></article>`).join("") : `<p class="small-muted">No client activity recorded.</p>`}</div></div></div>`;
+      <div class="client-detail-sections">${clientProfileSection("Basic Details", { "Client Name": client.client_name, "Client Type": (client.client_types || []).join(" | ") || client.client_type, "C/o": client.care_of, Constitution: client.constitution, Status: client.status })}${clientProfileSection("Registration Details", { PAN: client.pan_reg_no, TAN: client.tan, "GST No.": client.gst_no, CIN: client.cin, "Other Regn No.": client.other_regn_no })}${clientProfileSection("Contact Details", { "Contact Person": client.contact_person, "Contact No.": client.contact_number, "Email ID": client.email, Place: client.place, Address: client.address })}${clientProfileSection("Additional Details", { Remarks: client.remarks })}</div>
+      <div class="client-profile-content"><div class="panel-card"><h3>Recent Files</h3><div class="table-wrap"><table><thead><tr><th>Client</th><th>Service</th><th>FY</th><th>Status</th><th>Last Updated</th></tr></thead><tbody>${data.recentFiles.length ? data.recentFiles.map((file) => `<tr><td>${escapeHtml(file.name)}</td><td>${escapeHtml(file.serviceType || "-")}</td><td>${escapeHtml(file.fy || "-")}</td><td>${escapeHtml(currentWorkflowStage(file))}</td><td>${escapeHtml(fmt(file.updatedAt || file.lastUpdatedDate))}</td></tr>`).join("") : `<tr><td colspan="5">No linked files.</td></tr>`}</tbody></table></div></div><div class="panel-card client-audit-panel"><h3>Client Activity</h3><div class="client-audit-list">${auditData.events?.length ? auditData.events.map((event) => `<article><span><strong>${escapeHtml(event.action)}</strong><small>${escapeHtml(event.actor_name || "System")}</small></span><time>${escapeHtml(fmt(event.created_at))}</time></article>`).join("") : `<p class="small-muted">No client activity recorded.</p>`}</div></div></div>`;
     document.querySelector("#clientProfileBack").onclick = renderClientMasterPage;
     document.querySelector("#clientProfileAddFile").onclick = () => { selectedDrawerClient = client; openFileDrawer(); setTimeout(() => selectClientForFile(client), 0); };
     document.querySelector("#clientProfileSync").onclick = async () => { if (!confirm("Update identity details on linked active files? Completed and billed file snapshots will remain unchanged.")) return; const result = await apiJson(`/api/clients/${id}/sync-active-files`, { method: "POST" }); toast(`${result.updated} active file(s) updated.`); };
+    document.querySelector("#clientProfileCredentials")?.addEventListener("click", () => openClientCredentials(id));
   } catch (error) { page.innerHTML = `<div class="permission-note">${escapeHtml(error.message)}</div>`; }
+}
+
+function clientProfileSection(title, values) {
+  return `<section class="panel-card client-detail-panel"><h3>${escapeHtml(title)}</h3><dl>${Object.entries(values).map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || "-")}</dd></div>`).join("")}</dl></section>`;
+}
+
+async function openClientCredentials(id, serviceType = "") {
+  if (!canViewClientCredentials()) return toast("You do not have permission to view client credentials.");
+  document.querySelector("#clientCredentialsModal")?.remove();
+  try {
+    const data = await apiJson(`/api/clients/${id}/credentials?serviceType=${encodeURIComponent(serviceType || "")}`);
+    const labels = { pan: "PAN", itPassword: "IT PW", gstNo: "GST No.", gstPassword: "GST PW", tan: "TAN", tracesLogin: "Traces Login", tracesPassword: "Traces PW", otherRegnNo: "Other Regn No." };
+    const secretKeys = new Set(["itPassword", "gstPassword", "tracesLogin", "tracesPassword"]);
+    const modal = document.createElement("div"); modal.id = "clientCredentialsModal"; modal.className = "client-modal-backdrop";
+    modal.innerHTML = `<div class="client-modal client-credentials-modal"><div class="drawer-head"><div><h3>Portal Credentials</h3><p class="small-muted">${escapeHtml(data.clientName || "Client")}${serviceType ? ` - ${escapeHtml(serviceType)}` : ""}. Access is audited and values are not cached.</p></div><button class="icon-button" data-close-credentials>X</button></div><div class="client-editor-form"><div class="two-col">${Object.entries(data.credentials || {}).map(([key, value]) => `<div class="field"><label>${escapeHtml(labels[key] || key)}</label><div class="client-secret-input"><input type="${secretKeys.has(key) ? "password" : "text"}" readonly value="${escapeHtml(value || "")}">${secretKeys.has(key) ? `<button type="button" class="mini-button" data-reveal-credential>Show</button>` : ""}</div></div>`).join("") || `<p class="permission-note">No credentials are stored for this service.</p>`}</div></div></div>`;
+    document.body.appendChild(modal);
+    modal.querySelector("[data-close-credentials]").onclick = () => modal.remove();
+    modal.addEventListener("click", (event) => { if (event.target === modal) modal.remove(); });
+    modal.querySelectorAll("[data-reveal-credential]").forEach((button) => button.onclick = () => { const input = button.parentElement.querySelector("input"); input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? "Show" : "Hide"; });
+  } catch (error) { toast(error.message || "Unable to load client credentials."); }
 }
 
 async function downloadClientTemplate() {
   await loadSheetJs();
-  const sheet = XLSX.utils.json_to_sheet([{ "Client Name": "", "PAN/Registration No": "", "Aadhaar No": "", "Client Type": "Individual", "Constitution": "", "Contact Person": "", "Contact Number": "", Email: "", Address: "", Place: "", District: "", "C/o": "", Category: "Other", Status: "Active", Remarks: "" }]);
+  const sheet = XLSX.utils.json_to_sheet([{ "Client Name": "", "Client Type": "Individual | GST Client", "C/o": "", PAN: "", "IT PW": "", TAN: "", "GST No.": "", "GST PW": "", CIN: "", "Other Regn No.": "", Constitution: "", "Contact Person": "", "Contact No.": "", "Email ID": "", "Traces Login": "", "Traces PW": "", Place: "", Status: "Active", Address: "", Remarks: "" }]);
+  sheet["!cols"] = [28, 30, 18, 16, 16, 16, 20, 16, 24, 22, 20, 22, 18, 28, 18, 18, 18, 12, 36, 36].map((wch) => ({ wch }));
   const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, "Client Master"); XLSX.writeFile(book, "ca-file-tracker-client-master-template.xlsx");
 }
 
@@ -7400,13 +7541,32 @@ async function exportClientMaster() {
 }
 
 function clientMasterExportRows(clients = []) {
-  return clients.map((client, index) => ({ SN: index + 1, "Client ID": client.client_code, "Client Name": client.client_name, "PAN/Registration No": client.pan_reg_no || "", "Aadhaar No": client.aadhaar_no || "", "Client Type": client.client_type, Constitution: client.constitution || "", "Contact Person": client.contact_person || "", "Contact Number": client.contact_number || "", Email: client.email || "", Place: client.place || "", District: client.district || "", "C/o": client.care_of || "", Category: client.category || "", Status: client.status, Remarks: client.remarks || "" }));
+  return clients.map((client, index) => ({
+    SN: index + 1,
+    "Client ID": client.client_code,
+    "Client Name": client.client_name,
+    "Client Type": (client.client_types || []).join(" | ") || client.client_type || "",
+    "C/o": client.care_of || "",
+    PAN: client.pan_reg_no || "",
+    TAN: client.tan || "",
+    "GST No.": client.gst_no || "",
+    CIN: client.cin || "",
+    "Other Regn No.": client.other_regn_no || "",
+    Constitution: client.constitution || "",
+    "Contact Person": client.contact_person || "",
+    "Contact No.": client.contact_number || "",
+    "Email ID": client.email || "",
+    Place: client.place || "",
+    Status: client.status || "Active",
+    Address: client.address || "",
+    Remarks: client.remarks || "",
+  }));
 }
 
 async function exportClientMasterPdf() {
   try {
     const payload = await apiJson(`/api/clients/export?${new URLSearchParams({ search: clientMasterUi.search, status: clientMasterUi.status })}`);
-    const rows = clientMasterExportRows(payload.clients || []).map((client) => ({ SN: client.SN, "Client ID": client["Client ID"], "Client Name": client["Client Name"], "PAN/Regn No.": client["PAN/Registration No"], Type: client["Client Type"], Contact: client["Contact Number"], Place: client.Place, Status: client.Status }));
+    const rows = clientMasterExportRows(payload.clients || []).map((client) => ({ SN: client.SN, "Client ID": client["Client ID"], "Client Name": client["Client Name"], "PAN/Regn No.": client.PAN, Type: client["Client Type"], Contact: client["Contact No."], Place: client.Place, Status: client.Status }));
     await downloadPdfRows("client-master", rows, ["Muhammad & Associates,", "Chartered Accountants,", "Client Master"]);
   } catch (error) { toast(error.message); }
 }
@@ -7415,8 +7575,34 @@ async function importClientWorkbook(event) {
   const file = event.target.files?.[0]; if (!file) return;
   try {
     await loadSheetJs(); const book = XLSX.read(await file.arrayBuffer(), { type: "array" }); const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { defval: "" });
+    const containsCredentials = rows.some((row) => ["IT PW", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
+    if (containsCredentials && !canEditClientCredentials()) {
+      throw new Error("This workbook contains protected client credentials. Only an authorised user can import it.");
+    }
     if (!await previewClientImport(rows)) return;
-    const clients = rows.map((row) => ({ clientName: row["Client Name"], panRegNo: row["PAN/Registration No"], aadhaarNo: row["Aadhaar No"], clientType: row["Client Type"], constitution: row.Constitution, contactPerson: row["Contact Person"], contactNumber: row["Contact Number"], email: row.Email, address: row.Address, place: row.Place, district: row.District, careOf: row["C/o"], category: row.Category, status: row.Status, remarks: row.Remarks }));
+    const value = (row, ...headers) => headers.map((header) => row[header]).find((item) => item !== undefined && item !== null && String(item).trim() !== "") || "";
+    const clients = rows.map((row) => ({
+      clientName: value(row, "Client Name"),
+      clientTypes: String(value(row, "Client Type")).split(/\s*\|\s*/).filter(Boolean),
+      careOf: value(row, "C/o", "C/O"),
+      panRegNo: value(row, "PAN", "PAN/Registration No", "PAN/Reg No"),
+      itPassword: value(row, "IT PW"),
+      tan: value(row, "TAN"),
+      gstNo: value(row, "GST No.", "GST No", "GSTIN"),
+      gstPassword: value(row, "GST PW"),
+      cin: value(row, "CIN"),
+      otherRegnNo: value(row, "Other Regn No.", "Other Regn No", "Other Registration No"),
+      constitution: value(row, "Constitution"),
+      contactPerson: value(row, "Contact Person"),
+      contactNumber: value(row, "Contact No.", "Contact Number"),
+      email: value(row, "Email ID", "Email"),
+      tracesLogin: value(row, "Traces Login"),
+      tracesPassword: value(row, "Traces PW"),
+      place: value(row, "Place"),
+      status: value(row, "Status") || "Active",
+      address: value(row, "Address"),
+      remarks: value(row, "Remarks"),
+    }));
     const result = await apiJson("/api/clients/import", { method: "POST", body: JSON.stringify({ clients }) });
     showClientImportResult(result); loadClientMaster();
   } catch (error) { toast(error.message || "Unable to import client workbook."); } finally { event.target.value = ""; }
@@ -7426,7 +7612,8 @@ function previewClientImport(rows) {
   return new Promise((resolve) => {
     const modal = document.createElement("div"); modal.className = "client-modal-backdrop";
     const previewRows = rows.slice(0, 10);
-    modal.innerHTML = `<div class="client-modal"><div class="drawer-head"><div><h3>Preview Client Import</h3><p class="small-muted">${rows.length} row(s) found. The first ${previewRows.length} are shown below. Exact PAN/Registration duplicates will be skipped.</p></div></div><div class="client-editor-form"><div class="table-wrap"><table><thead><tr><th>Row</th><th>Client Name</th><th>PAN / Regn No.</th><th>Type</th><th>Contact</th></tr></thead><tbody>${previewRows.map((row, index) => `<tr><td>${index + 2}</td><td>${escapeHtml(row["Client Name"] || "-")}</td><td>${escapeHtml(row["PAN/Registration No"] || "-")}</td><td>${escapeHtml(row["Client Type"] || "-")}</td><td>${escapeHtml(row["Contact Number"] || "-")}</td></tr>`).join("")}</tbody></table></div><div class="drawer-actions"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-import>Import ${rows.length} Client(s)</button></div></div></div>`;
+    const containsCredentials = rows.some((row) => ["IT PW", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
+    modal.innerHTML = `<div class="client-modal"><div class="drawer-head"><div><h3>Preview Client Import</h3><p class="small-muted">${rows.length} row(s) found. The first ${previewRows.length} are shown below. Exact PAN, TAN, GST and CIN duplicates are blocked.</p>${containsCredentials ? `<p class="client-secure-import-note">This workbook contains protected credentials. Values are hidden in preview and encrypted by the server during import.</p>` : ""}</div></div><div class="client-editor-form"><div class="table-wrap"><table><thead><tr><th>Row</th><th>Client Name</th><th>PAN</th><th>Type</th><th>Contact</th><th>Credentials</th></tr></thead><tbody>${previewRows.map((row, index) => `<tr><td>${index + 2}</td><td>${escapeHtml(row["Client Name"] || "-")}</td><td>${escapeHtml(row.PAN || row["PAN/Registration No"] || "-")}</td><td>${escapeHtml(row["Client Type"] || "-")}</td><td>${escapeHtml(row["Contact No."] || row["Contact Number"] || "-")}</td><td>${["IT PW", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()) ? "Protected" : "-"}</td></tr>`).join("")}</tbody></table></div><div class="drawer-actions"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-import>Import ${rows.length} Client(s)</button></div></div></div>`;
     document.body.appendChild(modal);
     modal.querySelector("[data-cancel]").onclick = () => { modal.remove(); resolve(false); };
     modal.querySelector("[data-import]").onclick = () => { modal.remove(); resolve(true); };
@@ -7435,7 +7622,8 @@ function previewClientImport(rows) {
 
 function showClientImportResult(result) {
   const modal = document.createElement("div"); modal.className = "client-modal-backdrop";
-  modal.innerHTML = `<div class="client-modal client-import-result"><div class="drawer-head"><div><h3>Client Import Result</h3><p class="small-muted">Import processing is complete.</p></div><button class="icon-button" data-close>X</button></div><div class="client-editor-form"><div class="client-profile-grid"><div class="client-profile-stat"><span>Rows</span><strong>${Number(result.total || 0)}</strong></div><div class="client-profile-stat"><span>Added</span><strong>${Number(result.added || 0)}</strong></div><div class="client-profile-stat"><span>Skipped</span><strong>${Number(result.skipped || 0)}</strong></div></div>${result.warnings?.length ? `<div class="client-import-warnings"><h4>Skipped / Invalid Rows</h4>${result.warnings.slice(0, 100).map((warning) => `<p>Row ${Number(warning.row || 0)}: ${escapeHtml(warning.message)}</p>`).join("")}</div>` : `<p class="permission-note">All rows were imported successfully.</p>`}<div class="drawer-actions"><button class="primary-button" data-close>Done</button></div></div></div>`;
+  const masters = result.masterValues || {};
+  modal.innerHTML = `<div class="client-modal client-import-result"><div class="drawer-head"><div><h3>Client Import Result</h3><p class="small-muted">Import processing is complete.</p></div><button class="icon-button" data-close>X</button></div><div class="client-editor-form"><div class="client-profile-grid"><div class="client-profile-stat"><span>Rows</span><strong>${Number(result.total || 0)}</strong></div><div class="client-profile-stat"><span>Added</span><strong>${Number(result.added || 0)}</strong></div><div class="client-profile-stat"><span>Skipped</span><strong>${Number(result.skipped || 0)}</strong></div></div><div class="client-import-master-summary"><span>${Number(masters.clientTypesAdded || 0)} new client type(s)</span><span>${Number(masters.constitutionsAdded || 0)} new constitution(s)</span><span>${Number(masters.careOfAdded || 0)} new C/o value(s)</span></div>${result.warnings?.length ? `<div class="client-import-warnings"><h4>Skipped / Invalid Rows</h4>${result.warnings.slice(0, 100).map((warning) => `<p>Row ${Number(warning.row || 0)}: ${escapeHtml(warning.message)}</p>`).join("")}</div>` : `<p class="permission-note">All rows were imported successfully.</p>`}<div class="drawer-actions"><button class="primary-button" data-close>Done</button></div></div></div>`;
   document.body.appendChild(modal); modal.querySelectorAll("[data-close]").forEach((button) => button.onclick = () => modal.remove());
 }
 
@@ -7458,8 +7646,17 @@ function openFileDrawer(id) {
     client_code: file.clientSnapshot?.clientCode || file.client_snapshot?.clientCode || "",
     client_name: file.name || "",
     pan_reg_no: file.pan || "",
+    tan: file.clientSnapshot?.tan || file.client_snapshot?.tan || "",
+    gst_no: file.clientSnapshot?.gstNo || file.client_snapshot?.gstNo || "",
+    cin: file.clientSnapshot?.cin || file.client_snapshot?.cin || "",
+    other_regn_no: file.clientSnapshot?.otherRegnNo || file.client_snapshot?.otherRegnNo || "",
+    constitution: file.clientSnapshot?.constitution || file.client_snapshot?.constitution || "",
     care_of: file.careOf || "",
+    contact_person: file.contactPerson || file.clientSnapshot?.contactPerson || file.client_snapshot?.contactPerson || "",
     contact_number: file.contactNo || file.contact_no || file.clientSnapshot?.contactNumber || "",
+    email: file.clientEmail || file.clientSnapshot?.email || file.client_snapshot?.email || "",
+    place: file.clientPlace || file.clientSnapshot?.place || file.client_snapshot?.place || "",
+    address: file.clientAddress || file.clientSnapshot?.address || file.client_snapshot?.address || "",
   } : null;
   if (id ? !canEditFileRecord(file) : !canCreateFile()) return toast("You do not have permission to edit this file.");
   const canAssignThisFile = canAssignFile(id ? file : null);
@@ -7478,6 +7675,10 @@ function openFileDrawer(id) {
         ${fyField(file.fy || "NA")}
         ${careOfField(file.careOf || "Direct")}
         ${formField("contactNo", "Contact No", file.contactNo || file.contact_no || file.clientSnapshot?.contactNumber || "", "text", false)}
+        ${formField("contactPerson", "Contact Person", file.contactPerson || file.clientSnapshot?.contactPerson || "", "text", false)}
+        ${formField("clientEmail", "Email ID", file.clientEmail || file.clientSnapshot?.email || "", "email", false)}
+        ${formField("clientPlace", "Place", file.clientPlace || file.clientSnapshot?.place || "", "text", false)}
+        ${formField("clientAddress", "Address", file.clientAddress || file.clientSnapshot?.address || "", "text", false)}
         ${selectField("mode", "Mode", modeDropdownOptions(file.mode), file.mode || "Whatsapp")}
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
         ${workflowStatusField(file)}
@@ -7535,6 +7736,7 @@ function openFileDrawer(id) {
     const input = document.querySelector("#newServiceInput");
     input.classList.toggle("hidden", e.target.value !== "__new");
     if (e.target.value === "__new") input.focus();
+    else applySelectedClientRegistration();
   };
   document.querySelector("#careOfSelect").onchange = (e) => {
     const input = document.querySelector("#newCareOfInput");
@@ -7601,6 +7803,10 @@ function blankFile() {
     careOf: "Direct",
     contactNo: "",
     contact_no: "",
+    contactPerson: "",
+    clientEmail: "",
+    clientPlace: "",
+    clientAddress: "",
     fy: "NA",
     mode: "Whatsapp",
     fileReceivedDate: todayDate(),
@@ -8072,6 +8278,10 @@ async function saveFileFromDrawer() {
     careOf,
     contactNo: String(data.get("contactNo") || "").trim(),
     contact_no: String(data.get("contactNo") || "").trim(),
+    contactPerson: String(data.get("contactPerson") || "").trim(),
+    clientEmail: String(data.get("clientEmail") || "").trim(),
+    clientPlace: String(data.get("clientPlace") || "").trim(),
+    clientAddress: String(data.get("clientAddress") || "").trim(),
     fy,
     mode: data.get("mode"),
     fileReceivedDate: data.get("fileReceivedDate"),
@@ -8956,6 +9166,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="newUserRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Credential Access</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="createUser" ${canManage && rolePerm().roles ? "" : "disabled"}>Create User</button>
@@ -8982,6 +9193,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="accessRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Credential Access</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="updateAccess" ${canManage && rolePerm().roles ? "" : "disabled"}>Update User</button>
@@ -9010,6 +9222,9 @@ function renderUsersPage() {
     accessRole.value = selected?.role || "Staff";
     accessEmail.value = selected?.email || "";
     document.querySelector("#accessPassword").value = "";
+    const permissions = Array.isArray(selected?.permissions) ? selected.permissions : [];
+    if (document.querySelector("#accessViewCredentials")) document.querySelector("#accessViewCredentials").checked = permissions.includes("view_client_credentials");
+    if (document.querySelector("#accessEditCredentials")) document.querySelector("#accessEditCredentials").checked = permissions.includes("edit_client_credentials");
   };
   setAccessForm();
   accessUser.onchange = setAccessForm;
@@ -9018,12 +9233,16 @@ function renderUsersPage() {
     const email = document.querySelector("#newUserEmail").value.trim().toLowerCase();
     const password = document.querySelector("#newUserPassword").value;
     const role = document.querySelector("#newUserRole").value;
+    const permissions = [
+      document.querySelector("#newUserViewCredentials")?.checked ? "view_client_credentials" : "",
+      document.querySelector("#newUserEditCredentials")?.checked ? "edit_client_credentials" : "",
+    ].filter(Boolean);
     if (!name || !email || !password) return toast("Please enter name, email and password.");
     if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
       try {
         await apiJson("/api/users", {
           method: "POST",
-          body: JSON.stringify({ name, email, password, role }),
+          body: JSON.stringify({ name, email, password, role, permissions }),
         });
         await loadStateFromApi();
         toast("Supabase user login created");
@@ -9035,6 +9254,7 @@ function renderUsersPage() {
     }
     const result = createOrUpdateTeamLogin({ name, email, role, password });
     if (result.error) return toast(result.error);
+    result.user.permissions = permissions;
     saveAccessState();
     const canLogin = authenticateUser(email, password);
     toast(canLogin ? "User login created" : "User saved, but login check failed. Please update the password once.");
@@ -9046,6 +9266,10 @@ function renderUsersPage() {
     const oldRole = user.role;
     const email = normalizeEmail(accessEmail.value);
     const password = document.querySelector("#accessPassword").value;
+    const permissions = [
+      document.querySelector("#accessViewCredentials")?.checked ? "view_client_credentials" : "",
+      document.querySelector("#accessEditCredentials")?.checked ? "edit_client_credentials" : "",
+    ].filter(Boolean);
     if (!email) return toast("Please enter email ID.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Please enter a valid email ID.");
     if (state.users.some((u) => u.id !== user.id && normalizeEmail(u.email) === email)) return toast("Email already exists.");
@@ -9059,6 +9283,7 @@ function renderUsersPage() {
             name: user.name,
             email,
             role: normalizeRole(accessRole.value),
+            permissions,
             ...(password ? { password } : {}),
           }),
         });
@@ -9073,6 +9298,7 @@ function renderUsersPage() {
     accessRestoreEmails.add(email);
     user.email = email;
     user.role = normalizeRole(accessRole.value);
+    user.permissions = permissions;
     if (password) user.password = password;
     state.revokedAccess = (state.revokedAccess || []).filter((item) => normalizeEmail(item.email || item || "") !== email);
     state.invites = state.invites.filter((invite) => normalizeEmail(invite.email) !== normalizeEmail(oldEmail) || normalizeEmail(oldEmail) === email);

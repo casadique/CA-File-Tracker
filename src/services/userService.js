@@ -2,7 +2,16 @@ const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
 const { getAppState, patchAppState } = require("./appStateService");
 
-async function createUser({ email, password, name, role }) {
+const CLIENT_CREDENTIAL_PERMISSIONS = new Set(["view_client_credentials", "edit_client_credentials"]);
+
+function normalizePermissions(value) {
+  const raw = Array.isArray(value) ? value : (value && typeof value === "object" ? Object.keys(value).filter((key) => value[key]) : []);
+  const permissions = [...new Set(raw.map((item) => String(item || "").trim()).filter((item) => CLIENT_CREDENTIAL_PERMISSIONS.has(item)))];
+  if (permissions.includes("edit_client_credentials") && !permissions.includes("view_client_credentials")) permissions.push("view_client_credentials");
+  return permissions;
+}
+
+async function createUser({ email, password, name, role, permissions = [] }) {
   const cleanEmail = String(email || "").trim().toLowerCase();
   if (!cleanEmail || !password || !name || !role) {
     const error = new Error("Name, email, password and role are required.");
@@ -23,6 +32,7 @@ async function createUser({ email, password, name, role }) {
     email: cleanEmail,
     name,
     role,
+    permissions: normalizePermissions(permissions),
     is_active: true,
   });
 
@@ -41,6 +51,7 @@ async function updateUser(userId, patch) {
     email: patch.email,
     name: patch.name,
     role: patch.role,
+    permissions: normalizePermissions(patch.permissions),
     is_active: patch.is_active,
   });
   await patchLegacyUserList(profile);
@@ -104,6 +115,7 @@ async function recoverAdminUser({ email, password, name = "CA Sadique" }) {
     email: cleanEmail,
     name,
     role: "Admin",
+    permissions: ["view_client_credentials", "edit_client_credentials"],
     is_active: true,
     updated_at: new Date().toISOString(),
   };
@@ -170,6 +182,7 @@ async function profileForAuthUser(authUser) {
     email,
     name: legacyUser?.name || metadata.name || email,
     role: legacyUser?.role || metadata.role || (email === "casadique@gmail.com" ? "Admin" : "Staff"),
+    permissions: normalizePermissions(legacyUser?.permissions),
     is_active: legacyUser?.isActive !== false,
   };
   return upsertProfile(profile);
@@ -182,6 +195,7 @@ async function upsertProfile(profile) {
     email: String(profile.email || "").trim().toLowerCase(),
     name: profile.name,
     role: profile.role,
+    permissions: normalizePermissions(profile.permissions),
     is_active: profile.is_active !== false,
     updated_at: new Date().toISOString(),
   };
@@ -202,6 +216,7 @@ async function updateProfileById(id, profile) {
     email: String(profile.email || "").trim().toLowerCase(),
     name: profile.name,
     role: profile.role,
+    permissions: normalizePermissions(profile.permissions),
     is_active: profile.is_active !== false,
     updated_at: new Date().toISOString(),
   };
@@ -227,6 +242,7 @@ async function patchLegacyUserList(profile) {
       name: profile.name,
       email: profile.email,
       role: profile.role,
+      permissions: normalizePermissions(profile.permissions),
       isActive: profile.is_active,
       source: "supabase-auth",
     };

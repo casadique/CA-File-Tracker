@@ -73,6 +73,7 @@ Do not run the old browser-mode policy file. This deployment uses the backend se
    SUPABASE_URL=https://jzralbwcngqnmedjrzhh.supabase.co
    SUPABASE_ANON_KEY=<your Supabase anon/publishable key>
    SUPABASE_SERVICE_ROLE_KEY=<your Supabase service role/secret key>
+   CLIENT_CREDENTIALS_ENCRYPTION_KEY=<a stable random secret of at least 32 characters>
    SUPABASE_STORAGE_BUCKET=ca-file-tracker-attachments
    CORS_ORIGIN=https://<your-render-service>.onrender.com
    RATE_LIMIT_WINDOW_MS=900000
