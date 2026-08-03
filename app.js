@@ -6386,6 +6386,7 @@ function linkedCollectionForFeeReceipt(receipt = {}) {
 }
 
 function receiptWasPushed(receipt = {}) {
+  receipt = receipt && typeof receipt === "object" ? receipt : {};
   return Boolean(
     receipt.transactionId
     || receipt.transaction_id
