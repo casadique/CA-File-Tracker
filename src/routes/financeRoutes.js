@@ -24,6 +24,7 @@ router.get("/", requireAuth, requireRole(...financeRoles), async (_req, res, nex
       ok: true,
       expenses: state.expenses || [],
       otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+      feeReceipts: state.feeReceipts || [],
       openingBalances: state.openingBalances || [],
       otherCashCollectionSources: state.otherCashCollectionSources || [],
       expenseItems: state.expenseItems || [],
@@ -98,6 +99,7 @@ router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), 
     res.json({
       ok: true,
       files: state.files || [],
+      feeReceipts: state.feeReceipts || [],
       otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
     });
   } catch (error) {
@@ -108,7 +110,7 @@ router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), 
 router.post("/fee-receipts/:fileId/reverse-unlinked", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
     const state = await reverseUnlinkedFeeReceipt(req.params.fileId, req.user.id, req.profile);
-    res.json({ ok: true, files: state.files || [] });
+    res.json({ ok: true, files: state.files || [], feeReceipts: state.feeReceipts || [] });
   } catch (error) {
     next(error);
   }
@@ -120,6 +122,7 @@ router.delete("/collections/:id", requireAuth, requireRole(...financeRoles), asy
     res.json({
       ok: true,
       files: state.files || [],
+      feeReceipts: state.feeReceipts || [],
       otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
     });
   } catch (error) {

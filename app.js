@@ -443,6 +443,7 @@ function loadState() {
     fileNotifications: [],
     visitors: [],
     expenses: [],
+    feeReceipts: [],
     otherCashCollections: [],
     openingBalances: [],
     cashReconciliations: [],
@@ -692,6 +693,21 @@ function normalizeState(appState) {
     receivedFrom: properCaseName(item.receivedFrom || ""),
     remarks: item.remarks || "",
     attachmentName: item.attachmentName || "",
+    createdAt: item.createdAt || item.created_at || Date.now(),
+    updatedAt: item.updatedAt || item.updated_at || Date.now(),
+  })).sort(financeNewestFirst);
+  appState.feeReceipts = (appState.feeReceipts || []).map((item) => ({
+    ...item,
+    id: item.id || crypto.randomUUID(),
+    fileId: item.fileId || item.file_id || "",
+    file_id: item.file_id || item.fileId || "",
+    receiptDate: normalizeImportDate(item.receiptDate || item.receipt_date || item.receivedDate || item.received_date) || "",
+    receipt_date: normalizeImportDate(item.receipt_date || item.receiptDate || item.received_date || item.receivedDate) || "",
+    amount: Number(item.amount || item.receivedAmount || item.received_amount || 0) || 0,
+    pushToTransactions: item.pushToTransactions === true,
+    push_to_transactions: item.pushToTransactions === true,
+    pushStatus: item.pushStatus || item.push_status || "not_requested",
+    push_status: item.pushStatus || item.push_status || "not_requested",
     createdAt: item.createdAt || item.created_at || Date.now(),
     updatedAt: item.updatedAt || item.updated_at || Date.now(),
   })).sort(financeNewestFirst);
@@ -1163,6 +1179,7 @@ async function saveLinkedFeeReceiptToApi(fileId, receipt, collection) {
     body: JSON.stringify({ receipt, collection }),
   });
   if (result?.files) state.files = result.files;
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
@@ -1173,6 +1190,7 @@ async function reverseUnlinkedFeeReceiptToApi(fileId) {
     method: "POST",
   });
   if (result?.files) state.files = result.files;
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -1181,6 +1199,7 @@ async function deleteCashCollectionFromApi(id) {
   const result = await apiJson(`/api/finance/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
   if (result?.files) state.files = result.files;
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -2773,7 +2792,7 @@ function isNonBilledFile(file) {
 }
 
 function isFeePendingFile(file) {
-  return Boolean(isBilledFile(file) && !file?.feeReceived);
+  return Boolean(isBilledFile(file) && filePendingAmount(file) > 0);
 }
 
 function isFeeReceivedFile(file) {
@@ -4891,7 +4910,7 @@ function renderFilesPage() {
     exportFiltered.onclick = async () => {
       const sourceFiles = sortFilesForDisplay(filteredFiles());
       if (state.filters.listView || state.filters.dashboardKind) {
-        const rows = fileListReportRows(sourceFiles);
+        const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
         await downloadXlsxRows(`${fileListPdfFileName(fileListSectionTitle())}-${todayDate()}`, rows);
         return toast("Excel file downloaded");
@@ -5526,14 +5545,7 @@ function staffReportRow(file, listView = "") {
     };
   }
   if (listView === "feePending") {
-    return {
-      "Client Name": file.name,
-      Service: file.serviceType,
-      FY: file.fy || "NA",
-      "Assigned Staff": file.assignedStaff || "Not Assigned",
-      "Completion Date": displayDate(workCompletedDate(file)),
-      ...feePendingReportFields(file),
-    };
+    return feePendingReportRow(file, 0, { includeSn: false, format: "display" });
   }
   if (listView === "active") {
     return {
@@ -5675,8 +5687,10 @@ async function exportActiveFilesExcel(files = filteredFiles()) {
 
 async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
-  const baseRows = reportFiles.map((file, index) => listView === "nonBilled" ? nonBilledReportRow(file, index) : staffReportRow(file, listView));
-  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
+  const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
+    ? nonBilledReportRow(file, index)
+    : (listView === "feePending" ? feePendingReportRow(file, index, { format: "excel" }) : staffReportRow(file, listView)));
+  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles, { numeric: listView === "feePending" }) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadXlsxRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("Excel file downloaded");
@@ -5684,7 +5698,9 @@ async function exportStaffPageExcel(listView, files) {
 
 async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
-  const baseRows = reportFiles.map((file, index) => listView === "nonBilled" ? nonBilledReportRow(file, index) : staffReportRow(file, listView));
+  const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
+    ? nonBilledReportRow(file, index)
+    : (listView === "feePending" ? feePendingReportRow(file, index, { format: "display" }) : staffReportRow(file, listView)));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadPdfRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -5693,7 +5709,9 @@ async function exportStaffPagePdf(listView, files) {
 
 function printStaffPageReport(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
-  const baseRows = reportFiles.map((file, index) => listView === "nonBilled" ? nonBilledReportRow(file, index) : staffReportRow(file, listView));
+  const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
+    ? nonBilledReportRow(file, index)
+    : (listView === "feePending" ? feePendingReportRow(file, index, { format: "display" }) : staffReportRow(file, listView)));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to print.");
   printReport(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -5768,6 +5786,7 @@ function renderFileTable(files) {
   if (!files.length) return empty("No files match these filters.");
   if (state.filters.listView === "reAssigned") return renderReAssignedFileTable(files);
   if (state.filters.listView === "feeReceived") return renderFeeReceivedFileTable(files);
+  if (state.filters.listView === "feePending") return renderFeePendingFileTable(files);
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
@@ -5849,6 +5868,23 @@ function renderNotCheckedFileTable(files) {
       </table>
     </div>
   `;
+}
+
+function renderFeePendingFileTable(files = []) {
+  const rows = files.map((file, index) => feePendingReportRow(file, index, { format: "display" }));
+  const headers = Object.keys(rows[0] || {});
+  const totals = appendFeeReceiptTotals(rows, files).at(-1) || {};
+  return `
+    <div class="table-wrap file-table-wrap">
+      <table class="file-table file-table-compact fee-pending-report-table">
+        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}<th>Actions</th></tr></thead>
+        <tbody>${files.map((file, index) => {
+          const row = rows[index];
+          return `<tr>${headers.map((header) => `<td class="${isFeeAmountReportHeader(header) ? "amount-cell" : ""}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td><div class="action-row">${fileRowActions(file)}</div></td></tr>`;
+        }).join("")}</tbody>
+        <tfoot><tr>${headers.map((header) => `<td class="${isFeeAmountReportHeader(header) ? "amount-cell" : ""}">${escapeHtml(totals[header] ?? "")}</td>`).join("")}<td></td></tr></tfoot>
+      </table>
+    </div>`;
 }
 
 function renderReAssignedFileTable(files) {
@@ -5963,7 +5999,8 @@ function feeReceiptTextarea(name, label, value = "") {
 function updateFeeReceiptBalancePreview() {
   const billed = Number(document.querySelector("[name='receiptBilledAmount']")?.value || 0);
   const received = Number(document.querySelector("[name='receiptReceivedAmount']")?.value || 0);
-  const balance = billed - received;
+  const existingReceived = Number(document.querySelector("#markReceivedModal")?.dataset.existingReceived || 0);
+  const balance = billed - existingReceived - received;
   const node = document.querySelector("#receiptBalancePreview");
   if (node) node.textContent = money(balance);
 }
@@ -6037,18 +6074,19 @@ function feeReceiptFromModal(file = {}) {
   const paymentMode = document.querySelector("[name='receiptPaymentMode']")?.value || "Cash";
   const remarks = String(document.querySelector("[name='receiptRemarks']")?.value || "").trim();
   const existingLinked = linkedFeeReceiptCollection(file);
+  const existingReceived = Number(document.querySelector("#feeReceiptModal")?.dataset.existingReceived || 0);
   return {
     billDate,
     billNo,
     billedAmount,
     receivedAmount,
-    balanceAmount: billedAmount - receivedAmount,
+    balanceAmount: Math.max(0, billedAmount - existingReceived - receivedAmount),
     receivedDate,
     paymentMode,
     remarks,
-    pushToTransactions: true,
-    feeReceiptId: feeReceiptIdForFile(file) || crypto.randomUUID(),
-    transactionId: existingLinked?.id || feeReceiptTransactionIdForFile(file) || "",
+    pushToTransactions: document.querySelector("[name='receiptPushToTransactions']")?.checked === true,
+    feeReceiptId: crypto.randomUUID(),
+    transactionId: "",
   };
 }
 
@@ -6070,8 +6108,8 @@ function feeReceiptDetails(file = {}) {
     billDate: file.billDate || file.bill_date || file.billedDate || todayDate(),
     billNo: file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
     billedAmount: file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || dashboardFileAmount(file, "billed") || "",
-    receivedAmount: file.feeReceivedAmount || file.amountReceived || file.amount_received || dashboardFileAmount(file, "received") || "",
-    receivedDate: file.feeReceivedDate || file.receivedOn || file.received_on || todayDate(),
+    receivedAmount: "",
+    receivedDate: todayDate(),
     paymentMode: file.paymentMode || file.receiptMode || "Cash",
     remarks: file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || "",
   };
@@ -6135,12 +6173,127 @@ function feeReceiptReportFields(file = {}, balanceLabel = "Balance Amount") {
 }
 
 function feePendingReportFields(file = {}) {
+  const summary = feeReceiptSummaryForFile(file);
   return {
     "Bill Date": displayDate(file.billDate || file.bill_date || file.billedDate),
-    "Billed Amount": money(dashboardFileAmount(file, "billed")),
-    "Received Amount": money(file.feeReceivedAmount || file.amountReceived || dashboardFileAmount(file, "received")),
-    "Balance Amount": money(filePendingAmount(file)),
+    "Bill Amount": money(summary.billedAmount),
+    "Amount Received": money(summary.totalReceived),
+    "Received Date": displayDate(summary.latestReceiptDate),
+    "Outstanding Amount": money(summary.outstandingAmount),
   };
+}
+
+const INVALID_FEE_RECEIPT_STATUSES = new Set(["deleted", "cancelled", "canceled", "reversed", "invalid", "failed"]);
+
+function isValidFeeReceiptRecord(receipt = {}) {
+  const status = String(receipt.status || receipt.receiptStatus || receipt.receipt_status || "active").trim().toLowerCase();
+  return receipt.isDeleted !== true
+    && receipt.is_deleted !== true
+    && receipt.isCancelled !== true
+    && receipt.is_cancelled !== true
+    && receipt.isReversed !== true
+    && receipt.is_reversed !== true
+    && !INVALID_FEE_RECEIPT_STATUSES.has(status);
+}
+
+function feeReceiptRecordDate(receipt = {}) {
+  return normalizeImportDate(receipt.receiptDate || receipt.receipt_date || receipt.receivedDate || receipt.received_date || "") || "";
+}
+
+let feeReceiptIndexSource = null;
+let feeReceiptIndex = new Map();
+
+function indexedFeeReceipts() {
+  const source = state.feeReceipts || [];
+  if (feeReceiptIndexSource === source) return feeReceiptIndex;
+  feeReceiptIndexSource = source;
+  feeReceiptIndex = new Map();
+  source.forEach((receipt) => {
+    const fileId = receipt.fileId || receipt.file_id || "";
+    if (!fileId) return;
+    const rows = feeReceiptIndex.get(fileId) || [];
+    rows.push(receipt);
+    feeReceiptIndex.set(fileId, rows);
+  });
+  return feeReceiptIndex;
+}
+
+function feeReceiptRecordsForFile(file = {}) {
+  return (indexedFeeReceipts().get(file.id) || [])
+    .filter(isValidFeeReceiptRecord)
+    .sort((a, b) => {
+      const dateOrder = feeReceiptRecordDate(b).localeCompare(feeReceiptRecordDate(a));
+      if (dateOrder) return dateOrder;
+      const aTime = Date.parse(a.receivedAt || a.received_at || a.createdAt || a.created_at || 0) || 0;
+      const bTime = Date.parse(b.receivedAt || b.received_at || b.createdAt || b.created_at || 0) || 0;
+      return bTime - aTime || String(b.id || "").localeCompare(String(a.id || ""));
+    });
+}
+
+function feeReceiptSummaryForFile(file = {}) {
+  const receipts = feeReceiptRecordsForFile(file);
+  const hasReceiptHistory = (indexedFeeReceipts().get(file.id) || []).length > 0;
+  const billedAmount = Number(file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || 0);
+  const legacyReceived = Number(file.feeReceivedAmount || file.amountReceived || file.amount_received || dashboardFileAmount(file, "received") || 0);
+  const totalReceived = receipts.length
+    ? receipts.reduce((sum, receipt) => sum + Math.max(Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0), 0), 0)
+    : (hasReceiptHistory ? 0 : Math.max(Number.isFinite(legacyReceived) ? legacyReceived : 0, 0));
+  const latestReceiptDate = receipts.length
+    ? feeReceiptRecordDate(receipts[0])
+    : (!hasReceiptHistory && totalReceived > 0 ? normalizeImportDate(file.feeReceivedDate || file.receivedDate || file.received_date || file.receivedOn || file.received_on || "") : "");
+  return {
+    receipts,
+    billedAmount: Number.isFinite(billedAmount) ? billedAmount : 0,
+    totalReceived,
+    latestReceiptDate,
+    outstandingAmount: Math.max((Number.isFinite(billedAmount) ? billedAmount : 0) - totalReceived, 0),
+  };
+}
+
+function excelDateValue(value) {
+  const normalized = normalizeImportDate(value || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return "";
+  const [year, month, day] = normalized.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0);
+}
+
+function feePendingReportRow(file = {}, index = 0, options = {}) {
+  const { includeSn = true, format = "display" } = options;
+  const summary = feeReceiptSummaryForFile(file);
+  const dateValue = (value) => format === "excel" ? excelDateValue(value) : displayDate(value);
+  const amountValue = (value) => format === "excel" ? Number(value || 0) : money(value);
+  const row = {
+    "Client Name": filePdfText(file.name),
+    "PAN / Reg No.": filePdfText(fileRegistrationNumber(file), "NA"),
+    "Service Type": filePdfText(file.serviceType),
+    FY: filePdfText(fileFy(file), "NA"),
+    "C/o": filePdfText(
+      file.careOf || file.care_of || file.c_o
+      || file.clientSnapshot?.careOf || file.clientSnapshot?.care_of || file.clientSnapshot?.c_o
+      || file.client_snapshot?.careOf || file.client_snapshot?.care_of || file.client_snapshot?.c_o,
+      "Direct",
+    ),
+    "Contact No.": filePdfText(
+      file.contactNo || file.contact_no || file.contactNumber || file.contact_number
+      || file.mobile || file.mobileNo || file.mobile_no || file.phone || file.phoneNumber || file.phone_number
+      || file.clientSnapshot?.contactNo || file.clientSnapshot?.contact_no || file.clientSnapshot?.contactNumber
+      || file.clientSnapshot?.mobile || file.clientSnapshot?.mobileNo || file.clientSnapshot?.phone
+      || file.client_snapshot?.contactNo || file.client_snapshot?.contact_no || file.client_snapshot?.contactNumber
+      || file.client_snapshot?.mobile || file.client_snapshot?.mobileNo || file.client_snapshot?.phone,
+      "-",
+    ),
+    "Completed Date": dateValue(fileActualCompletionDate(file) || workCompletedDate(file)),
+    "Checked Date": dateValue(file.checkedDate || file.checked_at || file.checkedAt),
+    "Bill Date": dateValue(file.billDate || file.bill_date || file.billedDate),
+    "Bill No.": filePdfText(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo, "-"),
+    "Bill Amount": amountValue(summary.billedAmount),
+    "Amount Received": amountValue(summary.totalReceived),
+    "Received Date": dateValue(summary.latestReceiptDate),
+    "Outstanding Amount": amountValue(summary.outstandingAmount),
+    "Assigned Staff / Done By": filePdfText(file.completedBy || file.workDoneBy || file.assignedStaff, "Not Assigned"),
+    Remarks: filePdfText(file.remarks || file.billingRemarks || file.feeRemarks),
+  };
+  return includeSn ? { SN: index + 1, ...row } : row;
 }
 
 function nonBilledReportRow(file = {}, index = 0) {
@@ -6158,28 +6311,55 @@ function nonBilledReportRow(file = {}, index = 0) {
 
 function feeReceiptTotals(files = []) {
   return (files || []).reduce((totals, file) => {
-    totals.billed += dashboardFileAmount(file, "billed");
-    totals.received += dashboardFileAmount(file, "received");
-    totals.balance += filePendingAmount(file);
+    const summary = feeReceiptSummaryForFile(file);
+    totals.billed += summary.billedAmount;
+    totals.received += summary.totalReceived;
+    totals.balance += summary.outstandingAmount;
     return totals;
   }, { billed: 0, received: 0, balance: 0 });
 }
 
-function appendFeeReceiptTotals(rows = [], files = []) {
+function appendFeeReceiptTotals(rows = [], files = [], options = {}) {
   if (!rows.length) return rows;
   const totals = feeReceiptTotals(files);
   const totalRow = Object.fromEntries(Object.keys(rows[0]).map((header) => [header, ""]));
   if (Object.hasOwn(totalRow, "SN")) totalRow.SN = "";
   if (Object.hasOwn(totalRow, "Client Name")) totalRow["Client Name"] = "TOTAL";
-  totalRow["Billed Amount"] = money(totals.billed);
-  totalRow["Received Amount"] = money(totals.received);
-  if (Object.hasOwn(totalRow, "Balance")) totalRow.Balance = money(totals.balance);
-  if (Object.hasOwn(totalRow, "Balance Amount")) totalRow["Balance Amount"] = money(totals.balance);
+  const amountValue = options.numeric ? Number : money;
+  if (Object.hasOwn(totalRow, "Billed Amount")) totalRow["Billed Amount"] = amountValue(totals.billed);
+  if (Object.hasOwn(totalRow, "Bill Amount")) totalRow["Bill Amount"] = amountValue(totals.billed);
+  if (Object.hasOwn(totalRow, "Received Amount")) totalRow["Received Amount"] = amountValue(totals.received);
+  if (Object.hasOwn(totalRow, "Amount Received")) totalRow["Amount Received"] = amountValue(totals.received);
+  if (Object.hasOwn(totalRow, "Balance")) totalRow.Balance = amountValue(totals.balance);
+  if (Object.hasOwn(totalRow, "Balance Amount")) totalRow["Balance Amount"] = amountValue(totals.balance);
+  if (Object.hasOwn(totalRow, "Outstanding Amount")) totalRow["Outstanding Amount"] = amountValue(totals.balance);
   return [...rows, totalRow];
 }
 
 function isFeeAmountReportHeader(header = "") {
-  return ["Billed Amount", "Received Amount", "Balance", "Balance Amount"].includes(header);
+  return ["Billed Amount", "Bill Amount", "Received Amount", "Amount Received", "Balance", "Balance Amount", "Outstanding Amount"].includes(header);
+}
+
+function feePendingPdfColumnStyles() {
+  return {
+    SN: { halign: "center", cellWidth: 20 },
+    "Client Name": { cellWidth: 76 },
+    "PAN / Reg No.": { cellWidth: 52 },
+    "Service Type": { cellWidth: 62 },
+    FY: { halign: "center", cellWidth: 32 },
+    "C/o": { cellWidth: 42 },
+    "Contact No.": { cellWidth: 50 },
+    "Completed Date": { halign: "center", cellWidth: 42 },
+    "Checked Date": { halign: "center", cellWidth: 42 },
+    "Bill Date": { halign: "center", cellWidth: 42 },
+    "Bill No.": { cellWidth: 40 },
+    "Bill Amount": { halign: "right", cellWidth: 48 },
+    "Amount Received": { halign: "right", cellWidth: 50 },
+    "Received Date": { halign: "center", cellWidth: 42 },
+    "Outstanding Amount": { halign: "right", cellWidth: 50 },
+    "Assigned Staff / Done By": { cellWidth: 58 },
+    Remarks: { cellWidth: 72 },
+  };
 }
 
 function fileSerialNumber(file, fallbackIndex = 0) {
@@ -6645,9 +6825,11 @@ function openMarkReceivedModal(fileId) {
   if (!rolePerm().assign) return toast("This role cannot update billing.");
   closeMarkReceivedModal();
   const receipt = feeReceiptDetails(file);
+  const receiptSummary = feeReceiptSummaryForFile(file);
   const modal = document.createElement("div");
   modal.id = "markReceivedModal";
   modal.className = "simple-modal open";
+  modal.dataset.existingReceived = String(receiptSummary.totalReceived || 0);
   modal.innerHTML = `
     <div class="simple-modal-card receipt-modal-card">
       <div class="drawer-head">
@@ -6702,21 +6884,27 @@ async function saveReceivedFromModal(fileId) {
   const button = document.querySelector("#saveReceivedModal");
   if (button) button.disabled = true;
   const user = loggedInUser() || {};
-  const receivedAt = file.feeReceivedAt || file.fee_received_at || file.receivedAt || file.received_at || new Date().toISOString();
-  const balanceAmount = Math.max(Number(receipt.balanceAmount || 0), 0);
+  const receivedAt = new Date().toISOString();
+  const currentSummary = feeReceiptSummaryForFile(file);
+  const balanceAmount = Math.max(Number(receipt.billedAmount || 0) - currentSummary.totalReceived - Number(receipt.receivedAmount || 0), 0);
   let linkedTransaction = null;
+  if (isSupabaseMode()) {
+    try {
+      const collection = receipt.pushToTransactions ? feeReceiptCollectionPayload(file, receipt, linkedFeeReceiptCollection(file)) : null;
+      const result = await saveLinkedFeeReceiptToApi(fileId, { ...receipt, receivedAt }, collection);
+      if (button) button.disabled = false;
+      closeMarkReceivedModal();
+      toast(receipt.pushToTransactions ? "Fee receipt saved and collection linked successfully." : "Fee receipt saved successfully.");
+      renderAll();
+      return result;
+    } catch (error) {
+      console.error("Fee receipt save failed", error);
+      if (button) button.disabled = false;
+      return toast(`Fee receipt save failed: ${error.message || "Please retry."}`);
+    }
+  }
   if (receipt.pushToTransactions) {
     try {
-      const collection = feeReceiptCollectionPayload(file, receipt, linkedFeeReceiptCollection(file));
-      if (isSupabaseMode()) {
-        const result = await saveLinkedFeeReceiptToApi(fileId, { ...receipt, receivedAt }, collection);
-        linkedTransaction = activeCashCollections().find((item) => item.fileId === fileId || item.file_id === fileId) || collection;
-        if (button) button.disabled = false;
-        closeMarkReceivedModal();
-        toast("Fee received and collection linked successfully.");
-        renderAll();
-        return result;
-      }
       linkedTransaction = await saveFeeReceiptCollection(file, receipt);
       receipt.transactionId = linkedTransaction.id;
     } catch (error) {
@@ -6725,6 +6913,22 @@ async function saveReceivedFromModal(fileId) {
       return toast(`Receipt not pushed: ${error.message || "Please retry."}`);
     }
   }
+  state.feeReceipts = [{
+    ...receipt,
+    id: receipt.feeReceiptId,
+    fileId,
+    file_id: fileId,
+    receiptDate: receipt.receivedDate,
+    receipt_date: receipt.receivedDate,
+    amount: receipt.receivedAmount,
+    receivedAt,
+    received_at: receivedAt,
+    receivedBy: user.name || state.currentUser || "",
+    received_by: user.name || state.currentUser || "",
+    status: "active",
+    transactionId: linkedTransaction?.id || "",
+    transaction_id: linkedTransaction?.id || "",
+  }, ...(state.feeReceipts || [])];
   const ok = await updateFileBilling(fileId, {
     billed: true,
     billingType: "Billable",
@@ -6742,9 +6946,9 @@ async function saveReceivedFromModal(fileId) {
     amount: receipt.billedAmount,
     feeReceived: balanceAmount <= 0,
     feeReceivedDate: receipt.receivedDate,
-    feeReceivedAmount: receipt.receivedAmount,
-    amount_received: receipt.receivedAmount,
-    amountReceived: receipt.receivedAmount,
+    feeReceivedAmount: currentSummary.totalReceived + receipt.receivedAmount,
+    amount_received: currentSummary.totalReceived + receipt.receivedAmount,
+    amountReceived: currentSummary.totalReceived + receipt.receivedAmount,
     balanceAmount,
     balance_amount: balanceAmount,
     received_date: receipt.receivedDate,
@@ -9953,10 +10157,46 @@ async function downloadXlsxRows(name, rows, title = "") {
   await loadSheetJs();
   const headers = Object.keys(rows[0] || {});
   const headingLines = reportHeadingLines(title);
+  const headerRowIndex = headingLines.length ? headingLines.length + 1 : 0;
   const worksheet = headingLines.length
     ? XLSX.utils.aoa_to_sheet([...headingLines.map((line) => [line]), [], headers, ...rows.map((row) => headers.map((header) => row[header] ?? ""))])
     : XLSX.utils.json_to_sheet(rows);
-  worksheet["!cols"] = headers.map((header) => ({ wch: Math.max(14, Math.min(34, header.length + 8)) }));
+  const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:A1");
+  headers.forEach((header, columnIndex) => {
+    for (let rowIndex = headerRowIndex + 1; rowIndex <= range.e.r; rowIndex += 1) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
+      if (!cell) continue;
+      if (cell.v instanceof Date || cell.t === "d") cell.z = "dd-mm-yyyy";
+      if (isFeeAmountReportHeader(header) && typeof cell.v === "number") cell.z = "#,##0.00";
+      if (["PAN / Reg No.", "PAN/Reg No", "Contact No."].includes(header) && cell.v !== "") {
+        cell.t = "s";
+        cell.v = String(cell.v);
+      }
+    }
+  });
+  worksheet["!autofilter"] = { ref: XLSX.utils.encode_range({ r: headerRowIndex, c: 0 }, { r: range.e.r, c: Math.max(headers.length - 1, 0) }) };
+  worksheet["!cols"] = headers.map((header) => {
+    const preferred = {
+      SN: 6,
+      "Client Name": 28,
+      "PAN / Reg No.": 17,
+      "Service Type": 24,
+      FY: 12,
+      "C/o": 18,
+      "Contact No.": 16,
+      "Completed Date": 15,
+      "Checked Date": 15,
+      "Bill Date": 14,
+      "Bill No.": 14,
+      "Bill Amount": 16,
+      "Amount Received": 18,
+      "Received Date": 15,
+      "Outstanding Amount": 20,
+      "Assigned Staff / Done By": 24,
+      Remarks: 34,
+    };
+    return { wch: preferred[header] || Math.max(14, Math.min(34, header.length + 8)) };
+  });
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
   XLSX.writeFile(workbook, `${name}.xlsx`);
@@ -10029,13 +10269,15 @@ async function downloadPdfSections(name, sections, title = "") {
     }
     const rows = section.rows || [];
     const headers = Object.keys(rows[0] || {});
+    const compactReport = headers.length > 12;
     doc.autoTable({
       startY: y + 6,
       head: headers.length ? [headers] : [["No Records"]],
       body: rows.length ? rows.map((row) => headers.map((header) => String(row[header] ?? ""))) : [["No records found."]],
-      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      styles: { fontSize: compactReport ? 5.4 : 8, cellPadding: compactReport ? 2 : 4, overflow: "linebreak", valign: "middle" },
       headStyles: { fillColor: [30, 58, 138], textColor: 255 },
-      margin: { left: 40, right: 40 },
+      margin: { left: compactReport ? 14 : 40, right: compactReport ? 14 : 40, bottom: 30 },
+      columnStyles: headers.includes("Outstanding Amount") ? feePendingPdfColumnStyles() : {},
       didParseCell: (data) => {
         const header = headers[data.column.index];
         if (isFeeAmountReportHeader(header)) data.cell.styles.halign = "right";
@@ -10053,6 +10295,17 @@ async function downloadPdfSections(name, sections, title = "") {
       y += 16;
     }
   });
+  const totalPages = doc.internal.getNumberOfPages();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  for (let page = 1; page <= totalPages; page += 1) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(90);
+    doc.text(`Generated: ${fileExportDateTime()}`, 18, pageHeight - 14);
+    doc.text(`Page ${page} of ${totalPages}`, pageWidth - 18, pageHeight - 14, { align: "right" });
+  }
   doc.save(`${name}.pdf`);
 }
 
@@ -14530,7 +14783,8 @@ function fileSpName(file = {}) {
   return filePdfText(file.sp || file.supervisor || file.salesPerson || file.allottedBy);
 }
 
-function fileListReportRows(files) {
+function fileListReportRows(files, options = {}) {
+  const { format = "display" } = options;
   const section = state.filters.listView || state.filters.dashboardKind || "files";
   const sourceFiles = section === "feeReceived"
     ? sortFilesByFeeReceivedNewestFirst(files || [])
@@ -14595,14 +14849,7 @@ function fileListReportRows(files) {
       return nonBilledReportRow(file, index);
     }
     if (section === "feePending") {
-      return {
-        SN: base.SN,
-        "Client Name": base["Client Name"],
-        "Service Type": base["Service Type"],
-        "Assigned Staff": base["Assigned Staff"],
-        "Completion Date": filePdfCompletionDate(file),
-        ...feePendingReportFields(file),
-      };
+      return feePendingReportRow(file, index, { format });
     }
     if (section === "feeReceived") {
       return {
@@ -14629,7 +14876,9 @@ function fileListReportRows(files) {
       "Due Date": base["Due Date"],
     };
   });
-  return ["feePending", "feeReceived"].includes(section) ? appendFeeReceiptTotals(rows, sourceFiles) : rows;
+  return ["feePending", "feeReceived"].includes(section)
+    ? appendFeeReceiptTotals(rows, sourceFiles, { numeric: section === "feePending" && format === "excel" })
+    : rows;
 }
 
 async function exportFilteredFilesPdf(files, button) {
@@ -14640,6 +14889,7 @@ async function exportFilteredFilesPdf(files, button) {
   const reportTitle = `${sectionTitle} Report`.toUpperCase();
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
+  const feePendingPdf = (state.filters.listView || state.filters.dashboardKind) === "feePending";
   const previousHtml = button?.innerHTML;
   if (button) {
     button.disabled = true;
@@ -14670,11 +14920,11 @@ async function exportFilteredFilesPdf(files, button) {
       startY: 124,
       theme: "grid",
       showHead: "everyPage",
-      styles: { fontSize: 7.2, cellPadding: 3, overflow: "linebreak", valign: "middle", lineWidth: 0.15, lineColor: [180, 195, 215] },
+      styles: { fontSize: feePendingPdf ? 5.25 : 7.2, cellPadding: feePendingPdf ? 1.8 : 3, overflow: "linebreak", valign: "middle", lineWidth: 0.15, lineColor: [180, 195, 215] },
       headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: "bold", halign: "center", lineWidth: 0.2, lineColor: [148, 163, 184] },
       alternateRowStyles: { fillColor: [248, 251, 255] },
-      margin: { left: 28, right: 28 },
-      columnStyles: {
+      margin: { left: feePendingPdf ? 10 : 28, right: feePendingPdf ? 10 : 28, bottom: 30 },
+      columnStyles: feePendingPdf ? feePendingPdfColumnStyles() : {
         SN: { halign: "center", cellWidth: 24 },
         "Client Name": { cellWidth: 106 },
         "CR No.": { cellWidth: 58 },
