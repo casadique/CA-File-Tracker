@@ -5,6 +5,10 @@ const {
   RETIRED_COMBINED_REGISTRATION,
   canonicalServiceType,
 } = require("../constants/serviceTypes");
+const {
+  archiveExpiredNotificationRows,
+  applyInitialNotificationCleanup,
+} = require("./notificationRetentionService");
 
 const APP_STATE_ID = "default";
 const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
@@ -94,6 +98,21 @@ async function patchAppState(mutator, updatedBy = null) {
   return saved;
 }
 
+async function migrateNotificationRetention() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const record = await getAppStateRecord();
+    const cleanup = applyInitialNotificationCleanup(record.state, { actor: "Admin" });
+    if (!cleanup.changed) return { changed: false, retention: record.state.notificationRetention || {} };
+    try {
+      const saved = await saveAppStateIfCurrent(cleanup.state, null, record.updatedAt);
+      return { changed: true, retention: saved.state?.notificationRetention || cleanup.state.notificationRetention };
+    } catch (error) {
+      if (error.status !== 409 || attempt === 1) throw error;
+    }
+  }
+  return { changed: false };
+}
+
 function perfStart() {
   return PERF_LOG_ENABLED ? Date.now() : 0;
 }
@@ -114,6 +133,8 @@ function emptyState() {
     feeReceipts: [],
     otherCashCollections: [],
     openingBalances: [],
+    accountTransfers: [],
+    cashReconciliations: [],
     chatMessages: [],
     chatGroups: [],
     readChatMessages: [],
@@ -138,10 +159,16 @@ function normalizeServerState(state) {
     expenses: sortFinanceRows(displayNormalizedState.expenses || []),
     feeReceipts: sortFinanceRows(displayNormalizedState.feeReceipts || []),
     otherCashCollections: sortFinanceRows((displayNormalizedState.otherCashCollections || []).map(normalizeCollectionRow)),
+    accountTransfers: sortFinanceRows(displayNormalizedState.accountTransfers || []),
+    openingBalances: sortFinanceRows(displayNormalizedState.openingBalances || []),
+    cashReconciliations: sortFinanceRows(displayNormalizedState.cashReconciliations || []),
     chatMessages: sortMessagesOldestFirst(displayNormalizedState.chatMessages || []).slice(-1000),
     chatGroups: Array.isArray(displayNormalizedState.chatGroups) ? displayNormalizedState.chatGroups : [],
     readChatMessages: Array.isArray(displayNormalizedState.readChatMessages) ? [...new Set(displayNormalizedState.readChatMessages.filter(Boolean))] : [],
-    fileNotifications: normalizeFileNotifications(displayNormalizedState.fileNotifications || []),
+    fileNotifications: archiveExpiredNotificationRows(
+      normalizeFileNotifications(displayNormalizedState.fileNotifications || []),
+      displayNormalizedState
+    ),
     staffDetails: sortStaffDetailsNewestFirst(displayNormalizedState.staffDetails || []),
     correctionHistory: sortCorrectionsNewestFirst(displayNormalizedState.correctionHistory || []),
     careOfList: normalizeMasterList(displayNormalizedState.careOfList || []),
@@ -442,4 +469,5 @@ module.exports = {
   migrateDisplayNames,
   normalizeServiceTypes,
   migrateServiceTypes,
+  migrateNotificationRetention,
 };

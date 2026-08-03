@@ -2,6 +2,7 @@ const express = require("express");
 const { requireAuth } = require("../middleware/auth");
 const { getAppState } = require("../services/appStateService");
 const { sendChatMessage, markChatMessagesRead, visibleChatMessages } = require("../services/chatService");
+const { dispatchChatNotification } = require("../services/pushNotificationService");
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ router.post("/", requireAuth, async (req, res, next) => {
       chatGroups: result.state.chatGroups || [],
       readChatMessages: result.state.readChatMessages || [],
     });
+    if (message) dispatchChatNotification(result.state, message).catch((error) => console.error("Desktop chat notification failed:", error.message));
   } catch (error) {
     next(error);
   }

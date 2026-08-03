@@ -1,6 +1,47 @@
 const crypto = require("crypto");
 const { patchAppState } = require("./appStateService");
 
+const FINANCE_ACCOUNTS = Object.freeze([
+  { key: "cash", name: "Cash in Hand", type: "cash", displayOrder: 1 },
+  { key: "federal_bank", name: "Federal Bank", type: "bank", displayOrder: 2 },
+  { key: "tmb", name: "TMB", type: "bank", displayOrder: 3 },
+  { key: "unclassified_bank", name: "Unclassified Bank", type: "bank", displayOrder: 99, legacyOnly: true },
+]);
+const PAYMENT_METHODS = Object.freeze(["Cash", "Bank Transfer", "UPI", "Cheque", "Card", "Other"]);
+
+function financeAccountName(key = "") {
+  return FINANCE_ACCOUNTS.find((account) => account.key === key)?.name || "";
+}
+
+function normalizePaymentMethod(value = "") {
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const aliases = {
+    cash: "Cash", bank: "Bank Transfer", bank_transfer: "Bank Transfer",
+    transfer: "Bank Transfer", neft: "Bank Transfer", rtgs: "Bank Transfer",
+    imps: "Bank Transfer", upi: "UPI", cheque: "Cheque", check: "Cheque",
+    card: "Card", debit_card: "Card", credit_card: "Card", other: "Other",
+  };
+  return aliases[key] || (PAYMENT_METHODS.includes(raw) ? raw : "Other");
+}
+
+function transactionAccount(payload = {}, paymentMethod = "Cash") {
+  const accountKey = financeAccountOf(payload);
+  if (paymentMethod === "Cash") {
+    if (accountKey && accountKey !== "cash") {
+      throw Object.assign(new Error("Cash transactions must use the Cash in Hand account."), { status: 400 });
+    }
+    return "cash";
+  }
+  if (!accountKey || accountKey === "unclassified_bank") {
+    throw Object.assign(new Error("Select Federal Bank or TMB for this non-cash transaction."), { status: 400 });
+  }
+  if (!["cash", "federal_bank", "tmb"].includes(accountKey)) {
+    throw Object.assign(new Error("Select a valid account."), { status: 400 });
+  }
+  return accountKey;
+}
+
 async function saveExpense(payload, userId, profile) {
   return patchAppState((state) => {
     const now = new Date();
@@ -138,6 +179,12 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
       error.status = 400;
       throw error;
     }
+    const discountAmount = Number(receiptPayload.discountAmount || receiptPayload.discount_amount || receiptPayload.discount || 0);
+    if (!Number.isFinite(discountAmount) || discountAmount < 0) {
+      const error = new Error("Discount cannot be negative.");
+      error.status = 400;
+      throw error;
+    }
     const receiptDate = normalizeDate(receiptPayload.receivedDate || receiptPayload.receiptDate);
     if (!receiptDate) {
       const error = new Error("Received Date is required.");
@@ -149,6 +196,8 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
     let transactionId = existingReceipt?.transactionId || existingReceipt?.transaction_id || "";
     let pushStatus = existingReceipt?.pushStatus || existingReceipt?.push_status || "not_requested";
     let collection = null;
+    const receiptPaymentMethod = normalizePaymentMethod(receiptPayload.paymentMethod || receiptPayload.payment_mode || "Cash");
+    const receiptAccountKey = transactionAccount(receiptPayload, receiptPaymentMethod);
 
     if (shouldPush) {
       const existingCollection = (state.otherCashCollections || []).find((item) => isActiveTransaction(item) && (
@@ -204,8 +253,15 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
       amount: receivedAmount,
       receivedAmount,
       received_amount: receivedAmount,
-      paymentMode: receiptPayload.paymentMode || "",
-      payment_mode: receiptPayload.paymentMode || "",
+      discountAmount,
+      discount_amount: discountAmount,
+      discount: discountAmount,
+      paymentMode: receiptPaymentMethod,
+      payment_mode: receiptPaymentMethod,
+      accountKey: receiptAccountKey,
+      account_key: receiptAccountKey,
+      accountName: financeAccountName(receiptAccountKey),
+      account_name: financeAccountName(receiptAccountKey),
       remarks: String(receiptPayload.remarks || "").trim(),
       receivedBy: profile?.name || "",
       received_by: profile?.name || "",
@@ -290,6 +346,114 @@ async function reverseUnlinkedFeeReceipt(fileId, userId, profile) {
   }, userId);
 }
 
+async function reverseFeeReceipt(receiptId, reason, userId, profile) {
+  const reversalReason = String(reason || "").trim();
+  if (!reversalReason) {
+    const error = new Error("Reason for marking the receipt as Not Received is required.");
+    error.status = 400;
+    throw error;
+  }
+
+  return patchAppState((state) => {
+    const now = new Date();
+    const receiptIndex = (state.feeReceipts || []).findIndex((item) => item.id === receiptId);
+    if (receiptIndex < 0) {
+      const error = new Error("Fee receipt record was not found.");
+      error.status = 404;
+      throw error;
+    }
+
+    const originalReceipt = state.feeReceipts[receiptIndex];
+    if (!isValidFeeReceipt(originalReceipt)) {
+      const error = new Error("This fee receipt is already marked as Not Received or reversed.");
+      error.status = 409;
+      throw error;
+    }
+
+    const fileId = receiptFileId(originalReceipt);
+    const fileIndex = (state.files || []).findIndex((file) => file.id === fileId);
+    if (fileIndex < 0) {
+      const error = new Error("The file linked to this fee receipt was not found.");
+      error.status = 404;
+      throw error;
+    }
+
+    const transactionId = originalReceipt.transactionId || originalReceipt.transaction_id || "";
+    const collectionIndex = (state.otherCashCollections || []).findIndex((item) => {
+      if (!isActiveTransaction(item)) return false;
+      if (transactionId && item.id === transactionId) return true;
+      return item.feeReceiptId === receiptId
+        || item.fee_receipt_id === receiptId
+        || item.sourceId === receiptId
+        || item.source_id === receiptId;
+    });
+    const linkedCollection = collectionIndex >= 0 ? state.otherCashCollections[collectionIndex] : null;
+    const actorName = profile?.name || profile?.email || "";
+    const actorId = profile?.id || userId || "";
+    const previousPushStatus = originalReceipt.pushStatus
+      || originalReceipt.push_status
+      || (linkedCollection ? "pushed" : "not_pushed");
+
+    const reversedReceipt = {
+      ...originalReceipt,
+      status: "not_received",
+      receiptStatus: "not_received",
+      receipt_status: "not_received",
+      isReversed: true,
+      is_reversed: true,
+      reversedAt: now.toISOString(),
+      reversed_at: now.toISOString(),
+      reversedBy: actorName,
+      reversed_by: actorName,
+      reversedByUserId: actorId,
+      reversed_by_user_id: actorId,
+      reversalReason,
+      reversal_reason: reversalReason,
+      previousPushStatus,
+      previous_push_status: previousPushStatus,
+      linkedTransactionStatus: linkedCollection ? "reversed" : "not_applicable",
+      linked_transaction_status: linkedCollection ? "reversed" : "not_applicable",
+      updatedAt: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+    state.feeReceipts = (state.feeReceipts || []).map((item, index) => index === receiptIndex ? reversedReceipt : item);
+
+    if (linkedCollection) {
+      const reversedCollection = {
+        ...linkedCollection,
+        status: "reversed",
+        transactionStatus: "reversed",
+        transaction_status: "reversed",
+        reversed: true,
+        isReversed: true,
+        is_reversed: true,
+        reversedAt: now.toISOString(),
+        reversed_at: now.toISOString(),
+        reversedBy: actorName,
+        reversed_by: actorName,
+        reversedByUserId: actorId,
+        reversed_by_user_id: actorId,
+        reversalReason,
+        reversal_reason: reversalReason,
+        updatedAt: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      state.otherCashCollections = (state.otherCashCollections || []).map((item, index) => index === collectionIndex ? reversedCollection : item);
+    }
+
+    state.files[fileIndex] = applyFeeReceiptSummary(state.files[fileIndex], state.feeReceipts, now, profile);
+    appendAudit(state, linkedCollection
+      ? "Fee receipt marked Not Received and linked collection reversed"
+      : "Fee receipt marked Not Received", {
+      ...reversedReceipt,
+      particulars: reversalReason,
+      date: reversedReceipt.receiptDate || reversedReceipt.receipt_date,
+      amount: reversedReceipt.amount || reversedReceipt.receivedAmount || reversedReceipt.received_amount,
+    }, profile, now);
+    return state;
+  }, userId);
+}
+
 function revertFeeReceipt(file, now, profile) {
   const stages = { ...(file.stages || {}) };
   stages.Billed = true;
@@ -338,7 +502,7 @@ function revertFeeReceipt(file, now, profile) {
   };
 }
 
-const INVALID_FEE_RECEIPT_STATUSES = new Set(["deleted", "cancelled", "canceled", "reversed", "invalid", "failed"]);
+const INVALID_FEE_RECEIPT_STATUSES = new Set(["deleted", "cancelled", "canceled", "reversed", "not received", "not_received", "invalid", "failed"]);
 
 function receiptFileId(receipt = {}) {
   return receipt.fileId || receipt.file_id || "";
@@ -372,7 +536,7 @@ function feeReceiptSummary(file = {}, receipts = []) {
     .sort(feeReceiptNewestFirst);
   if (!validReceipts.length) {
     if (fileReceipts.length) {
-      return { receipts: [], latest: null, totalReceived: 0, latestReceiptDate: "" };
+      return { receipts: [], latest: null, totalReceived: 0, totalDiscount: 0, latestReceiptDate: "" };
     }
     const legacyAmount = Number(file.feeReceivedAmount || file.amountReceived || file.amount_received || 0);
     const legacyDate = normalizeDate(file.feeReceivedDate || file.receivedDate || file.received_date || file.receivedOn || file.received_on);
@@ -380,6 +544,7 @@ function feeReceiptSummary(file = {}, receipts = []) {
       receipts: [],
       latest: null,
       totalReceived: Number.isFinite(legacyAmount) ? Math.max(legacyAmount, 0) : 0,
+      totalDiscount: 0,
       latestReceiptDate: legacyAmount > 0 ? legacyDate : "",
     };
   }
@@ -387,6 +552,9 @@ function feeReceiptSummary(file = {}, receipts = []) {
     receipts: validReceipts,
     latest: validReceipts[0],
     totalReceived: validReceipts.reduce((sum, receipt) => sum + Math.max(Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0), 0), 0),
+    totalDiscount: validReceipts.reduce((sum, receipt) => sum + Math.max(Number(
+      receipt.discountAmount || receipt.discount_amount || receipt.discount || 0,
+    ), 0), 0),
     latestReceiptDate: normalizeDate(validReceipts[0].receiptDate || validReceipts[0].receipt_date || validReceipts[0].receivedDate || validReceipts[0].received_date),
   };
 }
@@ -405,8 +573,10 @@ function applyFeeReceiptSummary(file, receipts, now, profile, billingPayload = {
     || 0,
   );
   const totalReceived = Math.max(Number(summary.totalReceived || 0), 0);
-  const balanceAmount = Math.max((Number.isFinite(billedAmount) ? billedAmount : 0) - totalReceived, 0);
-  const fullyReceived = billedAmount > 0 && totalReceived >= billedAmount;
+  const totalDiscount = Math.max(Number(summary.totalDiscount || 0), 0);
+  const settledAmount = totalReceived + totalDiscount;
+  const balanceAmount = Math.max((Number.isFinite(billedAmount) ? billedAmount : 0) - settledAmount, 0);
+  const fullyReceived = billedAmount > 0 && settledAmount >= billedAmount;
   const latestTransactionId = latest.transactionId || latest.transaction_id || "";
   const stages = { ...(file.stages || {}), Billed: true };
   return {
@@ -433,6 +603,8 @@ function applyFeeReceiptSummary(file, receipts, now, profile, billingPayload = {
     feeReceivedAmount: totalReceived,
     amountReceived: totalReceived,
     amount_received: totalReceived,
+    discountAmount: totalDiscount,
+    discount_amount: totalDiscount,
     balanceAmount,
     balance_amount: balanceAmount,
     paymentStatus: totalReceived <= 0 ? "Fee Not Received" : (fullyReceived ? "Fee Received" : "Partly Received"),
@@ -459,14 +631,224 @@ function applyFeeReceiptSummary(file, receipts, now, profile, billingPayload = {
 }
 
 function isActiveTransaction(item = {}) {
-  return item.isDeleted !== true && item.is_deleted !== true && String(item.status || "").toLowerCase() !== "deleted";
+  const status = String(item.status || item.transactionStatus || item.transaction_status || "").trim().toLowerCase();
+  return item.isDeleted !== true
+    && item.is_deleted !== true
+    && item.deleted !== true
+    && item.cancelled !== true
+    && item.reversed !== true
+    && !["deleted", "cancelled", "canceled", "reversed", "void", "failed"].includes(status);
+}
+
+function normalizeFinanceAccount(value = "") {
+  const key = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!key) return "";
+  if (key === "cash" || key.includes("cash account") || key.includes("cash balance")) return "cash";
+  if (key.includes("federal")) return "federal_bank";
+  if (key === "tmb" || key.includes("tamilnad mercantile") || key.includes("tamil nad mercantile")) return "tmb";
+  if (key === "bank" || key === "bank account" || key.includes("unclassified bank")) return "unclassified_bank";
+  return "";
+}
+
+function financeAccountOf(item = {}, fallback = "") {
+  const candidates = [
+    item.accountKey, item.account_key, item.accountName, item.account_name,
+    item.bankName, item.bank_name, item.bankAccount, item.bank_account,
+    item.paymentAccount, item.payment_account, item.mode, item.paymentMode, item.payment_mode,
+    item.particulars,
+  ];
+  for (const candidate of candidates) {
+    const account = normalizeFinanceAccount(candidate);
+    if (account) return account;
+  }
+  return fallback;
+}
+
+function financeDateOf(item = {}) {
+  return normalizeDate(
+    item.date || item.transactionDate || item.transaction_date || item.receiptDate || item.receipt_date
+      || item.reconciliationDate || item.reconciliation_date || item.balanceDate || item.balance_date
+      || item.effectiveDate || item.effective_date || item.createdAt || item.created_at,
+  );
+}
+
+function approvedRecord(item = {}) {
+  const status = String(item.approvalStatus || item.approval_status || item.status || "").trim().toLowerCase();
+  return ["approved", "confirmed", "matched", "closed"].includes(status) || item.approved === true || item.confirmed === true;
+}
+
+function calculateDailyReportBalanceSummary(state, reportDate = "") {
+  const asOfDate = normalizeDate(reportDate) || new Date().toISOString().slice(0, 10);
+  const accountKeys = ["cash", "federal_bank", "tmb", "unclassified_bank"];
+  const balances = Object.fromEntries(accountKeys.map((key) => [key, 0]));
+  const openingDates = Object.fromEntries(accountKeys.map((key) => [key, ""]));
+
+  accountKeys.forEach((account) => {
+    const opening = [...(state.openingBalances || [])]
+      .filter((item) => isActiveTransaction(item))
+      .filter((item) => financeAccountOf(item, "cash") === account)
+      .filter((item) => financeDateOf(item) && financeDateOf(item) <= asOfDate)
+      .sort((a, b) => financeDateOf(b).localeCompare(financeDateOf(a))
+        || String(b.updatedAt || b.updated_at || b.createdAt || b.created_at || "").localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || a.created_at || "")))[0];
+    if (opening) {
+      balances[account] = Number(opening.amount ?? opening.openingBalance ?? opening.opening_balance ?? 0) || 0;
+      openingDates[account] = financeDateOf(opening);
+    } else if (account === "cash") {
+      balances.cash = Number(state.openingCashBalance || 0) || 0;
+    }
+  });
+
+  const afterOpening = (item, account) => {
+    const date = financeDateOf(item);
+    return date && date <= asOfDate && (!openingDates[account] || date >= openingDates[account]);
+  };
+  const applyMovement = (item, direction) => {
+    if (!isActiveTransaction(item)) return;
+    const amount = Number(item.amount ?? item.transactionAmount ?? item.transaction_amount ?? 0) || 0;
+    if (!amount) return;
+    const fromAccount = normalizeFinanceAccount(item.fromAccount || item.from_account || item.sourceAccount || item.source_account);
+    const toAccount = normalizeFinanceAccount(item.toAccount || item.to_account || item.destinationAccount || item.destination_account);
+    if (fromAccount && toAccount) {
+      if (afterOpening(item, fromAccount)) balances[fromAccount] -= amount;
+      if (afterOpening(item, toAccount)) balances[toAccount] += amount;
+      return;
+    }
+    const account = financeAccountOf(item);
+    if (account && afterOpening(item, account)) balances[account] += direction * amount;
+  };
+
+  (state.otherCashCollections || []).forEach((item) => applyMovement(item, 1));
+  (state.expenses || []).forEach((item) => applyMovement(item, -1));
+  (state.accountTransfers || []).forEach((item) => applyMovement(item, 0));
+
+  (state.cashReconciliations || []).forEach((item) => {
+    if (!isActiveTransaction(item) || !approvedRecord(item) || !afterOpening(item, "cash")) return;
+    const amount = Number(item.adjustmentAmount ?? item.adjustment_amount ?? 0) || 0;
+    const type = String(item.adjustmentType || item.adjustment_type || "").toLowerCase();
+    if (type === "excess") balances.cash += amount;
+    if (type === "shortage") balances.cash -= amount;
+  });
+
+  const confirmedRows = [
+    ...(state.bankReconciliations || []),
+    ...(state.accountReconciliations || []),
+    ...(state.confirmedAccountBalances || []),
+    ...(state.accountBalances || []),
+  ];
+  ["federal_bank", "tmb"].forEach((account) => {
+    const confirmed = confirmedRows
+      .filter((item) => isActiveTransaction(item) && approvedRecord(item) && financeAccountOf(item) === account)
+      .filter((item) => financeDateOf(item) && financeDateOf(item) <= asOfDate)
+      .sort((a, b) => financeDateOf(b).localeCompare(financeDateOf(a))
+        || String(b.approvedAt || b.approved_at || b.updatedAt || b.updated_at || "").localeCompare(String(a.approvedAt || a.approved_at || a.updatedAt || a.updated_at || "")))[0];
+    if (confirmed) {
+      balances[account] = Number(
+        confirmed.closingBalance ?? confirmed.closing_balance ?? confirmed.confirmedBalance
+          ?? confirmed.confirmed_balance ?? confirmed.balance ?? 0,
+      ) || 0;
+    }
+  });
+
+  Object.keys(balances).forEach((key) => { balances[key] = Number(balances[key].toFixed(2)); });
+  return {
+    reportDate: asOfDate,
+    cashBalance: balances.cash,
+    federalBankBalance: balances.federal_bank,
+    tmbBalance: balances.tmb,
+    unclassifiedBankBalance: balances.unclassified_bank,
+    totalBalance: Number((balances.cash + balances.federal_bank + balances.tmb).toFixed(2)),
+  };
+}
+
+function accountSummary(state, reportDate = "") {
+  const summary = calculateDailyReportBalanceSummary(state, reportDate);
+  return {
+    ...summary,
+    accounts: FINANCE_ACCOUNTS,
+    combinedBalance: summary.totalBalance,
+  };
+}
+
+async function saveAccountTransfer(payload, userId, profile) {
+  return patchAppState((state) => {
+    const now = new Date();
+    const amount = Number(payload.amount || 0);
+    const date = normalizeDate(payload.date || payload.transfer_date);
+    const fromAccount = normalizeFinanceAccount(payload.fromAccount || payload.from_account || payload.fromAccountKey || payload.from_account_key);
+    const toAccount = normalizeFinanceAccount(payload.toAccount || payload.to_account || payload.toAccountKey || payload.to_account_key);
+    const permitted = new Set(["cash", "federal_bank", "tmb"]);
+    if (!date) throw Object.assign(new Error("Transfer date is required."), { status: 400 });
+    if (!Number.isFinite(amount) || amount <= 0) throw Object.assign(new Error("Enter a valid transfer amount."), { status: 400 });
+    if (!permitted.has(fromAccount) || !permitted.has(toAccount)) throw Object.assign(new Error("Select valid source and destination accounts."), { status: 400 });
+    if (fromAccount === toAccount) throw Object.assign(new Error("Source and destination accounts must be different."), { status: 400 });
+    const existing = (state.accountTransfers || []).find((item) => item.id === payload.id);
+    const record = {
+      ...(existing || {}), id: existing?.id || payload.id || crypto.randomUUID(), date,
+      transferDate: date, transfer_date: date, amount,
+      fromAccount, from_account: fromAccount, fromAccountKey: fromAccount, from_account_key: fromAccount,
+      fromAccountName: financeAccountName(fromAccount),
+      toAccount, to_account: toAccount, toAccountKey: toAccount, to_account_key: toAccount,
+      toAccountName: financeAccountName(toAccount),
+      referenceNo: String(payload.referenceNo || payload.reference_no || payload.reference || "").trim(),
+      reference: String(payload.reference || payload.referenceNo || payload.reference_no || "").trim(),
+      remarks: String(payload.remarks || "").trim(), status: "active", isDeleted: false, is_deleted: false,
+      createdBy: existing?.createdBy || profile?.name || "", created_by: existing?.created_by || profile?.id || userId || "",
+      createdAt: existing?.createdAt || existing?.created_at || now.toISOString(),
+      created_at: existing?.created_at || existing?.createdAt || now.toISOString(),
+      updatedAt: now.toISOString(), updated_at: now.toISOString(),
+    };
+    state.accountTransfers = upsertById(state.accountTransfers || [], record).sort(financeNewestFirst);
+    appendAudit(state, existing ? "Account transfer updated" : "Account transfer saved", record, profile, now);
+    return state;
+  }, userId);
+}
+
+async function deleteAccountTransfer(id, userId, profile) {
+  return patchAppState((state) => {
+    const now = new Date();
+    const existing = (state.accountTransfers || []).find((item) => item.id === id && isActiveTransaction(item));
+    if (!existing) throw Object.assign(new Error("Account transfer not found."), { status: 404 });
+    state.accountTransfers = (state.accountTransfers || []).map((item) => item.id === id ? {
+      ...item, status: "deleted", isDeleted: true, is_deleted: true,
+      deletedBy: profile?.name || "", deletedAt: now.toISOString(), updatedAt: now.toISOString(), updated_at: now.toISOString(),
+    } : item);
+    appendAudit(state, "Account transfer deleted", existing, profile, now);
+    return state;
+  }, userId);
+}
+
+async function classifyLegacyBankTransaction(payload, userId, profile) {
+  return patchAppState((state) => {
+    const now = new Date();
+    const recordType = String(payload.recordType || payload.record_type || "").trim();
+    const recordId = String(payload.recordId || payload.record_id || "").trim();
+    const accountKey = normalizeFinanceAccount(payload.accountKey || payload.account_key);
+    if (!recordId || !["expense", "collection", "fee_receipt"].includes(recordType)) {
+      throw Object.assign(new Error("Select a valid legacy transaction."), { status: 400 });
+    }
+    if (!["federal_bank", "tmb"].includes(accountKey)) {
+      throw Object.assign(new Error("Legacy Bank transactions can be classified only as Federal Bank or TMB."), { status: 400 });
+    }
+    const listKey = recordType === "expense" ? "expenses" : recordType === "collection" ? "otherCashCollections" : "feeReceipts";
+    let changed = null;
+    state[listKey] = (state[listKey] || []).map((item) => {
+      if (item.id !== recordId) return item;
+      if (financeAccountOf(item) !== "unclassified_bank") throw Object.assign(new Error("This transaction is not an unclassified legacy Bank record."), { status: 409 });
+      changed = { ...item, accountKey, account_key: accountKey, accountName: financeAccountName(accountKey), account_name: financeAccountName(accountKey), classifiedBy: profile?.name || "", classifiedAt: now.toISOString(), updatedAt: now.toISOString(), updated_at: now.toISOString() };
+      return changed;
+    });
+    if (!changed) throw Object.assign(new Error("Legacy transaction not found."), { status: 404 });
+    appendAudit(state, "Legacy Bank transaction classified", changed, profile, now);
+    return state;
+  }, userId);
 }
 
 async function saveOpeningBalance(payload, userId, profile) {
   return patchAppState((state) => {
     const now = new Date();
     const incoming = normalizeOpeningBalance(payload, now, profile);
-    const existing = (state.openingBalances || []).find((item) => item.id === incoming.id || item.date === incoming.date);
+    const existing = (state.openingBalances || []).find((item) => item.id === incoming.id
+      || (item.date === incoming.date && financeAccountOf(item, "cash") === incoming.accountKey));
     const record = {
       ...(existing || {}),
       ...incoming,
@@ -577,12 +959,12 @@ async function decideCashReconciliation(id, decision, payload, userId, profile) 
 
 function calculateCashTotals(state, from = "", to = "") {
   const target = from || to || new Date().toISOString().slice(0, 10);
-  const openingEntry = [...(state.openingBalances || [])].filter((item) => item.date && item.date <= target).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const openingEntry = [...(state.openingBalances || [])].filter((item) => item.date && item.date <= target && financeAccountOf(item, "cash") === "cash").sort((a, b) => b.date.localeCompare(a.date))[0];
   const effectiveFrom = from || openingEntry?.date || "";
   const effectiveTo = to || from || new Date().toISOString().slice(0, 10);
   const inRange = (date) => (!effectiveFrom || date >= effectiveFrom) && (!effectiveTo || date <= effectiveTo);
-  const collections = (state.otherCashCollections || []).filter((item) => isActiveTransaction(item) && item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const expenses = (state.expenses || []).filter((item) => isActiveTransaction(item) && item.mode === "Cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const collections = (state.otherCashCollections || []).filter((item) => isActiveTransaction(item) && financeAccountOf(item, "cash") === "cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const expenses = (state.expenses || []).filter((item) => isActiveTransaction(item) && financeAccountOf(item, "cash") === "cash" && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
   return { opening, collections, expenses, calculatedClosing: opening + collections - expenses };
 }
@@ -600,6 +982,8 @@ function normalizeExpense(payload = {}, now, profile = {}) {
     error.status = 400;
     throw error;
   }
+  const paymentMethod = normalizePaymentMethod(payload.paymentMethod || payload.payment_method || payload.mode || "Cash");
+  const accountKey = transactionAccount(payload, paymentMethod);
   return {
     id: payload.id || "",
     date,
@@ -608,8 +992,13 @@ function normalizeExpense(payload = {}, now, profile = {}) {
     voucherNo: String(payload.voucherNo || payload.voucher_number || "").trim(),
     voucher_number: String(payload.voucherNo || payload.voucher_number || "").trim(),
     amount,
-    mode: String(payload.mode || payload.payment_mode || "Cash").trim(),
-    payment_mode: String(payload.mode || payload.payment_mode || "Cash").trim(),
+    mode: paymentMethod,
+    paymentMethod,
+    payment_method: paymentMethod,
+    accountKey,
+    account_key: accountKey,
+    accountName: financeAccountName(accountKey),
+    account_name: financeAccountName(accountKey),
     paidTo: String(payload.paidTo || payload.paid_to || "").trim(),
     paid_to: String(payload.paidTo || payload.paid_to || "").trim(),
     remarks: String(payload.remarks || "").trim(),
@@ -635,6 +1024,8 @@ function normalizeCollection(payload = {}, now, profile = {}) {
     error.status = 400;
     throw error;
   }
+  const paymentMethod = normalizePaymentMethod(payload.paymentMethod || payload.payment_method || payload.mode || "Cash");
+  const accountKey = transactionAccount(payload, paymentMethod);
   return {
     id: payload.id || "",
     date,
@@ -645,8 +1036,14 @@ function normalizeCollection(payload = {}, now, profile = {}) {
     collectionType: normalizeCollectionType(payload.collectionType || payload.collection_type),
     collection_type: normalizeCollectionType(payload.collectionType || payload.collection_type),
     amount,
-    mode: String(payload.mode || payload.collection_mode || "Cash").trim(),
-    collection_mode: String(payload.mode || payload.collection_mode || "Cash").trim(),
+    mode: paymentMethod,
+    paymentMethod,
+    payment_method: paymentMethod,
+    collection_mode: paymentMethod,
+    accountKey,
+    account_key: accountKey,
+    accountName: financeAccountName(accountKey),
+    account_name: financeAccountName(accountKey),
     receivedFrom: String(payload.receivedFrom || payload.received_from || "").trim(),
     received_from: String(payload.receivedFrom || payload.received_from || "").trim(),
     remarks: String(payload.remarks || "").trim(),
@@ -703,9 +1100,15 @@ function normalizeOpeningBalance(payload = {}, now, profile = {}) {
     error.status = 400;
     throw error;
   }
+  const accountKey = financeAccountOf(payload, "cash");
+  const accountLabels = { cash: "Cash in Hand", federal_bank: "Federal Bank", tmb: "TMB" };
   return {
     id: payload.id || "",
-    particulars: "Opening Cash Balance",
+    particulars: `Opening ${accountLabels[accountKey] || "Cash"} Balance`,
+    accountKey,
+    account_key: accountKey,
+    accountName: accountLabels[accountKey] || "Cash",
+    account_name: accountLabels[accountKey] || "Cash",
     date,
     balance_date: date,
     amount,
@@ -721,6 +1124,8 @@ function normalizeOpeningBalance(payload = {}, now, profile = {}) {
 function normalizeDate(value) {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const isoDate = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (isoDate) return isoDate[1];
   const match = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
   if (!match) return "";
   const year = match[3].length === 2 ? `20${match[3]}` : match[3];
@@ -747,9 +1152,18 @@ function appendAudit(state, action, record, profile, now) {
       action,
       details: {
         id: record.id,
+        fileId: record.fileId || record.file_id || "",
+        receiptId: record.receiptId || record.receipt_id || record.id || "",
+        transactionId: record.transactionId || record.transaction_id || "",
         date: record.date,
         amount: record.amount,
         particulars: record.particulars,
+        status: record.status || record.receiptStatus || record.receipt_status || "",
+        previousPushStatus: record.previousPushStatus || record.previous_push_status || "",
+        linkedTransactionStatus: record.linkedTransactionStatus || record.linked_transaction_status || "",
+        reversedAt: record.reversedAt || record.reversed_at || "",
+        reversedBy: record.reversedBy || record.reversed_by || "",
+        reversalReason: record.reversalReason || record.reversal_reason || "",
       },
       user: profile?.name || "",
       role: profile?.role || "",
@@ -759,14 +1173,22 @@ function appendAudit(state, action, record, profile, now) {
 }
 
 module.exports = {
+  FINANCE_ACCOUNTS,
+  PAYMENT_METHODS,
   saveExpense,
   deleteExpense,
   saveCollection,
   saveFeeReceipt,
+  reverseFeeReceipt,
   reverseUnlinkedFeeReceipt,
   deleteCollection,
   saveOpeningBalance,
   deleteOpeningBalance,
   submitCashReconciliation,
   decideCashReconciliation,
+  calculateDailyReportBalanceSummary,
+  accountSummary,
+  saveAccountTransfer,
+  deleteAccountTransfer,
+  classifyLegacyBankTransaction,
 };

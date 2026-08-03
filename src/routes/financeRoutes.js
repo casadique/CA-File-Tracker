@@ -6,18 +6,26 @@ const {
   deleteExpense,
   saveCollection,
   saveFeeReceipt,
+  reverseFeeReceipt,
   reverseUnlinkedFeeReceipt,
   deleteCollection,
   saveOpeningBalance,
   deleteOpeningBalance,
   submitCashReconciliation,
   decideCashReconciliation,
+  calculateDailyReportBalanceSummary,
+  FINANCE_ACCOUNTS,
+  PAYMENT_METHODS,
+  accountSummary,
+  saveAccountTransfer,
+  deleteAccountTransfer,
+  classifyLegacyBankTransaction,
 } = require("../services/financeService");
 
 const router = express.Router();
 const financeRoles = ["Admin", "Manager"];
 
-router.get("/", requireAuth, requireRole(...financeRoles), async (_req, res, next) => {
+router.get("/", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
     const state = await getAppState();
     res.json({
@@ -29,7 +37,20 @@ router.get("/", requireAuth, requireRole(...financeRoles), async (_req, res, nex
       otherCashCollectionSources: state.otherCashCollectionSources || [],
       expenseItems: state.expenseItems || [],
       cashReconciliations: state.cashReconciliations || [],
+      accountTransfers: (state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+      accounts: FINANCE_ACCOUNTS,
+      paymentMethods: PAYMENT_METHODS,
+      accountSummary: accountSummary(state, req.query.date),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/daily-report-summary", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await getAppState();
+    res.json({ ok: true, summary: calculateDailyReportBalanceSummary(state, req.query.date) });
   } catch (error) {
     next(error);
   }
@@ -116,6 +137,25 @@ router.post("/fee-receipts/:fileId/reverse-unlinked", requireAuth, requireRole(.
   }
 });
 
+router.post("/fee-receipts/receipt/:receiptId/not-received", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await reverseFeeReceipt(
+      req.params.receiptId,
+      req.body.reason,
+      req.user.id,
+      req.profile,
+    );
+    res.json({
+      ok: true,
+      files: state.files || [],
+      feeReceipts: state.feeReceipts || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.delete("/collections/:id", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
     const state = await deleteCollection(req.params.id, req.user.id, req.profile);
@@ -146,6 +186,27 @@ router.delete("/opening-balances/:id", requireAuth, requireRole("Admin"), async 
   } catch (error) {
     next(error);
   }
+});
+
+router.post("/transfers", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await saveAccountTransfer(req.body.transfer || req.body, req.user.id, req.profile);
+    res.json({ ok: true, accountTransfers: (state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true), accountSummary: accountSummary(state) });
+  } catch (error) { next(error); }
+});
+
+router.delete("/transfers/:id", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await deleteAccountTransfer(req.params.id, req.user.id, req.profile);
+    res.json({ ok: true, accountTransfers: (state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true), accountSummary: accountSummary(state) });
+  } catch (error) { next(error); }
+});
+
+router.post("/classify-legacy-bank", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await classifyLegacyBankTransaction(req.body || {}, req.user.id, req.profile);
+    res.json({ ok: true, expenses: state.expenses || [], otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true), feeReceipts: state.feeReceipts || [], accountSummary: accountSummary(state) });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

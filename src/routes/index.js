@@ -12,6 +12,7 @@ const exportRoutes = require("./exportRoutes");
 const legacyRoutes = require("./legacyRoutes");
 const dashboardRoutes = require("./dashboardRoutes");
 const clientRoutes = require("./clientRoutes");
+const notificationRoutes = require("./notificationRoutes");
 const { env } = require("../config/env");
 
 const router = express.Router();
@@ -29,6 +30,7 @@ router.use("/auth", authRoutes);
 router.use("/state", stateRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/clients", clientRoutes);
+router.use("/notifications", notificationRoutes);
 router.use("/files", fileRoutes);
 router.use("/chat", chatRoutes);
 router.use("/finance", financeRoutes);

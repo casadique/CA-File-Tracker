@@ -165,3 +165,30 @@ After the Render URL works:
 3. Update Render with the new service role key.
 4. Redeploy.
 
+## Desktop Notifications
+
+Desktop notifications require one database migration and three Render secrets.
+
+1. Open Supabase SQL Editor and run `database/20260803_desktop_notifications.sql` once.
+2. Generate one VAPID key pair locally:
+
+   ```text
+   npm run generate:vapid
+   ```
+
+3. In Render, open the web service and add these environment variables using the generated values:
+
+   ```text
+   VAPID_PUBLIC_KEY=<generated publicKey>
+   VAPID_PRIVATE_KEY=<generated privateKey>
+   VAPID_SUBJECT=mailto:casadique@gmail.com
+   ```
+
+4. Keep the private key only in Render. Never add it to GitHub, browser code, or screenshots.
+5. Redeploy the service and confirm `/api/health` loads normally.
+6. Log in over `https://cafiletracker.net`, open Notifications, expand Desktop Notifications, and select Enable Desktop Notifications.
+7. Accept the browser permission and use Send Test to verify the device.
+8. Repeat the opt-in on each device that should receive alerts. Signing out disables the subscription on that device.
+
+Chrome, Edge, and Firefox support the implemented Web Push flow. Browser and operating-system notification settings can still suppress alerts. iPhone/iPad background notifications require the site to be installed to the Home Screen and permission granted from the installed web app.
+

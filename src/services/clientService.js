@@ -92,7 +92,9 @@ function clientPayload(input = {}) {
   validateRegistration("TAN", tan, /^[A-Z]{4}[0-9]{5}[A-Z]$/);
   validateRegistration("GST No.", gst, /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/);
   validateRegistration("CIN", cin, /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/);
-  const clientTypes = parseClientTypes(input.clientTypes || input.client_types || input.clientType || input.client_type || "Other Client");
+  const suppliedTypes = input.clientTypes ?? input.client_types ?? input.clientType ?? input.client_type;
+  const clientTypes = parseClientTypes(suppliedTypes === undefined ? "Other Client" : suppliedTypes);
+  if (!clientTypes.length) throw validationError("Select at least one Client Type.");
   return {
     client_name: clientName,
     normalized_name: normalizeName(clientName),
@@ -159,15 +161,19 @@ async function hydrateClientTypes(clients = []) {
   return clients.map((client) => ({ ...client, client_types: (map.get(client.id) || []).sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name)).map((item) => item.name) }));
 }
 
-async function listClients({ search = "", status = "Active", page = 1, pageSize = 20 } = {}) {
+async function listClients({ search = "", status = "Active", clientType = "", constitution = "", careOf = "", place = "", page = 1, pageSize = 20 } = {}) {
   const safePage = Math.max(1, Number(page) || 1);
   const safeSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
   let query = supabaseAdmin.from("clients").select(CLIENT_FIELDS, { count: "exact" });
   if (status && status !== "All") query = query.eq("status", status);
+  if (cleanText(clientType)) query = query.ilike("client_type", `%${cleanText(clientType).replace(/[%_,]/g, "")}%`);
+  if (cleanText(constitution)) query = query.eq("constitution", cleanText(constitution));
+  if (cleanText(careOf)) query = query.eq("care_of", cleanText(careOf));
+  if (cleanText(place)) query = query.ilike("place", `%${cleanText(place).replace(/[%_,]/g, "")}%`);
   const term = cleanText(search).replace(/[%_,]/g, "");
   if (term) {
     const normalized = normalizePan(term);
-    query = query.or(`client_name.ilike.%${term}%,normalized_pan.ilike.%${normalized}%,normalized_tan.ilike.%${normalized}%,normalized_gst_no.ilike.%${normalized}%,normalized_cin.ilike.%${normalized}%,normalized_other_regn_no.ilike.%${normalized}%,contact_person.ilike.%${term}%,contact_number.ilike.%${term}%,email.ilike.%${term}%,client_code.ilike.%${term}%`);
+    query = query.or(`client_name.ilike.%${term}%,client_type.ilike.%${term}%,care_of.ilike.%${term}%,constitution.ilike.%${term}%,place.ilike.%${term}%,normalized_pan.ilike.%${normalized}%,normalized_tan.ilike.%${normalized}%,normalized_gst_no.ilike.%${normalized}%,normalized_cin.ilike.%${normalized}%,normalized_other_regn_no.ilike.%${normalized}%,contact_person.ilike.%${term}%,contact_number.ilike.%${term}%,email.ilike.%${term}%,client_code.ilike.%${term}%`);
   }
   const from = (safePage - 1) * safeSize;
   const { data, error, count } = await query.order("updated_at", { ascending: false }).order("id", { ascending: false }).range(from, from + safeSize - 1);
@@ -175,11 +181,11 @@ async function listClients({ search = "", status = "Active", page = 1, pageSize 
   return { clients: await hydrateClientTypes(data || []), total: count || 0, page: safePage, pageSize: safeSize };
 }
 
-async function allClients({ search = "", status = "All" } = {}) {
+async function allClients({ search = "", status = "All", clientType = "", constitution = "", careOf = "", place = "" } = {}) {
   const rows = [];
   let page = 1;
   while (true) {
-    const result = await listClients({ search, status, page, pageSize: 100 });
+    const result = await listClients({ search, status, clientType, constitution, careOf, place, page, pageSize: 100 });
     rows.push(...result.clients);
     if (rows.length >= result.total) break;
     page += 1;

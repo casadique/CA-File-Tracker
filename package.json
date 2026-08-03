@@ -9,6 +9,8 @@
     "dev": "node server.js",
     "test:dashboard": "node tools/test-dashboard-counts.js",
     "test:file-completion": "node tools/test-file-completion-save.js",
+    "test:notifications": "node tools/test-notification-retention.js",
+    "generate:vapid": "web-push generate-vapid-keys --json",
     "import:backup": "node tools/import-backup-to-supabase.js data/site-data.json",
     "repair:collection-types": "node tools/repair-collection-types.js",
     "repair:checked-by": "node tools/cleanup-invalid-checking-assignments.js"
@@ -27,6 +29,7 @@
     "helmet": "^7.1.0",
     "multer": "^1.4.5-lts.1",
     "pdfkit": "^0.15.0",
+    "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
   },
   "private": true

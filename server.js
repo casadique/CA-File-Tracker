@@ -11,7 +11,8 @@ const rateLimit = require("express-rate-limit");
 const { env } = require("./src/config/env");
 const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
-const { migrateDisplayNames, migrateServiceTypes } = require("./src/services/appStateService");
+const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention } = require("./src/services/appStateService");
+const { dispatchDueReminders } = require("./src/services/pushNotificationService");
 
 const app = express();
 const publicRoot = __dirname;
@@ -70,12 +71,17 @@ async function startServer() {
     if (migration.changed) console.log("Staff display-name migration applied.");
     const serviceMigration = await migrateServiceTypes();
     if (serviceMigration.changed) console.log("Service-type migration applied.");
+    const notificationMigration = await migrateNotificationRetention();
+    if (notificationMigration.changed) console.log("Existing notifications archived and seven-day retention enabled.");
   } catch (error) {
     console.error("Startup data migration failed:", error.message);
   }
   app.listen(env.port, () => {
     console.log(`CA File Tracker running on port ${env.port}`);
   });
+  const runDueReminders = () => dispatchDueReminders().catch((error) => console.error("Due reminder dispatch failed:", error.message));
+  setTimeout(runDueReminders, 15000).unref();
+  setInterval(runDueReminders, 60 * 60 * 1000).unref();
 }
 
 startServer();

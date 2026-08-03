@@ -16,7 +16,7 @@ function profilePermissions(profile = {}) {
 function requireClientPermission(permission) {
   return (req, res, next) => {
     if (req.profile?.role === "Admin" || profilePermissions(req.profile).includes(permission)) return next();
-    res.status(403).json({ error: "You do not have permission to access client credentials." });
+    res.status(403).json({ error: "You do not have the required client permission." });
   };
 }
 
@@ -40,10 +40,10 @@ router.get("/export", requireAuth, requireRole("Admin", "Manager"), async (req, 
 router.get("/masters", requireAuth, async (_req, res, next) => {
   try { res.json(await clients.listClientMasters()); } catch (error) { next(error); }
 });
-router.post("/masters/:kind", requireAuth, requireRole("Admin"), async (req, res, next) => {
+router.post("/masters/:kind", requireAuth, requireClientPermission("manage_client_masters"), async (req, res, next) => {
   try { res.json({ value: await clients.saveClientMasterValue(req.params.kind, req.body) }); } catch (error) { next(error); }
 });
-router.put("/masters/:kind/:id", requireAuth, requireRole("Admin"), async (req, res, next) => {
+router.put("/masters/:kind/:id", requireAuth, requireClientPermission("manage_client_masters"), async (req, res, next) => {
   try { res.json({ value: await clients.saveClientMasterValue(req.params.kind, { ...req.body, id: req.params.id }) }); } catch (error) { next(error); }
 });
 router.post("/import", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {

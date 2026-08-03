@@ -11,6 +11,7 @@ const COMPLETED_FILES_CHECKED_VERSION = "completed-files-checked-by-chindu-2026-
 const ACTIVE_FILE_DATES_CLEAR_VERSION = "active-file-dates-cleared-2026-07-14";
 const MASTER_LIST_RESET_VERSION = "approved-master-users-2026-07-13";
 const MS_DAY = 86400000;
+const DESKTOP_NOTIFICATION_DEVICE_KEY = `${STORAGE_KEY}-desktop-notification-device`;
 
 const defaultDailyQuotes = [
   { text: "Success comes from consistent small efforts.", author: "Robert Collier" },
@@ -338,6 +339,12 @@ function staffUser(name) {
 let state = loadState();
 let editingId = null;
 let activePage = "dashboard";
+let desktopNotificationConfig = null;
+let desktopServiceWorkerRegistration = null;
+let desktopNotificationMessageBound = false;
+let desktopNotificationConfigPromise = null;
+let desktopNotificationAdminStatus = null;
+let currentDeviceSubscribed = false;
 let filterTimer = null;
 let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
@@ -354,7 +361,20 @@ let lastChatFastSyncAt = 0;
 let chatSearchTimer = null;
 let selectedDrawerClient = null;
 let clientSearchTimer = null;
-const clientMasterUi = { search: "", status: "Active", page: 1, pageSize: 20, total: 0, rows: [], loading: false, masters: null };
+const clientMasterUi = {
+  search: "",
+  status: "Active",
+  clientType: "",
+  constitution: "",
+  careOf: "",
+  place: "",
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  rows: [],
+  loading: false,
+  masters: null,
+};
 const fileSaveRequests = new Set();
 const PERF_LOG_ENABLED = (() => {
   try {
@@ -446,6 +466,7 @@ function loadState() {
     feeReceipts: [],
     otherCashCollections: [],
     openingBalances: [],
+    accountTransfers: [],
     cashReconciliations: [],
     otherCashCollectionSources: ["CA Sadique"],
     expenseItems: ["Office Expense", "Travelling", "Printing & Stationery", "Staff Welfare"],
@@ -492,12 +513,14 @@ function loadState() {
       expenseParticulars: "",
       expenseName: "",
       expenseMode: "",
+      expenseAccount: "",
       expensePaidTo: "",
       expenseVoucher: "",
       cashFrom: "",
       cashTo: "",
       cashParticulars: "",
       cashMode: "",
+      cashAccount: "",
       cashReceivedFrom: "",
       cashVoucher: "",
       balanceFrom: "",
@@ -673,7 +696,12 @@ function normalizeState(appState) {
     particulars: item.particulars || item.expenseItem || "",
     voucherNo: item.voucherNo || item.voucher || "",
     amount: Number(item.amount || 0) || 0,
-    mode: item.mode || "Cash",
+    mode: normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "Cash"),
+    paymentMethod: normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "Cash"),
+    payment_method: normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "Cash"),
+    accountKey: transactionAccountKey(item),
+    account_key: transactionAccountKey(item),
+    accountName: financeAccountLabel(transactionAccountKey(item)),
     paidTo: item.paidTo || "",
     remarks: item.remarks || "",
     attachmentName: item.attachmentName || "",
@@ -687,7 +715,12 @@ function normalizeState(appState) {
     particulars: item.particulars || "",
     voucherNo: item.voucherNo || item.referenceNo || "",
     amount: Number(item.amount || 0) || 0,
-    mode: item.mode || "Cash",
+    mode: normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "Cash"),
+    paymentMethod: normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "Cash"),
+    payment_method: normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "Cash"),
+    accountKey: transactionAccountKey(item),
+    account_key: transactionAccountKey(item),
+    accountName: financeAccountLabel(transactionAccountKey(item)),
     collectionType: normalizeCollectionType(item.collectionType || item.collection_type),
     collection_type: normalizeCollectionType(item.collectionType || item.collection_type),
     receivedFrom: properCaseName(item.receivedFrom || ""),
@@ -723,8 +756,21 @@ function normalizeState(appState) {
     particulars: item.particulars || "",
     date: normalizeImportDate(item.date) || todayDate(),
     amount: Number(item.amount || 0) || 0,
+    accountKey: transactionAccountKey(item),
+    account_key: transactionAccountKey(item),
+    accountName: financeAccountLabel(transactionAccountKey(item)),
     createdAt: Number(item.createdAt || 0) || Date.now(),
   }));
+  appState.accountTransfers = (appState.accountTransfers || []).map((item) => ({
+    ...item,
+    id: item.id || crypto.randomUUID(),
+    date: normalizeImportDate(item.date || item.transfer_date) || todayDate(),
+    fromAccountKey: transactionAccountKey({ accountKey: item.fromAccountKey || item.from_account_key || item.fromAccount || item.from_account }, "cash"),
+    toAccountKey: transactionAccountKey({ accountKey: item.toAccountKey || item.to_account_key || item.toAccount || item.to_account }, "federal_bank"),
+    reference: item.reference || item.referenceNo || item.reference_no || "",
+    amount: Number(item.amount || 0) || 0,
+    createdAt: item.createdAt || item.created_at || Date.now(),
+  })).sort(financeNewestFirst);
   appState.expenseItems = sortList([...(appState.expenseItems || []), "Office Expense", "Travelling", "Printing & Stationery", "Staff Welfare"]);
   appState.openingCashBalance = Number(appState.openingCashBalance || 0) || 0;
   appState.bulkBillingReports = appState.bulkBillingReports || null;
@@ -785,12 +831,14 @@ function normalizeState(appState) {
     expenseParticulars: appState.filters?.expenseParticulars || "",
     expenseName: appState.filters?.expenseName || "",
     expenseMode: appState.filters?.expenseMode || "",
+    expenseAccount: appState.filters?.expenseAccount || "",
     expensePaidTo: appState.filters?.expensePaidTo || "",
     expenseVoucher: appState.filters?.expenseVoucher || "",
     cashFrom: appState.filters?.cashFrom || "",
     cashTo: appState.filters?.cashTo || "",
     cashParticulars: appState.filters?.cashParticulars || "",
     cashMode: appState.filters?.cashMode || "",
+    cashAccount: appState.filters?.cashAccount || "",
     cashReceivedFrom: appState.filters?.cashReceivedFrom || "",
     cashVoucher: appState.filters?.cashVoucher || "",
     balanceFrom: appState.filters?.balanceFrom || "",
@@ -1008,6 +1056,204 @@ async function apiJson(path, options = {}) {
   return backendApiJson(path, options);
 }
 
+function desktopNotificationsSupported() {
+  return window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+function urlBase64ToUint8Array(value = "") {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+}
+
+async function registerDesktopNotificationWorker() {
+  if (!desktopNotificationsSupported()) return null;
+  if (!desktopServiceWorkerRegistration) {
+    desktopServiceWorkerRegistration = await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+  }
+  if (!desktopNotificationMessageBound) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "OPEN_DESKTOP_NOTIFICATION") openDesktopNotificationTarget(event.data.notification || {});
+      if (event.data?.type === "DESKTOP_PUSH_RECEIVED") refreshCentralState().catch(() => {});
+    });
+    desktopNotificationMessageBound = true;
+  }
+  return desktopServiceWorkerRegistration;
+}
+
+async function loadDesktopNotificationConfig(force = false) {
+  if (!state.session?.loggedIn || !isSupabaseMode()) return null;
+  if (force) desktopNotificationConfig = null;
+  if (desktopNotificationConfigPromise) return desktopNotificationConfigPromise;
+  desktopNotificationConfigPromise = (async () => {
+    try {
+      desktopNotificationConfig = await apiJson("/api/notifications/config");
+      const registration = await registerDesktopNotificationWorker();
+      const subscription = await registration?.pushManager?.getSubscription();
+      currentDeviceSubscribed = Boolean(subscription);
+      if (subscription && Notification.permission === "granted" && desktopNotificationConfig?.preferences?.desktop_enabled) {
+        await apiJson("/api/notifications/subscribe", {
+          method: "POST",
+          body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: desktopNotificationDeviceLabel() }),
+        });
+      }
+    } catch (error) {
+      console.warn("Desktop notification configuration unavailable", error);
+      desktopNotificationConfig = { supported: false, error: error.message };
+    } finally {
+      desktopNotificationConfigPromise = null;
+    }
+    return desktopNotificationConfig;
+  })();
+  return desktopNotificationConfigPromise;
+}
+
+function desktopNotificationDeviceLabel() {
+  let label = localStorage.getItem(DESKTOP_NOTIFICATION_DEVICE_KEY);
+  if (!label) {
+    label = `${navigator.platform || "Browser"} - ${navigator.userAgent.includes("Edg/") ? "Edge" : navigator.userAgent.includes("Chrome/") ? "Chrome" : "Browser"}`;
+    localStorage.setItem(DESKTOP_NOTIFICATION_DEVICE_KEY, label);
+  }
+  return label;
+}
+
+async function enableDesktopNotifications() {
+  if (!desktopNotificationsSupported()) return toast("Desktop notifications require a supported browser over HTTPS.");
+  const config = desktopNotificationConfig || await loadDesktopNotificationConfig();
+  if (!config?.supported || !config.publicKey) return toast("Desktop notifications are not configured on the server.");
+  if (!(await confirmDesktopNotificationOptIn())) return;
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    openNotifications();
+    return toast(permission === "denied" ? "Notifications are blocked in browser site settings." : "Notification permission was not granted.");
+  }
+  try {
+    const registration = await registerDesktopNotificationWorker();
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(config.publicKey),
+      });
+    }
+    await apiJson("/api/notifications/subscribe", {
+      method: "POST",
+      body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: desktopNotificationDeviceLabel() }),
+    });
+    await apiJson("/api/notifications/preferences", { method: "PUT", body: JSON.stringify({ desktop_enabled: true }) });
+    currentDeviceSubscribed = true;
+    await loadDesktopNotificationConfig(true);
+    openNotifications();
+    toast("Desktop notifications enabled on this device.");
+  } catch (error) {
+    toast(error.message || "Unable to enable desktop notifications.");
+  }
+}
+
+function confirmDesktopNotificationOptIn() {
+  return new Promise((resolve) => {
+    document.querySelector("#desktopPermissionBackdrop")?.remove();
+    const backdrop = document.createElement("div");
+    backdrop.id = "desktopPermissionBackdrop";
+    backdrop.className = "desktop-permission-backdrop";
+    backdrop.innerHTML = `
+      <section class="desktop-permission-dialog" role="dialog" aria-modal="true" aria-labelledby="desktopPermissionTitle">
+        <div class="desktop-permission-icon" aria-hidden="true">&#128276;</div>
+        <div>
+          <h3 id="desktopPermissionTitle">Enable Desktop Notifications?</h3>
+          <p>Enable desktop notifications to receive important file assignments, corrections, approvals, messages, and due-date alerts even when you are working in another browser tab.</p>
+        </div>
+        <div class="desktop-permission-actions">
+          <button class="mini-button" data-choice="later" type="button">Not Now</button>
+          <button class="mini-button desktop-enable-button" data-choice="enable" type="button">Enable Notifications</button>
+        </div>
+      </section>`;
+    const finish = (accepted) => { backdrop.remove(); resolve(accepted); };
+    backdrop.addEventListener("click", (event) => {
+      const choice = event.target.closest("[data-choice]")?.dataset.choice;
+      if (choice) finish(choice === "enable");
+      else if (event.target === backdrop) finish(false);
+    });
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('[data-choice="enable"]')?.focus();
+  });
+}
+
+async function deactivateDesktopSubscription(options = {}) {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const registration = desktopServiceWorkerRegistration || await navigator.serviceWorker.getRegistration("/");
+    const subscription = await registration?.pushManager?.getSubscription();
+    if (!subscription) return;
+    if (apiToken()) {
+      await apiJson("/api/notifications/subscribe", {
+        method: "DELETE",
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      });
+    }
+    if (options.unsubscribe) await subscription.unsubscribe();
+    currentDeviceSubscribed = false;
+  } catch (error) {
+    console.warn("Desktop subscription cleanup failed", error);
+  }
+}
+
+async function disableDesktopNotifications() {
+  await deactivateDesktopSubscription({ unsubscribe: true });
+  try {
+    await loadDesktopNotificationConfig(true);
+    openNotifications();
+    toast("Desktop notifications disabled on this device.");
+  } catch (error) {
+    toast(error.message || "Unable to disable desktop notifications.");
+  }
+}
+
+function openDesktopNotificationTarget(notification = {}) {
+  const route = new URL(notification.route || "/?page=dashboard", location.origin);
+  const page = route.searchParams.get("page") || "dashboard";
+  const fileViews = {
+    "file-list": "",
+    "active-files": "active",
+    "fee-pending": "feePending",
+    "correction-required": "correctionRequired",
+    "correction-required-files": "correctionRequired",
+    "not-checked": "notChecked",
+    "not-checked-files": "notChecked",
+    "completed-files": "completed",
+  };
+  closeOverlays();
+  if (page === "my-task") {
+    activePage = "files";
+    resetFilters();
+    state.filters.listView = "active";
+    state.filters.dashboardKind = "myTask";
+  } else if (page in fileViews) {
+    activePage = "files";
+    resetFilters();
+    state.filters.listView = fileViews[page];
+  } else {
+    activePage = ["dashboard", "files", "expenses", "visitors", "dailyReport"].includes(page) ? page : "dashboard";
+  }
+  const notificationId = String(notification.id || "");
+  const related = allNotificationItems().filter((item) =>
+    item.id === notificationId || item.id === `file-change-${notificationId.replace(/^file-/, "")}` || (notification.relatedRecordId && item.fileId === notification.relatedRecordId));
+  if (related.length) markNotificationItemsRead(related);
+  saveTabSession();
+  renderAll();
+  if (route.searchParams.has("chat")) openTeamChat();
+}
+
+async function applyDesktopNotificationRouteFromLocation() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has("page") && !params.has("chat") && !params.has("file")) return;
+  openDesktopNotificationTarget({
+    route: `${location.pathname}${location.search}`,
+    relatedRecordId: params.get("file") || "",
+  });
+  history.replaceState({}, "", location.pathname);
+}
+
 function perfStart() {
   return PERF_LOG_ENABLED && window.performance ? performance.now() : 0;
 }
@@ -1195,6 +1441,18 @@ async function reverseUnlinkedFeeReceiptToApi(fileId) {
   return result;
 }
 
+async function markFeeReceiptNotReceivedToApi(receiptId, reason) {
+  const result = await apiJson(`/api/finance/fee-receipts/receipt/${encodeURIComponent(receiptId)}/not-received`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+  if (result?.files) state.files = result.files;
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function deleteCashCollectionFromApi(id) {
   const result = await apiJson(`/api/finance/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
@@ -1217,6 +1475,34 @@ async function saveOpeningBalanceToApi(openingBalance) {
 async function deleteOpeningBalanceFromApi(id) {
   const result = await apiJson(`/api/finance/opening-balances/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.openingBalances) state.openingBalances = result.openingBalances;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function saveAccountTransferToApi(transfer) {
+  const result = await apiJson("/api/finance/transfers", {
+    method: "POST",
+    body: JSON.stringify({ transfer }),
+  });
+  if (result?.accountTransfers) state.accountTransfers = result.accountTransfers;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function deleteAccountTransferFromApi(id) {
+  const result = await apiJson(`/api/finance/transfers/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (result?.accountTransfers) state.accountTransfers = result.accountTransfers;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function classifyLegacyBankTransactionToApi(transactionType, transactionId, accountKey) {
+  const result = await apiJson("/api/finance/classify-legacy-bank", {
+    method: "POST",
+    body: JSON.stringify({ transactionType, transactionId, accountKey }),
+  });
+  if (result?.expenses) state.expenses = result.expenses;
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -1654,10 +1940,12 @@ function normalizeStaffDetails(rows = [], users = state.users || []) {
       employmentType: row.employmentType || row.employment_type || "",
       employmentStatus: row.employmentStatus || row.employment_status || "Active",
       gender: row.gender || "",
+      bloodGroup: normalizeStaffBloodGroup(row.bloodGroup || row.blood_group || "Not Known"),
       qualifications: row.qualifications || row.qualification || "",
       address: row.address || "",
       emergencyContactName: row.emergencyContactName || row.emergency_contact_name || "",
       emergencyContactNumber: row.emergencyContactNumber || row.emergency_contact_number || "",
+      emergencyContactRelationship: row.emergencyContactRelationship || row.emergency_contact_relationship || row.relationship || "",
       profilePhotoUrl: row.profilePhotoUrl || row.profile_photo_url || "",
       remarks: row.remarks || "",
       createdByUserId: row.createdByUserId || row.created_by_user_id || "",
@@ -2677,7 +2965,7 @@ function filteredFiles() {
     if (f.listView === "billed" && !isBilledFile(file)) return false;
     if (f.listView === "nonBilled" && !isNonBilledFile(file)) return false;
     if (f.listView === "feePending" && !isFeePendingFile(file)) return false;
-    if (f.listView === "feeReceived" && !isFeeReceivedFile(file)) return false;
+    if (f.listView === "feeReceived" && !isFeeReceivedFile(file) && !hasFeeReceiptHistory(file)) return false;
     if (f.listView === "reAssigned" && !isReassignedFile(file)) return false;
     if (isStaffLogin() && f.listView === "reAssigned" && !reassignmentVisibleToUser(file, loggedInUser())) return false;
     if (isStaffLogin() && f.listView !== "reAssigned" && !currentFileBelongsToUser(file, loggedInUser())) return false;
@@ -2691,8 +2979,9 @@ function filteredFiles() {
     if (f.due && file.dueDate !== f.due) return false;
     if (f.priority && file.priority !== f.priority) return false;
     if (f.status && statusOf(file).label !== f.status) return false;
-    if (f.billing === "Billed" && !isBilledFile(file)) return false;
-    if (f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
+    if (f.listView === "completed" && f.billing && completedFileBillingCategory(file) !== f.billing) return false;
+    if (f.listView !== "completed" && f.billing === "Billed" && !isBilledFile(file)) return false;
+    if (f.listView !== "completed" && f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
     if (f.overdue === "Yes" && !isOverdue(file)) return false;
     if (f.pendingApproval === "Yes" && !pendingApproval(file)) return false;
     const fileFilterDate = usesCompletionSort(f.listView, f.dashboardKind)
@@ -2791,12 +3080,53 @@ function isNonBilledFile(file) {
   return Boolean(file?.billingType === "Non-Billable" && !file?.billed);
 }
 
+function completedFileBillingCategory(file = {}) {
+  const billingType = String(file.billingType || file.billing_type || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ");
+  if (billingType === "non billable") return "Non Billable";
+
+  const billingStatus = String(file.billingStatus || file.billing_status || "")
+    .trim()
+    .toLowerCase();
+  const billedValue = String(file.billed ?? "").trim().toLowerCase();
+  const billedStage = Boolean(normalizeStages(file).Billed);
+  const billedFlag = ["true", "yes", "billed", "1"].includes(billedValue)
+    || ["billed", "yes"].includes(billingStatus);
+  const hasBillingReference = Boolean(String(
+    file.billNo
+      || file.bill_number
+      || file.invoiceNumber
+      || file.invoiceNo
+      || file.billReference
+      || "",
+  ).trim());
+  const hasBillingDate = Boolean(normalizeImportDate(
+    file.billedDate || file.billingDate || file.billDate || file.bill_date || "",
+  ));
+  const billedAmount = Number(
+    file.billedAmount
+      ?? file.billed_amount
+      ?? file.billAmount
+      ?? file.feeAmount
+      ?? 0,
+  );
+  const hasValidBillingDetails = hasBillingDate && (hasBillingReference || billedAmount > 0);
+
+  return billedFlag || billedStage || hasValidBillingDetails ? "Billed" : "Unbilled";
+}
+
 function isFeePendingFile(file) {
   return Boolean(isBilledFile(file) && filePendingAmount(file) > 0);
 }
 
 function isFeeReceivedFile(file) {
   return Boolean(isBilledFile(file) && file?.feeReceived);
+}
+
+function hasFeeReceiptHistory(file = {}) {
+  return Boolean(file.id && (indexedFeeReceipts().get(file.id) || []).length);
 }
 
 function isNotCheckedFile(file) {
@@ -3030,6 +3360,29 @@ function staffStats(name) {
   };
 }
 
+const NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+function notificationItemTime(item = {}) {
+  const value = item.createdAt || item.created_at || item.notification_created_at || item.at || item.date;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = value ? Date.parse(String(value)) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function notificationRetentionCutoff(now = Date.now()) {
+  const rollingCutoff = now - NOTIFICATION_RETENTION_MS;
+  const cleanupCutoff = Date.parse(state.notificationRetention?.clearedBefore || "") || 0;
+  return Math.max(rollingCutoff, cleanupCutoff);
+}
+
+function retainedNotificationItems(items = [], now = Date.now()) {
+  const cutoff = notificationRetentionCutoff(now);
+  return items
+    .filter((item) => item?.isArchived !== true && item?.is_archived !== true)
+    .filter((item) => notificationItemTime(item) >= cutoff)
+    .sort((left, right) => notificationItemTime(right) - notificationItemTime(left));
+}
+
 function allNotificationItems() {
   const files = visibleFiles();
   const items = [];
@@ -3096,9 +3449,9 @@ function allNotificationItems() {
     if (reportNotFiled(file)) items.push({ id: `${file.id}-workdone`, type: "Work done pending", category: "files", tone: "report", title: file.name, text: "Work is done, completion is still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
     if (completedNotBilled(file)) items.push({ id: `${file.id}-billing`, type: "Billing pending", category: "billing", tone: "filed", title: file.name, text: "Filing completed, billing still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
   });
-  return dedupeNotificationItems(items)
+  return retainedNotificationItems(dedupeNotificationItems(items)
     .map((item) => ({ ...item, isRead: (state.readNotifications || []).includes(item.id) }))
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  );
 }
 
 function dedupeNotificationItems(items = []) {
@@ -3136,6 +3489,8 @@ function notificationCategory(type = "") {
 function visibleFileNotifications(user = loggedInUser()) {
   if (!user) return [];
   return dedupeFileNotifications(state.fileNotifications || [])
+    .filter((notice) => notice.isArchived !== true && notice.is_archived !== true)
+    .filter((notice) => notificationItemTime(notice) >= notificationRetentionCutoff())
     .filter((notice) => ["Admin", "Manager", "Staff Manager"].includes(state.currentRole)
       || sameUserIdentity(user, notice.targetUserId, notice.targetUserEmail, notice.targetUserName)
       || sameStaffName(notice.targetUserName, state.currentUser))
@@ -3605,6 +3960,8 @@ async function handleLogin() {
     mount();
     autoRecoverAdminDataIfEmpty();
   }
+  registerDesktopNotificationWorker().catch((error) => console.warn("Service worker registration failed", error));
+  loadDesktopNotificationConfig().then(applyDesktopNotificationRouteFromLocation).catch(() => {});
 }
 
 function bindTopActions() {
@@ -3640,11 +3997,14 @@ function bindTopActions() {
 
 function bindShell() {
   bindTopActions();
-  const runLogout = () => {
+  const runLogout = async () => {
+    await deactivateDesktopSubscription({ unsubscribe: true });
     state.session = { loggedIn: false };
     setApiToken("");
     sessionStorage.removeItem(API_REFRESH_TOKEN_KEY);
     sessionStorage.removeItem(API_MODE_KEY);
+    desktopNotificationConfig = null;
+    desktopNotificationAdminStatus = null;
     resetFilters();
     activePage = "dashboard";
     saveState();
@@ -4260,7 +4620,7 @@ function renderModernDashboardShell(s, files = dashboardFiles()) {
         ${dashboardKpiCard("Fee Pending", financials.feePending, "Receivable amount", "feepending", "receipt", "feePending", dashboardTrendValues("feePending"), true, true)}
         ${dashboardKpiCard("Collections Today", financials.collectionsToday, "Today's collections", "collectiontoday", "expense", "collections", dashboardTrendValues("collections"), false, true)}
         ${dashboardKpiCard("Expenses Today", financials.expensesToday, "Today's expenses", "expensetoday", "receipt", "expenses", dashboardTrendValues("expenses"), true, true)}
-        ${dashboardKpiCard("Cash Balance", financials.cashBalance, "Closing cash position", "cash", "rupee", "balance", dashboardTrendValues("cash"), financials.cashBalance < 0, true)}
+        ${dashboardKpiCard("Balance", financials.balance, "Combined account balance", "cash", "rupee", "balance", dashboardTrendValues("cash"), financials.balance < 0, true)}
       </div>
       <div class="dashboard-chart-grid">
         ${renderFilesByStatusCard(files)}
@@ -4345,7 +4705,7 @@ function dashboardFinancials() {
   const feePending = Math.max(totalBilled - feeReceived, 0);
   const collectionsToday = activeCashCollections().filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const expensesToday = activeExpenses().filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return { totalBilled, feeReceived, feePending, collectionsToday, expensesToday, cashBalance: cashBalanceForRange().closing };
+  return { totalBilled, feeReceived, feePending, collectionsToday, expensesToday, balance: financeBalancesForRange().combined.closing };
 }
 
 function isActiveFinancialTransaction(item = {}) {
@@ -4389,7 +4749,7 @@ function dashboardTrendValues(kind) {
     if (kind === "feePending") return files.filter(isFeePendingFile).length;
     if (kind === "collections") return activeCashCollections().filter((item) => item.date === iso).length;
     if (kind === "expenses") return activeExpenses().filter((item) => item.date === iso).length;
-    if (kind === "cash") return cashBalanceForRange("", iso).closing;
+    if (kind === "cash") return financeBalancesForRange("", iso).combined.closing;
     return files.length;
   });
 }
@@ -4873,7 +5233,9 @@ function renderFilesPage() {
         ${inputFilter("due", "Due Date", "", "date")}
         ${selectFilter("receivedSort", "Sort by Received Date", ["Oldest First", "Newest First"])}
         ${selectFilter("priority", "Priority", ["", "Low", "Medium", "High", "Urgent"])}
-        ${selectFilter("billing", "Billing", ["", "Billed", "Unbilled"])}
+        ${selectFilter("billing", "Billing", state.filters.listView === "completed"
+          ? ["", "Billed", "Unbilled", "Non Billable"]
+          : ["", "Billed", "Unbilled"])}
         ${state.filters.listView === "completed" ? selectFilter("checkingStatus", "Checking Status", ["", "Not Checked", "Checked", "Returned for Correction"]) : ""}
         ${inputFilter("pan", "PAN/Reg No", "PAN or Regn")}
         ${selectFilter("overdue", "Overdue Files", ["", "Yes"])}
@@ -5193,7 +5555,7 @@ function staffPageFiles(listView) {
     if (listView === "billed") return isBilledFile(file);
     if (listView === "nonBilled") return isNonBilledFile(file);
     if (listView === "feePending") return isFeePendingFile(file);
-    if (listView === "feeReceived") return isFeeReceivedFile(file);
+    if (listView === "feeReceived") return isFeeReceivedFile(file) || hasFeeReceiptHistory(file);
     if (listView === "reAssigned") return isReassignedFile(file) && (!isStaffLogin() || reassignmentVisibleToUser(file, loggedInUser()));
     return true;
   });
@@ -5871,7 +6233,7 @@ function renderNotCheckedFileTable(files) {
 }
 
 function renderFeePendingFileTable(files = []) {
-  const rows = files.map((file, index) => feePendingReportRow(file, index, { format: "display" }));
+  const rows = files.map((file, index) => feePendingDisplayRow(file, index));
   const headers = Object.keys(rows[0] || {});
   const totals = appendFeeReceiptTotals(rows, files).at(-1) || {};
   return `
@@ -5919,15 +6281,44 @@ function renderReAssignedFileTable(files) {
 }
 
 function renderFeeReceivedFileTable(files) {
-  const rows = sortFilesByFeeReceivedNewestFirst(files);
-  const totals = feeReceiptTotals(rows);
+  const sortedFiles = sortFilesByFeeReceivedNewestFirst(files);
+  const totals = feeReceiptTotals(sortedFiles);
+  const rows = sortedFiles.flatMap((file) => {
+    const receipts = allFeeReceiptRecordsForFile(file);
+    if (receipts.length) return receipts.map((receipt) => ({ file, receipt }));
+    return [{ file, receipt: null }];
+  }).sort((a, b) => {
+    const aDate = feeReceiptRecordDate(a.receipt || {}) || a.file.feeReceivedDate || a.file.receivedOn || "";
+    const bDate = feeReceiptRecordDate(b.receipt || {}) || b.file.feeReceivedDate || b.file.receivedOn || "";
+    if (aDate !== bDate) return String(bDate).localeCompare(String(aDate));
+    const aTime = Date.parse(a.receipt?.receivedAt || a.receipt?.received_at || a.receipt?.createdAt || a.receipt?.created_at || 0) || 0;
+    const bTime = Date.parse(b.receipt?.receivedAt || b.receipt?.received_at || b.receipt?.createdAt || b.receipt?.created_at || 0) || 0;
+    if (aTime !== bTime) return bTime - aTime;
+    return String(b.receipt?.id || b.file.id || "").localeCompare(String(a.receipt?.id || a.file.id || ""));
+  });
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact fee-received-table">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Received Amount</th><th class="amount-column">Balance</th><th>Received Date</th><th>Mode</th><th>Transaction</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Receipt Amount</th><th class="amount-column">Balance</th><th>Receipt Date</th><th>Account</th><th>Status</th><th>Transaction</th><th>Actions</th></tr></thead>
         <tbody>
-          ${rows.map((file, index) => {
-            const linked = linkedFeeReceiptCollection(file);
+          ${rows.map(({ file, receipt }, index) => {
+            const linked = receipt ? linkedCollectionForFeeReceipt(receipt) : linkedFeeReceiptCollection(file);
+            const active = receipt ? isValidFeeReceiptRecord(receipt) : Boolean(file.feeReceived);
+            const amount = receipt
+              ? Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0)
+              : dashboardFileAmount(file, "received");
+            const status = receipt ? feeReceiptRecordStatus(receipt) : "Received";
+            const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
+            const canReverse = Boolean(active && !linked && !receiptWasPushed(receipt) && canManageReceipt);
+            const transactionAction = linked
+              ? `<span class="badge filed">Pushed</span>${canManageReceipt ? `<button class="mini-button" data-go-fee-transaction="${escapeHtml(linked.id)}">Go Transaction</button>` : ""}`
+              : receiptWasPushed(receipt)
+                ? `<span class="badge returned">Reversed</span>`
+                : `<span class="badge pending">Receipt only</span>${canReverse
+                  ? (receipt?.id
+                    ? `<button class="mini-button danger" data-fee-receipt-not-received="${escapeHtml(receipt.id)}">Not Received</button>`
+                    : `<button class="mini-button danger" data-mark-not-received="${escapeHtml(file.id)}">Not Received</button>`)
+                  : ""}`;
             return `<tr>
               <td>${index + 1}</td>
               <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}${file.careOf ? ` | C/o: ${escapeHtml(file.careOf)}` : ""}</span></td>
@@ -5936,21 +6327,25 @@ function renderFeeReceivedFileTable(files) {
               <td>${fmt(file.billDate || file.bill_date || file.billedDate)}</td>
               <td>${escapeHtml(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-")}</td>
               <td class="amount-cell amount-column">${rupee(dashboardFileAmount(file, "billed"))}</td>
-              <td class="amount-cell amount-column">${rupee(dashboardFileAmount(file, "received"))}</td>
+              <td class="amount-cell amount-column">${rupee(amount)}</td>
               <td class="amount-cell amount-column">${rupee(filePendingAmount(file))}</td>
-              <td>${fmt(file.feeReceivedDate || file.receivedOn || file.received_on)}</td>
-              <td>${escapeHtml(file.paymentMode || file.receiptMode || "-")}</td>
-              <td>${linked ? `<span class="badge filed">Pushed</span>` : `<span class="badge pending">Receipt only</span>`}</td>
+              <td>${fmt(receipt ? feeReceiptRecordDate(receipt) : (file.feeReceivedDate || file.receivedOn || file.received_on))}</td>
+              <td>${escapeHtml(receipt?.paymentMode || receipt?.payment_mode || file.paymentMode || file.receiptMode || "-")}</td>
+              <td><span class="badge ${active ? "filed" : "returned"}">${escapeHtml(status)}</span></td>
+              <td><div class="action-row fee-transaction-actions">${transactionAction}</div></td>
+              <td><div class="action-row">
+                ${receipt?.id ? `<button class="mini-button" data-view-fee-receipt="${escapeHtml(receipt.id)}">View</button>` : ""}
+              </div></td>
             </tr>`;
           }).join("")}
         </tbody>
         <tfoot>
           <tr class="fee-received-total-row">
-            <td colspan="6">Totals</td>
+            <td colspan="6">Active Receipt Totals</td>
             <td class="amount-cell amount-column">${rupee(totals.billed)}</td>
             <td class="amount-cell amount-column">${rupee(totals.received)}</td>
             <td class="amount-cell amount-column">${rupee(totals.balance)}</td>
-            <td colspan="3"></td>
+            <td colspan="5"></td>
           </tr>
         </tfoot>
       </table>
@@ -5976,12 +6371,83 @@ function linkedFeeReceiptCollection(file = {}) {
   }) || null;
 }
 
+function linkedCollectionForFeeReceipt(receipt = {}) {
+  const receiptId = receipt.id || "";
+  const transactionId = receipt.transactionId || receipt.transaction_id || "";
+  return activeCashCollections().find((item) => {
+    if (transactionId && item.id === transactionId) return true;
+    return receiptId && (
+      item.feeReceiptId === receiptId
+      || item.fee_receipt_id === receiptId
+      || item.sourceId === receiptId
+      || item.source_id === receiptId
+    );
+  }) || null;
+}
+
+function receiptWasPushed(receipt = {}) {
+  return Boolean(
+    receipt.transactionId
+    || receipt.transaction_id
+    || receipt.pushToTransactions === true
+    || receipt.push_to_transactions === true
+    || String(receipt.previousPushStatus || receipt.previous_push_status || receipt.pushStatus || receipt.push_status || "").toLowerCase() === "pushed"
+  );
+}
+
 function feeReceiptIsPushed(file = {}) {
   return Boolean(linkedFeeReceiptCollection(file));
 }
 
 function paymentModes() {
-  return ["Cash", "Bank", "UPI", "Cheque", "Other"];
+  return ["Cash", "Bank Transfer", "UPI", "Cheque", "Card", "Other"];
+}
+
+const financeAccounts = [
+  { value: "cash", label: "Cash in Hand" },
+  { value: "federal_bank", label: "Federal Bank" },
+  { value: "tmb", label: "TMB" },
+];
+const financeBalanceAccounts = [...financeAccounts, { value: "unclassified_bank", label: "Unclassified Bank" }];
+
+function normalizeTransactionPaymentMethod(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "cash") return "Cash";
+  if (["bank", "bank transfer", "transfer", "neft", "rtgs", "imps"].includes(raw)) return "Bank Transfer";
+  if (raw === "upi") return "UPI";
+  if (raw === "cheque" || raw === "check") return "Cheque";
+  if (raw === "card") return "Card";
+  return "Other";
+}
+
+function transactionAccountKey(item = {}, fallback = "") {
+  const raw = String(item.accountKey || item.account_key || item.accountName || item.account_name || "").trim().toLowerCase();
+  if (raw === "cash" || raw.includes("cash in hand") || raw.includes("opening cash")) return "cash";
+  if (raw === "federal_bank" || raw.includes("federal")) return "federal_bank";
+  if (raw === "tmb" || raw.includes("tamilnad mercantile")) return "tmb";
+  if (raw === "unclassified_bank" || raw === "bank" || raw.includes("unclassified")) return "unclassified_bank";
+  const method = normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode || "");
+  if (method === "Cash") return "cash";
+  if (["Bank Transfer", "UPI", "Cheque", "Card"].includes(method)) return fallback || "unclassified_bank";
+  return fallback || "";
+}
+
+function financeAccountLabel(key = "") {
+  if (key === "cash") return "Cash in Hand";
+  if (key === "federal_bank") return "Federal Bank";
+  if (key === "tmb") return "TMB";
+  if (key === "unclassified_bank") return "Unclassified Bank";
+  return "Account Not Specified";
+}
+
+function financeAccountSelect(id, label, selectedValue = "cash", includeUnclassified = false) {
+  const options = includeUnclassified ? [...financeAccounts, { value: "unclassified_bank", label: "Unclassified Bank" }] : financeAccounts;
+  return `<div class="field"><label>${escapeHtml(label)}</label><select id="${escapeHtml(id)}">${options.map((option) => `<option value="${option.value}" ${option.value === selectedValue ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>`;
+}
+
+function feeReceiptAccountSelect(name, label, selectedValue = "cash", includeUnclassified = false) {
+  const options = includeUnclassified ? [...financeAccounts, { value: "unclassified_bank", label: "Unclassified Bank" }] : financeAccounts;
+  return `<div class="field"><label>${escapeHtml(label)}</label><select name="${escapeHtml(name)}">${options.map((option) => `<option value="${option.value}" ${option.value === selectedValue ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>`;
 }
 
 function feeReceiptField(name, label, value, type = "text", attrs = "") {
@@ -5992,6 +6458,25 @@ function feeReceiptSelect(name, label, options, selectedValue = "") {
   return `<div class="field"><label>${escapeHtml(label)}</label><select name="${escapeHtml(name)}">${options.map((option) => `<option value="${escapeHtml(option)}" ${option === selectedValue ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></div>`;
 }
 
+function bindPaymentAccountControls(paymentSelector, accountSelector) {
+  const payment = document.querySelector(paymentSelector);
+  const account = document.querySelector(accountSelector);
+  if (!payment || !account) return;
+  const syncAccount = () => {
+    if (payment.value === "Cash") {
+      account.value = "cash";
+      account.disabled = true;
+      account.title = "Cash payments are recorded in Cash in Hand.";
+      return;
+    }
+    account.disabled = false;
+    account.title = "Select the bank account used for this payment.";
+    if (!["federal_bank", "tmb"].includes(account.value)) account.value = "federal_bank";
+  };
+  payment.addEventListener("change", syncAccount);
+  syncAccount();
+}
+
 function feeReceiptTextarea(name, label, value = "") {
   return `<div class="field full-span"><label>${escapeHtml(label)}</label><textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value || "")}</textarea></div>`;
 }
@@ -5999,8 +6484,10 @@ function feeReceiptTextarea(name, label, value = "") {
 function updateFeeReceiptBalancePreview() {
   const billed = Number(document.querySelector("[name='receiptBilledAmount']")?.value || 0);
   const received = Number(document.querySelector("[name='receiptReceivedAmount']")?.value || 0);
+  const discount = Number(document.querySelector("[name='receiptDiscountAmount']")?.value || 0);
   const existingReceived = Number(document.querySelector("#markReceivedModal")?.dataset.existingReceived || 0);
-  const balance = billed - existingReceived - received;
+  const existingDiscount = Number(document.querySelector("#markReceivedModal")?.dataset.existingDiscount || 0);
+  const balance = billed - existingReceived - existingDiscount - received - discount;
   const node = document.querySelector("#receiptBalancePreview");
   if (node) node.textContent = money(balance);
 }
@@ -6010,6 +6497,8 @@ function feeReceiptCollectionPayload(file = {}, receipt = {}, existing = null) {
   const receiptId = receipt.feeReceiptId || feeReceiptIdForFile(file) || crypto.randomUUID();
   const id = existing?.id || receipt.transactionId || crypto.randomUUID();
   const billNo = receipt.billNo || "";
+  const paymentMethod = normalizeTransactionPaymentMethod(receipt.paymentMode || "Cash");
+  const accountKey = paymentMethod === "Cash" ? "cash" : transactionAccountKey(receipt, "");
   const particulars = `Fee Collection${file.serviceType ? ` - ${file.serviceType}` : ""}${fileFy(file) ? ` - FY ${fileFy(file)}` : ""}`;
   return {
     ...(existing || {}),
@@ -6019,8 +6508,14 @@ function feeReceiptCollectionPayload(file = {}, receipt = {}, existing = null) {
     collectionType: "fee_collection",
     collection_type: "fee_collection",
     amount: Number(receipt.receivedAmount || 0),
-    mode: receipt.paymentMode || "Cash",
-    collection_mode: receipt.paymentMode || "Cash",
+    mode: paymentMethod,
+    paymentMethod,
+    payment_method: paymentMethod,
+    collection_mode: paymentMethod,
+    accountKey,
+    account_key: accountKey,
+    accountName: financeAccountLabel(accountKey),
+    account_name: financeAccountLabel(accountKey),
     receivedFrom: file.name || "",
     received_from: file.name || "",
     particulars,
@@ -6070,19 +6565,27 @@ function feeReceiptFromModal(file = {}) {
   const billNo = String(document.querySelector("[name='receiptBillNo']")?.value || "").trim();
   const billedAmount = Number(document.querySelector("[name='receiptBilledAmount']")?.value || 0);
   const receivedAmount = Number(document.querySelector("[name='receiptReceivedAmount']")?.value || 0);
+  const discountAmount = Number(document.querySelector("[name='receiptDiscountAmount']")?.value || 0);
   const receivedDate = normalizeImportDate(document.querySelector("[name='receiptReceivedDate']")?.value || "");
   const paymentMode = document.querySelector("[name='receiptPaymentMode']")?.value || "Cash";
+  const accountKey = paymentMode === "Cash" ? "cash" : (document.querySelector("[name='receiptAccount']")?.value || "");
   const remarks = String(document.querySelector("[name='receiptRemarks']")?.value || "").trim();
   const existingLinked = linkedFeeReceiptCollection(file);
-  const existingReceived = Number(document.querySelector("#feeReceiptModal")?.dataset.existingReceived || 0);
+  const receiptModal = document.querySelector("#markReceivedModal");
+  const existingReceived = Number(receiptModal?.dataset.existingReceived || 0);
+  const existingDiscount = Number(receiptModal?.dataset.existingDiscount || 0);
   return {
     billDate,
     billNo,
     billedAmount,
     receivedAmount,
-    balanceAmount: Math.max(0, billedAmount - existingReceived - receivedAmount),
+    discountAmount,
+    discount_amount: discountAmount,
+    balanceAmount: Math.max(0, billedAmount - existingReceived - existingDiscount - receivedAmount - discountAmount),
     receivedDate,
     paymentMode,
+    accountKey,
+    accountName: financeAccountLabel(accountKey),
     remarks,
     pushToTransactions: document.querySelector("[name='receiptPushToTransactions']")?.checked === true,
     feeReceiptId: crypto.randomUUID(),
@@ -6094,7 +6597,11 @@ function validateFeeReceipt(receipt = {}) {
   if (receipt.billNo && !/^[A-Za-z0-9/-]+$/.test(receipt.billNo)) return "Bill No. can contain only letters, numbers, slash and hyphen.";
   if (!receipt.billedAmount || receipt.billedAmount <= 0) return "Please enter a valid billed amount.";
   if (!receipt.receivedAmount || receipt.receivedAmount <= 0) return "Please enter a valid received amount.";
+  if (!Number.isFinite(receipt.discountAmount) || receipt.discountAmount < 0) return "Discount cannot be negative.";
+  if (receipt.discountAmount > receipt.billedAmount) return "Discount cannot exceed the billed amount.";
   if (!receipt.receivedDate) return "Received Date is required.";
+  if (receipt.paymentMode === "Cash" && receipt.accountKey !== "cash") return "Cash receipts must use Cash in Hand.";
+  if (receipt.paymentMode !== "Cash" && !["federal_bank", "tmb"].includes(receipt.accountKey)) return "Select Federal Bank or TMB for this non-cash receipt.";
   if (receipt.receivedAmount > receipt.billedAmount && !confirm("Received Amount is more than Billed Amount. Do you want to continue?")) return "Receipt save cancelled.";
   return "";
 }
@@ -6104,13 +6611,18 @@ function feeReceiptStatusLabel(file = {}) {
 }
 
 function feeReceiptDetails(file = {}) {
+  const paymentMode = normalizeTransactionPaymentMethod(file.paymentMode || file.receiptMode || "Cash");
+  const existingAccount = transactionAccountKey(file, "");
+  const accountKey = paymentMode === "Cash" ? "cash" : (["federal_bank", "tmb"].includes(existingAccount) ? existingAccount : "");
   return {
     billDate: file.billDate || file.bill_date || file.billedDate || todayDate(),
     billNo: file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
     billedAmount: file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || dashboardFileAmount(file, "billed") || "",
     receivedAmount: "",
+    discountAmount: "",
     receivedDate: todayDate(),
-    paymentMode: file.paymentMode || file.receiptMode || "Cash",
+    paymentMode,
+    accountKey,
     remarks: file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || "",
   };
 }
@@ -6183,7 +6695,7 @@ function feePendingReportFields(file = {}) {
   };
 }
 
-const INVALID_FEE_RECEIPT_STATUSES = new Set(["deleted", "cancelled", "canceled", "reversed", "invalid", "failed"]);
+const INVALID_FEE_RECEIPT_STATUSES = new Set(["deleted", "cancelled", "canceled", "reversed", "not received", "not_received", "invalid", "failed"]);
 
 function isValidFeeReceiptRecord(receipt = {}) {
   const status = String(receipt.status || receipt.receiptStatus || receipt.receipt_status || "active").trim().toLowerCase();
@@ -6230,6 +6742,24 @@ function feeReceiptRecordsForFile(file = {}) {
     });
 }
 
+function allFeeReceiptRecordsForFile(file = {}) {
+  return [...(indexedFeeReceipts().get(file.id) || [])].sort((a, b) => {
+    const dateOrder = feeReceiptRecordDate(b).localeCompare(feeReceiptRecordDate(a));
+    if (dateOrder) return dateOrder;
+    const aTime = Date.parse(a.receivedAt || a.received_at || a.createdAt || a.created_at || 0) || 0;
+    const bTime = Date.parse(b.receivedAt || b.received_at || b.createdAt || b.created_at || 0) || 0;
+    return bTime - aTime || String(b.id || "").localeCompare(String(a.id || ""));
+  });
+}
+
+function feeReceiptRecordStatus(receipt = {}) {
+  if (isValidFeeReceiptRecord(receipt)) return "Received";
+  const status = String(receipt.status || receipt.receiptStatus || receipt.receipt_status || "").trim().toLowerCase();
+  if (["not received", "not_received"].includes(status)) return "Not Received";
+  if (["cancelled", "canceled"].includes(status)) return "Cancelled";
+  return "Reversed";
+}
+
 function feeReceiptSummaryForFile(file = {}) {
   const receipts = feeReceiptRecordsForFile(file);
   const hasReceiptHistory = (indexedFeeReceipts().get(file.id) || []).length > 0;
@@ -6238,6 +6768,9 @@ function feeReceiptSummaryForFile(file = {}) {
   const totalReceived = receipts.length
     ? receipts.reduce((sum, receipt) => sum + Math.max(Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0), 0), 0)
     : (hasReceiptHistory ? 0 : Math.max(Number.isFinite(legacyReceived) ? legacyReceived : 0, 0));
+  const totalDiscount = receipts.reduce((sum, receipt) => sum + Math.max(Number(
+    receipt.discountAmount || receipt.discount_amount || receipt.discount || 0,
+  ), 0), 0);
   const latestReceiptDate = receipts.length
     ? feeReceiptRecordDate(receipts[0])
     : (!hasReceiptHistory && totalReceived > 0 ? normalizeImportDate(file.feeReceivedDate || file.receivedDate || file.received_date || file.receivedOn || file.received_on || "") : "");
@@ -6245,8 +6778,9 @@ function feeReceiptSummaryForFile(file = {}) {
     receipts,
     billedAmount: Number.isFinite(billedAmount) ? billedAmount : 0,
     totalReceived,
+    totalDiscount,
     latestReceiptDate,
-    outstandingAmount: Math.max((Number.isFinite(billedAmount) ? billedAmount : 0) - totalReceived, 0),
+    outstandingAmount: Math.max((Number.isFinite(billedAmount) ? billedAmount : 0) - totalReceived - totalDiscount, 0),
   };
 }
 
@@ -6294,6 +6828,20 @@ function feePendingReportRow(file = {}, index = 0, options = {}) {
     Remarks: filePdfText(file.remarks || file.billingRemarks || file.feeRemarks),
   };
   return includeSn ? { SN: index + 1, ...row } : row;
+}
+
+function feePendingDisplayRow(file = {}, index = 0) {
+  const reportRow = feePendingReportRow(file, index, { format: "display" });
+  const hiddenColumns = new Set([
+    "Contact No.",
+    "Checked Date",
+    "Bill No.",
+    "Assigned Staff / Done By",
+    "Remarks",
+  ]);
+  return Object.fromEntries(
+    Object.entries(reportRow).filter(([header]) => !hiddenColumns.has(header)),
+  );
 }
 
 function nonBilledReportRow(file = {}, index = 0) {
@@ -6404,6 +6952,172 @@ function fileRowActions(file) {
   return actions.join("");
 }
 
+function feeReceiptById(receiptId) {
+  return (state.feeReceipts || []).find((receipt) => receipt.id === receiptId) || null;
+}
+
+function feeReceiptFile(receipt = {}) {
+  const fileId = receipt.fileId || receipt.file_id || "";
+  return (state.files || []).find((file) => file.id === fileId) || null;
+}
+
+function closeFeeReceiptActionModal() {
+  document.querySelector("#feeReceiptActionModal")?.remove();
+  if (!document.querySelector(".drawer.open") && !document.querySelector(".notification-panel.open")) {
+    document.querySelector("#backdrop")?.classList.remove("show");
+  }
+}
+
+function feeReceiptAuditDetails(receipt = {}, file = {}) {
+  const pushedBefore = receiptWasPushed(receipt);
+  return [
+    ["Client Name", file.name || "-"],
+    ["Service Type", file.serviceType || "-"],
+    ["FY", fileFy(file) || "-"],
+    ["Bill Amount", rupee(dashboardFileAmount(file, "billed"))],
+    ["Original Receipt Date", displayDate(feeReceiptRecordDate(receipt))],
+    ["Original Received Amount", rupee(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0)],
+    ["Payment Account", receipt.paymentMode || receipt.payment_mode || "-"],
+    ["Receipt Status", feeReceiptRecordStatus(receipt)],
+    ["Previous Transaction Push Status", pushedBefore ? "Pushed" : "Not pushed"],
+    ["Linked Transaction Status", receipt.linkedTransactionStatus || receipt.linked_transaction_status || (linkedCollectionForFeeReceipt(receipt) ? "Active" : "-")],
+    ["Reversal Date", receipt.reversedAt || receipt.reversed_at ? formatDateTime(receipt.reversedAt || receipt.reversed_at) : "-"],
+    ["Reversed By", receipt.reversedBy || receipt.reversed_by || "-"],
+    ["Reversal Reason", receipt.reversalReason || receipt.reversal_reason || "-"],
+  ];
+}
+
+function openFeeReceiptViewModal(receiptId) {
+  closeFeeReceiptActionModal();
+  const receipt = feeReceiptById(receiptId);
+  const file = feeReceiptFile(receipt || {});
+  if (!receipt || !file) return toast("Fee receipt or related file was not found.");
+  const modal = document.createElement("div");
+  modal.id = "feeReceiptActionModal";
+  modal.className = "simple-modal open";
+  modal.innerHTML = `
+    <div class="simple-modal-card receipt-action-modal-card">
+      <div class="drawer-head">
+        <div><h3>Fee Receipt Details</h3><p class="small-muted">Original receipt and reversal audit information.</p></div>
+        <button class="icon-button" data-close-fee-receipt-modal title="Close">X</button>
+      </div>
+      <div class="drawer-body receipt-audit-grid">
+        ${feeReceiptAuditDetails(receipt, file).map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      </div>
+      <div class="drawer-actions"><button class="secondary-button" data-close-fee-receipt-modal>Close</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.querySelector("#backdrop")?.classList.add("show");
+  modal.querySelectorAll("[data-close-fee-receipt-modal]").forEach((button) => { button.onclick = closeFeeReceiptActionModal; });
+}
+
+function openFeeReceiptNotReceivedModal(receiptId) {
+  closeFeeReceiptActionModal();
+  if (!["Admin", "Manager"].includes(normalizeRole(state.currentRole))) return toast("Only Admin or Manager can mark a fee receipt as Not Received.");
+  const receipt = feeReceiptById(receiptId);
+  const file = feeReceiptFile(receipt || {});
+  if (!receipt || !file) return toast("Fee receipt or related file was not found.");
+  if (!isValidFeeReceiptRecord(receipt)) return toast("This fee receipt is already marked as Not Received or reversed.");
+  const modal = document.createElement("div");
+  modal.id = "feeReceiptActionModal";
+  modal.className = "simple-modal open";
+  modal.innerHTML = `
+    <div class="simple-modal-card receipt-action-modal-card">
+      <div class="drawer-head">
+        <div><h3>Mark as Not Received</h3><p class="small-muted">Reverse only this selected fee receipt.</p></div>
+        <button class="icon-button" data-close-fee-receipt-modal title="Close">X</button>
+      </div>
+      <div class="drawer-body">
+        <div class="receipt-audit-grid">
+          ${feeReceiptAuditDetails(receipt, file).slice(0, 9).map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+        </div>
+        <div class="receipt-reversal-warning">This action will reverse the selected fee receipt and recalculate the outstanding fee. Continue only when the receipt was entered incorrectly or the payment was not actually received.</div>
+        <div class="field full-span"><label>Reason for Marking as Not Received</label><textarea id="feeReceiptReversalReason" rows="4" required placeholder="Enter the reason for this reversal"></textarea></div>
+      </div>
+      <div class="drawer-actions">
+        <button class="secondary-button" data-close-fee-receipt-modal>Cancel</button>
+        <button class="danger-button" id="confirmFeeReceiptNotReceived">Confirm Not Received</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.querySelector("#backdrop")?.classList.add("show");
+  modal.querySelectorAll("[data-close-fee-receipt-modal]").forEach((button) => { button.onclick = closeFeeReceiptActionModal; });
+  modal.querySelector("#confirmFeeReceiptNotReceived").onclick = () => confirmFeeReceiptNotReceived(receiptId);
+}
+
+async function confirmFeeReceiptNotReceived(receiptId) {
+  const reason = String(document.querySelector("#feeReceiptReversalReason")?.value || "").trim();
+  if (!reason) return toast("Reason for marking the receipt as Not Received is required.");
+  const button = document.querySelector("#confirmFeeReceiptNotReceived");
+  if (button) button.disabled = true;
+  try {
+    if (isSupabaseMode()) {
+      await markFeeReceiptNotReceivedToApi(receiptId, reason);
+    } else {
+      reverseFeeReceiptLocally(receiptId, reason);
+    }
+    closeFeeReceiptActionModal();
+    toast("Fee receipt marked as Not Received. Outstanding fee and linked balances were recalculated.");
+    renderAll();
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(error.message || "Unable to mark this fee receipt as Not Received.");
+  }
+}
+
+function reverseFeeReceiptLocally(receiptId, reason) {
+  const receipt = feeReceiptById(receiptId);
+  const file = feeReceiptFile(receipt || {});
+  if (!receipt || !file || !isValidFeeReceiptRecord(receipt)) throw new Error("This fee receipt cannot be reversed.");
+  const now = new Date().toISOString();
+  const actor = state.currentUser || loggedInUser()?.name || "";
+  state.feeReceipts = (state.feeReceipts || []).map((item) => item.id === receiptId ? {
+    ...item,
+    status: "not_received",
+    receiptStatus: "not_received",
+    receipt_status: "not_received",
+    isReversed: true,
+    is_reversed: true,
+    reversedAt: now,
+    reversed_at: now,
+    reversedBy: actor,
+    reversed_by: actor,
+    reversalReason: reason,
+    reversal_reason: reason,
+    previousPushStatus: receiptWasPushed(item) ? "pushed" : "not_pushed",
+    linkedTransactionStatus: receiptWasPushed(item) ? "reversed" : "not_applicable",
+  } : item);
+  state.otherCashCollections = (state.otherCashCollections || []).map((item) => {
+    const linked = item.id === (receipt.transactionId || receipt.transaction_id)
+      || item.feeReceiptId === receiptId || item.fee_receipt_id === receiptId
+      || item.sourceId === receiptId || item.source_id === receiptId;
+    return linked ? { ...item, status: "reversed", reversed: true, isReversed: true, is_reversed: true, reversedAt: now, reversalReason: reason } : item;
+  });
+  const summary = feeReceiptSummaryForFile(file);
+  const latest = summary.receipts[0] || {};
+  const fileIndex = state.files.findIndex((item) => item.id === file.id);
+  state.files[fileIndex] = {
+    ...file,
+    billed: true,
+    billingType: "Billable",
+    feeReceived: summary.billedAmount > 0 && summary.totalReceived >= summary.billedAmount,
+    feeReceivedAmount: summary.totalReceived,
+    amountReceived: summary.totalReceived,
+    amount_received: summary.totalReceived,
+    balanceAmount: summary.outstandingAmount,
+    balance_amount: summary.outstandingAmount,
+    feeReceivedDate: summary.latestReceiptDate,
+    paymentStatus: summary.totalReceived <= 0 ? "Fee Not Received" : (summary.outstandingAmount > 0 ? "Partly Received" : "Fee Received"),
+    feeReceiptId: latest.id || "",
+    fee_receipt_id: latest.id || "",
+    feeTransactionId: latest.transactionId || latest.transaction_id || "",
+    fee_transaction_id: latest.transactionId || latest.transaction_id || "",
+    updatedAt: Date.now(),
+  };
+  addAuditLog("Fee receipt marked Not Received", { fileId: file.id, receiptId, reason });
+  saveState();
+}
+
 function notCheckedFileActions(file) {
   const actions = [`<button class="mini-button" data-edit="${file.id}">${canManageChecking() ? "View" : "Edit"}</button>`];
   if (canManageChecking()) {
@@ -6439,6 +7153,12 @@ function bindFileActions() {
   });
   document.querySelectorAll("[data-mark-received]").forEach((btn) => {
     btn.onclick = () => openMarkReceivedModal(btn.dataset.markReceived);
+  });
+  document.querySelectorAll("[data-view-fee-receipt]").forEach((btn) => {
+    btn.onclick = () => openFeeReceiptViewModal(btn.dataset.viewFeeReceipt);
+  });
+  document.querySelectorAll("[data-fee-receipt-not-received]").forEach((btn) => {
+    btn.onclick = () => openFeeReceiptNotReceivedModal(btn.dataset.feeReceiptNotReceived);
   });
   document.querySelectorAll("[data-mark-not-received]").forEach((btn) => {
     btn.onclick = async () => {
@@ -6830,6 +7550,7 @@ function openMarkReceivedModal(fileId) {
   modal.id = "markReceivedModal";
   modal.className = "simple-modal open";
   modal.dataset.existingReceived = String(receiptSummary.totalReceived || 0);
+  modal.dataset.existingDiscount = String(receiptSummary.totalDiscount || 0);
   modal.innerHTML = `
     <div class="simple-modal-card receipt-modal-card">
       <div class="drawer-head">
@@ -6841,12 +7562,18 @@ function openMarkReceivedModal(fileId) {
       </div>
       <div class="drawer-body">
         <div class="receipt-form-grid">
-          ${feeReceiptField("receiptBillDate", "Bill Date", receipt.billDate, "date")}
-          ${feeReceiptField("receiptBillNo", "Bill No.", receipt.billNo, "text", "pattern='[A-Za-z0-9/-]*'")}
-          ${feeReceiptField("receiptBilledAmount", "Billed Amount", receipt.billedAmount, "number", "min='0.01' step='0.01'")}
-          ${feeReceiptField("receiptReceivedAmount", "Received Amount", receipt.receivedAmount, "number", "min='0.01' step='0.01'")}
-          ${feeReceiptField("receiptReceivedDate", "Received Date", receipt.receivedDate, "date")}
-          ${feeReceiptSelect("receiptPaymentMode", "Payment Mode", paymentModes(), receipt.paymentMode)}
+          <div class="receipt-form-row receipt-billing-row">
+            ${feeReceiptField("receiptBillDate", "Bill Date", receipt.billDate, "date")}
+            ${feeReceiptField("receiptBillNo", "Invoice No.", receipt.billNo, "text", "pattern='[A-Za-z0-9/-]*'")}
+            ${feeReceiptField("receiptBilledAmount", "Amount", receipt.billedAmount, "number", "min='0.01' step='0.01'")}
+          </div>
+          <div class="receipt-form-row receipt-payment-row">
+            ${feeReceiptField("receiptReceivedDate", "Received On", receipt.receivedDate, "date")}
+            ${feeReceiptField("receiptReceivedAmount", "Received Amount", receipt.receivedAmount, "number", "min='0.01' step='0.01'")}
+            ${feeReceiptField("receiptDiscountAmount", "Discount", receipt.discountAmount, "number", "min='0' step='0.01'")}
+            ${feeReceiptSelect("receiptPaymentMode", "Mode", paymentModes(), receipt.paymentMode)}
+          </div>
+          ${feeReceiptAccountSelect("receiptAccount", "Account", receipt.accountKey)}
           ${feeReceiptTextarea("receiptRemarks", "Remarks", receipt.remarks)}
         </div>
         ${feeReceiptModalStatus(file)}
@@ -6863,9 +7590,10 @@ function openMarkReceivedModal(fileId) {
   document.querySelector("#closeReceivedModal").onclick = closeMarkReceivedModal;
   document.querySelector("#cancelReceivedModal").onclick = closeMarkReceivedModal;
   document.querySelector("#saveReceivedModal").onclick = () => saveReceivedFromModal(fileId);
-  document.querySelectorAll("[name='receiptBilledAmount'], [name='receiptReceivedAmount']").forEach((input) => {
+  document.querySelectorAll("[name='receiptBilledAmount'], [name='receiptReceivedAmount'], [name='receiptDiscountAmount']").forEach((input) => {
     input.addEventListener("input", updateFeeReceiptBalancePreview);
   });
+  bindPaymentAccountControls("[name='receiptPaymentMode']", "[name='receiptAccount']");
   updateFeeReceiptBalancePreview();
 }
 
@@ -6886,7 +7614,8 @@ async function saveReceivedFromModal(fileId) {
   const user = loggedInUser() || {};
   const receivedAt = new Date().toISOString();
   const currentSummary = feeReceiptSummaryForFile(file);
-  const balanceAmount = Math.max(Number(receipt.billedAmount || 0) - currentSummary.totalReceived - Number(receipt.receivedAmount || 0), 0);
+  const totalDiscount = Number(currentSummary.totalDiscount || 0) + Number(receipt.discountAmount || 0);
+  const balanceAmount = Math.max(Number(receipt.billedAmount || 0) - currentSummary.totalReceived - Number(receipt.receivedAmount || 0) - totalDiscount, 0);
   let linkedTransaction = null;
   if (isSupabaseMode()) {
     try {
@@ -6921,6 +7650,9 @@ async function saveReceivedFromModal(fileId) {
     receiptDate: receipt.receivedDate,
     receipt_date: receipt.receivedDate,
     amount: receipt.receivedAmount,
+    discountAmount: receipt.discountAmount,
+    discount_amount: receipt.discountAmount,
+    discount: receipt.discountAmount,
     receivedAt,
     received_at: receivedAt,
     receivedBy: user.name || state.currentUser || "",
@@ -6949,6 +7681,8 @@ async function saveReceivedFromModal(fileId) {
     feeReceivedAmount: currentSummary.totalReceived + receipt.receivedAmount,
     amount_received: currentSummary.totalReceived + receipt.receivedAmount,
     amountReceived: currentSummary.totalReceived + receipt.receivedAmount,
+    discountAmount: totalDiscount,
+    discount_amount: totalDiscount,
     balanceAmount,
     balance_amount: balanceAmount,
     received_date: receipt.receivedDate,
@@ -7022,11 +7756,11 @@ function openBilledFileModal(fileId) {
     </div>
     <form id="billingForm" class="drawer-body">
       <div class="checking-summary"><strong>${escapeHtml(file.name || "")}</strong><span>${escapeHtml(file.serviceType || "")}${file.fy ? ` · FY ${escapeHtml(file.fy)}` : ""}</span></div>
-      <div class="two-col">
-        ${formField("billingDate", "Billing Date", todayDate(), "date")}
-        ${formField("billAmount", "Bill Amount", file.billedAmount || file.billAmount || file.feeAmount || "", "number")}
+      <div class="billing-primary-row">
+        ${formField("billingDate", "Bill Date", todayDate(), "date")}
+        ${formField("billAmount", "Amount", file.billedAmount || file.billAmount || file.feeAmount || "", "number")}
+        ${formField("invoiceNumber", "Invoice No.", file.invoiceNumber || file.billReference || "", "text", false)}
       </div>
-      ${formField("invoiceNumber", "Invoice Number / Bill Reference", file.invoiceNumber || file.billReference || "", "text", false)}
       <div class="field"><label>Billing Remarks</label><textarea name="billingRemarks" rows="4">${escapeHtml(file.billingRemarks || "")}</textarea></div>
     </form>
     <div class="drawer-actions">
@@ -7047,8 +7781,8 @@ async function submitBilledFile(fileId) {
   const data = new FormData(form);
   const billingDate = String(data.get("billingDate") || "").trim();
   const billAmount = Number(data.get("billAmount"));
-  if (!billingDate) return toast("Please select a Billing Date.");
-  if (!Number.isFinite(billAmount) || billAmount <= 0) return toast("Please enter a Bill Amount greater than zero.");
+  if (!billingDate) return toast("Please select a Bill Date.");
+  if (!Number.isFinite(billAmount) || billAmount <= 0) return toast("Please enter an Amount greater than zero.");
   button.disabled = true;
   button.textContent = "Saving...";
   const ok = await updateFileBilling(fileId, {
@@ -7375,6 +8109,14 @@ function canEditClientCredentials() {
   return values.map((value) => String(value).trim()).includes("edit_client_credentials");
 }
 
+function canManageClientMasters() {
+  if (normalizeRole(state.currentRole) === "Admin") return true;
+  const current = (state.users || []).find((user) => user.id === state.session?.userId || String(user.email || "").toLowerCase() === String(state.session?.userEmail || "").toLowerCase()) || {};
+  const raw = current.permissions || current.role_permissions || state.session?.permissions || [];
+  const values = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.keys(raw).filter((key) => raw[key]) : String(raw || "").split(","));
+  return values.map((value) => String(value).trim()).includes("manage_client_masters");
+}
+
 function renderFileClientLinker(file = {}, editing = false) {
   const linked = selectedDrawerClient;
   return `
@@ -7486,33 +8228,60 @@ function selectClientForFile(client) {
 
 async function renderClientMasterPage() {
   const page = document.querySelector("#clientMaster");
+  page.innerHTML = `<div class="panel-card client-master-loading">Loading Client Master...</div>`;
+  try { await loadClientMasters(); } catch (error) { page.innerHTML = `<div class="permission-note">${escapeHtml(error.message)}</div>`; return; }
+  const masters = clientMasterUi.masters || { clientTypes: [], constitutions: [], careOf: [] };
+  const optionList = (values, selected, getName = (item) => item.name) => values.map((item) => {
+    const value = getName(item);
+    return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`;
+  }).join("");
   page.innerHTML = `
-    <div class="client-master-toolbar panel-card">
-      <div class="client-toolbar-primary">
-        <div class="field"><label>Search Clients</label><input id="clientMasterSearch" value="${escapeHtml(clientMasterUi.search)}" placeholder="Name, PAN, TAN, GST, CIN, contact, email or Client ID"></div>
-        <div class="field"><label>Status</label><select id="clientMasterStatus"><option>Active</option><option>Inactive</option><option>All</option></select></div>
-      </div>
+    <section class="client-master-shell panel-card">
+      <div class="client-master-heading"><div><span class="eyebrow">CENTRAL DIRECTORY</span><h2>Client Master</h2><p>Manage client identities, registrations and contact details from one secure source.</p></div><strong id="clientMasterCount">0 clients</strong></div>
+      <div class="client-master-toolbar">
       <div class="client-toolbar-actions">
-        <button class="primary-button" id="addClientMasterButton">Add Client</button>
+        <button class="secondary-button" id="clientClearFilters">Clear Filters</button>
+        <button class="secondary-button" id="clientRefreshButton">Refresh</button>
+        <button class="secondary-button" id="clientExportButton">Export Excel</button>
+        <button class="secondary-button" id="clientPdfButton">Export PDF</button>
         <button class="secondary-button" id="clientTemplateButton">Sample Excel</button>
         <button class="secondary-button" id="clientImportButton">Import Excel</button>
         <input class="hidden" id="clientImportInput" type="file" accept=".xlsx,.xls">
-        <button class="secondary-button" id="clientExportButton">Export Excel</button>
-        <button class="secondary-button" id="clientPdfButton">Export PDF</button>
-        ${state.currentRole === "Admin" ? `<button class="secondary-button" id="clientMastersButton">Manage Types & Constitutions</button>` : ""}
+        ${canManageClientMasters() ? `<button class="secondary-button" id="clientMastersButton">Manage Masters</button>` : ""}
         ${state.currentRole === "Admin" ? `<button class="secondary-button" id="clientMigrationButton">Generate from Existing Files</button>` : ""}
+        <button class="primary-button" id="addClientMasterButton">Add Client</button>
       </div>
-    </div>
-    <div class="client-master-summary"><strong id="clientMasterCount">0 clients</strong><span>Central client records. File snapshots remain unchanged.</span></div>
+      </div>
+      <div class="client-master-filters">
+        <div class="field client-master-search"><label>Search</label><input id="clientMasterSearch" type="search" value="${escapeHtml(clientMasterUi.search)}" placeholder="Name, type, C/o, PAN, GST, TAN, contact, email or place"></div>
+        <div class="field"><label>Client Type</label><select id="clientMasterType"><option value="">All Types</option>${optionList(masters.clientTypes, clientMasterUi.clientType)}</select></div>
+        <div class="field"><label>Constitution</label><select id="clientMasterConstitution"><option value="">All Constitutions</option>${optionList(masters.constitutions, clientMasterUi.constitution)}</select></div>
+        <div class="field"><label>C/o</label><select id="clientMasterCareOf"><option value="">All C/o</option>${optionList(masters.careOf, clientMasterUi.careOf, (item) => item)}</select></div>
+        <div class="field"><label>Status</label><select id="clientMasterStatus"><option>Active</option><option>Inactive</option><option>All</option></select></div>
+        <div class="field"><label>Place</label><input id="clientMasterPlace" value="${escapeHtml(clientMasterUi.place)}" placeholder="Filter place"></div>
+      </div>
+    </section>
     <div class="table-wrap client-master-table-wrap">
-      <table class="client-master-table"><thead><tr><th>Client Name</th><th>Client Type</th><th>C/o</th><th>PAN</th><th>TAN</th><th>GST No.</th><th>Constitution</th><th>Contact Person</th><th>Contact No.</th><th>Email ID</th><th>Place</th><th>Status</th><th>Actions</th></tr></thead><tbody id="clientMasterRows"><tr><td colspan="13">Loading clients...</td></tr></tbody></table>
+      <table class="client-master-table"><thead><tr><th>SN</th><th>Client Name</th><th>Client Type</th><th>C/o</th><th>PAN</th><th>GST No.</th><th>TAN</th><th>Constitution</th><th>Contact Person</th><th>Contact No.</th><th>Email ID</th><th>Place</th><th>Status</th><th>Actions</th></tr></thead><tbody id="clientMasterRows"><tr><td colspan="14">Loading clients...</td></tr></tbody></table>
     </div>
     <div class="client-pagination"><button class="mini-button" id="clientPrevPage">Previous</button><span id="clientPageLabel">Page 1</span><button class="mini-button" id="clientNextPage">Next</button></div>
   `;
   document.querySelector("#clientMasterStatus").value = clientMasterUi.status;
   bindClientMasterPage();
-  loadClientMasters().catch(() => {});
   loadClientMaster();
+}
+
+function clientMasterQuery(includePaging = true) {
+  const values = {
+    search: clientMasterUi.search,
+    status: clientMasterUi.status,
+    clientType: clientMasterUi.clientType,
+    constitution: clientMasterUi.constitution,
+    careOf: clientMasterUi.careOf,
+    place: clientMasterUi.place,
+  };
+  if (includePaging) Object.assign(values, { page: clientMasterUi.page, pageSize: clientMasterUi.pageSize });
+  return new URLSearchParams(values);
 }
 
 function bindClientMasterPage() {
@@ -7521,7 +8290,14 @@ function bindClientMasterPage() {
     clearTimeout(clientSearchTimer);
     clientSearchTimer = setTimeout(() => { clientMasterUi.search = search.value.trim(); clientMasterUi.page = 1; loadClientMaster(); }, 250);
   };
-  document.querySelector("#clientMasterStatus").onchange = (event) => { clientMasterUi.status = event.target.value; clientMasterUi.page = 1; loadClientMaster(); };
+  [
+    ["#clientMasterStatus", "status"], ["#clientMasterType", "clientType"],
+    ["#clientMasterConstitution", "constitution"], ["#clientMasterCareOf", "careOf"],
+  ].forEach(([selector, key]) => document.querySelector(selector).onchange = (event) => { clientMasterUi[key] = event.target.value; clientMasterUi.page = 1; loadClientMaster(); });
+  const place = document.querySelector("#clientMasterPlace");
+  place.oninput = () => { clearTimeout(clientSearchTimer); clientSearchTimer = setTimeout(() => { clientMasterUi.place = place.value.trim(); clientMasterUi.page = 1; loadClientMaster(); }, 250); };
+  document.querySelector("#clientClearFilters").onclick = () => { Object.assign(clientMasterUi, { search: "", status: "Active", clientType: "", constitution: "", careOf: "", place: "", page: 1 }); renderClientMasterPage(); };
+  document.querySelector("#clientRefreshButton").onclick = () => { clientMasterUi.page = 1; loadClientMaster(); };
   document.querySelector("#addClientMasterButton").onclick = () => openClientEditor();
   document.querySelector("#clientPrevPage").onclick = () => { if (clientMasterUi.page > 1) { clientMasterUi.page -= 1; loadClientMaster(); } };
   document.querySelector("#clientNextPage").onclick = () => { if (clientMasterUi.page * clientMasterUi.pageSize < clientMasterUi.total) { clientMasterUi.page += 1; loadClientMaster(); } };
@@ -7538,12 +8314,12 @@ async function loadClientMaster() {
   const body = document.querySelector("#clientMasterRows");
   if (!body || clientMasterUi.loading) return;
   clientMasterUi.loading = true;
-  body.innerHTML = `<tr><td colspan="13">Loading clients...</td></tr>`;
+  body.innerHTML = `<tr><td colspan="14">Loading clients...</td></tr>`;
   try {
-    const query = new URLSearchParams({ search: clientMasterUi.search, status: clientMasterUi.status, page: clientMasterUi.page, pageSize: clientMasterUi.pageSize });
+    const query = clientMasterQuery();
     const payload = await apiJson(`/api/clients?${query}`);
     clientMasterUi.rows = payload.clients || []; clientMasterUi.total = payload.total || 0;
-    body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="13">No clients found.</td></tr>`;
+    body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="14" class="client-empty-state">No clients match the selected filters.</td></tr>`;
     document.querySelector("#clientMasterCount").textContent = `${clientMasterUi.total} client(s)`;
     document.querySelector("#clientPageLabel").textContent = `Page ${clientMasterUi.page} of ${Math.max(1, Math.ceil(clientMasterUi.total / clientMasterUi.pageSize))}`;
     document.querySelector("#clientPrevPage").disabled = clientMasterUi.page <= 1;
@@ -7555,13 +8331,18 @@ async function loadClientMaster() {
 }
 
 function clientMasterRow(client) {
+  const index = (clientMasterUi.page - 1) * clientMasterUi.pageSize + clientMasterUi.rows.indexOf(client) + 1;
+  const types = client.client_types?.length ? client.client_types : String(client.client_type || "").split(/\s*\|\s*/).filter(Boolean);
+  const visibleTypes = types.slice(0, 2);
+  const typeMarkup = `<div class="client-type-tags" title="${escapeHtml(types.join(", "))}">${visibleTypes.map((type) => `<span>${escapeHtml(type)}</span>`).join("")}${types.length > 2 ? `<em>+${types.length - 2}</em>` : ""}${!types.length ? "-" : ""}</div>`;
   return `<tr>
+    <td class="client-sn">${index}</td>
     <td><button class="text-button" data-client-profile="${client.id}">${escapeHtml(client.client_name)}</button><small class="table-secondary">${escapeHtml(client.client_code || "")}</small></td>
-    <td>${escapeHtml((client.client_types || []).join(" | ") || client.client_type || "-")}</td>
-    <td>${escapeHtml(client.care_of || "-")}</td><td>${escapeHtml(client.pan_reg_no || "-")}</td><td>${escapeHtml(client.tan || "-")}</td><td>${escapeHtml(client.gst_no || "-")}</td>
+    <td>${typeMarkup}</td>
+    <td>${escapeHtml(client.care_of || "-")}</td><td>${escapeHtml(client.pan_reg_no || "-")}</td><td>${escapeHtml(client.gst_no || "-")}</td><td>${escapeHtml(client.tan || "-")}</td>
     <td>${escapeHtml(client.constitution || "-")}</td><td>${escapeHtml(client.contact_person || "-")}</td><td>${escapeHtml(client.contact_number || "-")}</td><td>${escapeHtml(client.email || "-")}</td><td>${escapeHtml(client.place || "-")}</td>
     <td><span class="badge ${client.status === "Active" ? "checked" : "neutral"}">${escapeHtml(client.status)}</span></td>
-    <td><div class="table-actions"><button class="mini-button" data-client-edit="${client.id}">Edit</button><button class="mini-button" data-client-status="${client.id}" data-status="${client.status === "Active" ? "Inactive" : "Active"}">${client.status === "Active" ? "Deactivate" : "Activate"}</button></div></td>
+    <td><div class="table-actions"><button class="mini-button" data-client-profile="${client.id}">View</button><button class="mini-button" data-client-edit="${client.id}">Edit</button><button class="mini-button" data-client-status="${client.id}" data-status="${client.status === "Active" ? "Inactive" : "Active"}">${client.status === "Active" ? "Deactivate" : "Activate"}</button></div></td>
   </tr>`;
 }
 
@@ -7595,7 +8376,7 @@ async function loadClientMasters(force = false) {
 }
 
 async function openClientMasterManager() {
-  if (normalizeRole(state.currentRole) !== "Admin") return toast("Only Admin can manage client masters.");
+  if (!canManageClientMasters()) return toast("You do not have permission to manage client masters.");
   try { await loadClientMasters(true); } catch (error) { return toast(error.message); }
   document.querySelector("#clientMasterManagerModal")?.remove();
   const masters = clientMasterUi.masters || {};
@@ -7629,20 +8410,27 @@ async function openClientEditor(client = null, options = {}) {
   try { await loadClientMasters(); } catch (error) { toast(error.message); return; }
   const masters = clientMasterUi.masters || { clientTypes: [], constitutions: [], careOf: [] };
   const selectedTypes = new Set(client?.client_types || String(client?.client_type || "").split(/\s*\|\s*/).filter(Boolean));
+  const availableTypes = [...masters.clientTypes];
+  selectedTypes.forEach((name) => {
+    if (!availableTypes.some((item) => normalizePersonName(item.name) === normalizePersonName(name))) availableTypes.push({ name, is_active: false });
+  });
   const canEditCredentials = canEditClientCredentials();
   const modal = document.createElement("div");
   modal.id = "clientEditorModal"; modal.className = "client-modal-backdrop";
-  modal.innerHTML = `<div class="client-modal"><div class="drawer-head"><div><h3>${client ? "Edit Client" : "Add Client"}</h3><p class="small-muted">Client identity is stored centrally. Files keep a historical snapshot.</p></div><button class="icon-button" data-close-client-modal>X</button></div>
+  modal.innerHTML = `<div class="client-modal client-editor-modal"><div class="drawer-head"><div><span class="eyebrow">CLIENT MASTER</span><h3>${client ? "Edit Client" : "Add Client"}</h3><p class="small-muted">Client identity is stored centrally. Files keep a historical snapshot.</p></div><button class="icon-button" data-close-client-modal aria-label="Close">X</button></div>
     <form id="clientEditorForm" class="client-editor-form">
-      <section class="client-form-section"><h4>Basic Information</h4><div class="two-col">
+      <section class="client-form-section"><h4>Basic Details</h4><div class="two-col">
         ${clientFormInput("clientName", "Client Name", client?.client_name, true)}
-        <div class="field client-type-picker"><label>Client Type</label><input id="clientTypeSearch" type="search" autocomplete="off" placeholder="Search client types"><select name="clientTypes" multiple size="6" required>${masters.clientTypes.map((item) => `<option value="${escapeHtml(item.name)}" ${selectedTypes.has(item.name) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select><input name="newClientType" placeholder="Add new Client Type"><small>Select one or more types. Imported multiple values use the | separator.</small></div>
+        <div class="field client-type-picker"><label>Client Type <span aria-hidden="true">*</span></label><div class="client-type-combobox"><div class="client-selected-types" id="clientSelectedTypes"></div><input id="clientTypeSearch" type="search" autocomplete="off" placeholder="Search and select client types"><div class="client-type-options" id="clientTypeOptions">${availableTypes.map((item) => `<label class="client-type-option" data-client-type-option><input type="checkbox" name="clientTypes" value="${escapeHtml(item.name)}" ${selectedTypes.has(item.name) ? "checked" : ""}><span>${escapeHtml(item.name)}</span>${item.is_active === false ? `<em>Inactive</em>` : ""}</label>`).join("")}</div></div>${canManageClientMasters() ? `<button type="button" class="text-button client-add-master-link" id="clientAddTypeButton">+ Add New Client Type</button>` : ""}<small>Select one or more types.</small><p class="field-error hidden" id="clientTypeError">Select at least one Client Type.</p></div>
+        <div class="field"><label>Constitution</label><select name="constitution" id="clientConstitutionSelect"><option value="">Select Constitution</option>${masters.constitutions.map((item) => `<option value="${escapeHtml(item.name)}" ${item.name === client?.constitution ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}${client?.constitution && !masters.constitutions.some((item) => item.name === client.constitution) ? `<option selected value="${escapeHtml(client.constitution)}">${escapeHtml(client.constitution)} (Inactive)</option>` : ""}<option value="__new">+ Add New Constitution</option></select><input class="hidden" id="clientNewConstitution" placeholder="Enter new constitution"></div>
         <div class="field"><label>C/o</label><select name="careOf" id="clientCareOfSelect"><option value="">Select C/o</option>${masters.careOf.map((value) => `<option ${value === client?.care_of ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}<option value="__new">+ Add New C/o</option></select><input class="hidden" id="clientNewCareOf" placeholder="Enter new C/o"></div>
+        ${clientFormSelect("status", "Status", ["Active", "Inactive"], client?.status || "Active")}
       </div></section>
-      <section class="client-form-section"><h4>Registration and Tax Details</h4><p class="small-muted">Registration numbers are used to fill the correct identifier in Add File. Credentials are encrypted and restricted.</p><div class="two-col">${clientFormInput("panRegNo", "PAN", client?.pan_reg_no)}${canEditCredentials ? clientCredentialInput("itPassword", "IT PW") : ""}${clientFormInput("tan", "TAN", client?.tan)}${clientFormInput("gstNo", "GST No.", client?.gst_no)}${canEditCredentials ? clientCredentialInput("gstPassword", "GST PW") : ""}${clientFormInput("cin", "CIN", client?.cin)}${clientFormInput("otherRegnNo", "Other Regn No.", client?.other_regn_no)}<div class="field"><label>Constitution</label><select name="constitution" id="clientConstitutionSelect"><option value="">Select Constitution</option>${masters.constitutions.map((item) => `<option value="${escapeHtml(item.name)}" ${item.name === client?.constitution ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}<option value="__new">+ Add New Constitution</option></select><input class="hidden" id="clientNewConstitution" placeholder="Enter new constitution"></div></div></section>
-      <section class="client-form-section"><h4>Contact and Additional Details</h4><div class="two-col">${clientFormInput("contactPerson", "Contact Person", client?.contact_person)}${clientFormInput("contactNumber", "Contact No.", client?.contact_number)}${clientFormInput("email", "Email ID", client?.email, false, "email")}${canEditCredentials ? clientCredentialInput("tracesLogin", "Traces Login") + clientCredentialInput("tracesPassword", "Traces PW") : ""}${clientFormInput("place", "Place", client?.place)}${clientFormSelect("status", "Status", ["Active", "Inactive"], client?.status || "Active")}</div>${clientFormTextarea("address", "Address", client?.address)}${clientFormTextarea("remarks", "Remarks", client?.remarks)}</section>
+      <section class="client-form-section"><h4>Registration Details</h4><p class="small-muted">Registration numbers are standardized in uppercase. Credentials are encrypted and permission restricted.</p><div class="two-col">${clientFormInput("panRegNo", "PAN", client?.pan_reg_no)}${canEditCredentials ? clientCredentialInput("itPassword", "IT PW") : ""}${clientFormInput("tan", "TAN", client?.tan)}${clientFormInput("gstNo", "GST No.", client?.gst_no)}${canEditCredentials ? clientCredentialInput("gstPassword", "GST PW") : ""}${clientFormInput("cin", "CIN", client?.cin)}${clientFormInput("otherRegnNo", "Other Regn No.", client?.other_regn_no)}${canEditCredentials ? clientCredentialInput("tracesLogin", "Traces Login") + clientCredentialInput("tracesPassword", "Traces PW") : ""}</div></section>
+      <section class="client-form-section"><h4>Contact Details</h4><div class="two-col">${clientFormInput("contactPerson", "Contact Person", client?.contact_person)}${clientFormInput("contactNumber", "Contact No.", client?.contact_number)}${clientFormInput("email", "Email ID", client?.email, false, "email")}${clientFormInput("place", "Place", client?.place)}</div>${clientFormTextarea("address", "Address", client?.address)}</section>
+      <section class="client-form-section"><h4>Additional Details</h4>${clientFormTextarea("remarks", "Remarks", client?.remarks)}</section>
       <div class="client-form-warning hidden" id="clientDuplicateWarning"></div>
-      <div class="drawer-actions"><button type="button" class="secondary-button" data-close-client-modal>Cancel</button><button type="submit" class="primary-button">${client ? "Save Client" : "Create Client"}</button></div>
+      <div class="drawer-actions client-editor-sticky-actions"><button type="button" class="secondary-button" data-close-client-modal>Cancel</button><button type="submit" class="primary-button">${client ? "Update" : "Save"}</button></div>
     </form></div>`;
   document.body.appendChild(modal);
   modal.querySelectorAll("[data-close-client-modal]").forEach((button) => button.onclick = () => modal.remove());
@@ -7651,16 +8439,52 @@ async function openClientEditor(client = null, options = {}) {
   });
   bindNewMaster("#clientCareOfSelect", "#clientNewCareOf");
   bindNewMaster("#clientConstitutionSelect", "#clientNewConstitution");
+  const renderSelectedTypes = () => {
+    const selected = [...modal.querySelectorAll("[name='clientTypes']:checked")];
+    modal.querySelector("#clientSelectedTypes").innerHTML = selected.map((input) => `<button type="button" data-remove-client-type="${escapeHtml(input.value)}" title="Remove ${escapeHtml(input.value)}">${escapeHtml(input.value)} <span aria-hidden="true">X</span></button>`).join("");
+    modal.querySelector("#clientTypeError").classList.toggle("hidden", selected.length > 0);
+    modal.querySelectorAll("[data-remove-client-type]").forEach((button) => button.onclick = () => {
+      const checkbox = [...modal.querySelectorAll("[name='clientTypes']")].find((input) => input.value === button.dataset.removeClientType);
+      if (checkbox) checkbox.checked = false;
+      renderSelectedTypes();
+    });
+  };
+  modal.querySelectorAll("[name='clientTypes']").forEach((input) => input.onchange = renderSelectedTypes);
+  renderSelectedTypes();
   modal.querySelector("#clientTypeSearch")?.addEventListener("input", (event) => {
     const term = event.target.value.trim().toLowerCase();
-    modal.querySelectorAll("select[name='clientTypes'] option").forEach((option) => {
-      option.hidden = Boolean(term) && !option.textContent.toLowerCase().includes(term) && !option.selected;
+    modal.querySelectorAll("[data-client-type-option]").forEach((option) => {
+      option.classList.toggle("hidden", Boolean(term) && !option.textContent.toLowerCase().includes(term));
     });
   });
+  modal.querySelector("#clientAddTypeButton")?.addEventListener("click", () => openQuickClientTypeModal((value) => {
+    const optionsBox = modal.querySelector("#clientTypeOptions");
+    const label = document.createElement("label"); label.className = "client-type-option"; label.dataset.clientTypeOption = "";
+    label.innerHTML = `<input type="checkbox" name="clientTypes" value="${escapeHtml(value.name)}" checked><span>${escapeHtml(value.name)}</span>`;
+    optionsBox.appendChild(label); label.querySelector("input").onchange = renderSelectedTypes; renderSelectedTypes();
+  }));
+  ["panRegNo", "tan", "gstNo", "cin"].forEach((name) => modal.querySelector(`[name='${name}']`)?.addEventListener("input", (event) => { event.target.value = event.target.value.toUpperCase(); }));
   modal.querySelectorAll("[data-toggle-client-secret]").forEach((button) => button.onclick = () => {
     const input = modal.querySelector(`[name='${button.dataset.toggleClientSecret}']`); input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? "Show" : "Hide";
   });
   modal.querySelector("#clientEditorForm").onsubmit = (event) => saveClientEditor(event, client, options);
+}
+
+function openQuickClientTypeModal(onCreated) {
+  document.querySelector("#quickClientTypeModal")?.remove();
+  const modal = document.createElement("div"); modal.id = "quickClientTypeModal"; modal.className = "client-modal-backdrop client-nested-modal";
+  modal.innerHTML = `<div class="client-modal client-quick-master-modal"><div class="drawer-head"><div><h3>Add Client Type</h3><p class="small-muted">The value becomes available to authorised users immediately.</p></div><button class="icon-button" data-close>X</button></div><form class="client-editor-form"><div class="field"><label>Client Type</label><input name="name" required autocomplete="off" maxlength="100" placeholder="Enter a unique client type"></div><div class="drawer-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Add Type</button></div></form></div>`;
+  document.body.appendChild(modal);
+  modal.querySelectorAll("[data-close]").forEach((button) => button.onclick = () => modal.remove());
+  modal.querySelector("form").onsubmit = async (event) => {
+    event.preventDefault(); const button = event.currentTarget.querySelector("button[type=submit]"); button.disabled = true;
+    try {
+      const name = event.currentTarget.elements.name.value.trim();
+      const result = await apiJson("/api/clients/masters/client-type", { method: "POST", body: JSON.stringify({ name, isActive: true, displayOrder: 100 }) });
+      clientMasterUi.masters = null; await loadClientMasters(true); modal.remove(); toast("Client Type added."); onCreated?.(result.value);
+    } catch (error) { toast(error.message); button.disabled = false; }
+  };
+  modal.querySelector("input").focus();
 }
 
 function clientFormInput(name, label, value = "", required = false, type = "text") { return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${escapeHtml(value || "")}" ${required ? "required" : ""}></div>`; }
@@ -7673,8 +8497,11 @@ async function saveClientEditor(event, client, options, acceptWarnings = false) 
   const form = event.currentTarget;
   const data = new FormData(form);
   const payload = Object.fromEntries(data); payload.clientTypes = data.getAll("clientTypes"); payload.acceptWarnings = acceptWarnings;
-  if (payload.newClientType?.trim()) payload.clientTypes.push(payload.newClientType.trim());
-  delete payload.newClientType;
+  if (!payload.clientTypes.length) {
+    form.querySelector("#clientTypeError")?.classList.remove("hidden");
+    form.querySelector("#clientTypeSearch")?.focus();
+    return;
+  }
   if (payload.careOf === "__new") payload.careOf = document.querySelector("#clientNewCareOf")?.value.trim() || "";
   if (payload.constitution === "__new") payload.constitution = document.querySelector("#clientNewConstitution")?.value.trim() || "";
   ["itPassword", "gstPassword", "tracesLogin", "tracesPassword"].forEach((key) => { if (!payload[key]) delete payload[key]; });
@@ -7690,7 +8517,7 @@ async function saveClientEditor(event, client, options, acceptWarnings = false) 
       const warning = form.querySelector("#clientDuplicateWarning"); warning.classList.remove("hidden"); warning.innerHTML = `${error.payload.warnings.map((item) => `<p>${escapeHtml(item.message)}</p>`).join("")}<button type="button" class="secondary-button">Save Anyway</button>`;
       warning.querySelector("button").onclick = () => saveClientEditor({ preventDefault() {}, currentTarget: form }, client, options, true);
     } else toast(error.message);
-  } finally { submit.disabled = false; submit.textContent = client ? "Save Client" : "Create Client"; }
+  } finally { submit.disabled = false; submit.textContent = client ? "Update" : "Save"; }
 }
 
 async function openClientProfile(id) {
@@ -7737,7 +8564,7 @@ async function downloadClientTemplate() {
 
 async function exportClientMaster() {
   try {
-    const payload = await apiJson(`/api/clients/export?${new URLSearchParams({ search: clientMasterUi.search, status: clientMasterUi.status })}`);
+    const payload = await apiJson(`/api/clients/export?${clientMasterQuery(false)}`);
     await loadSheetJs();
     const rows = clientMasterExportRows(payload.clients || []);
     const sheet = XLSX.utils.json_to_sheet(rows); const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, "Clients"); XLSX.writeFile(book, "client-master.xlsx");
@@ -7769,7 +8596,7 @@ function clientMasterExportRows(clients = []) {
 
 async function exportClientMasterPdf() {
   try {
-    const payload = await apiJson(`/api/clients/export?${new URLSearchParams({ search: clientMasterUi.search, status: clientMasterUi.status })}`);
+    const payload = await apiJson(`/api/clients/export?${clientMasterQuery(false)}`);
     const rows = clientMasterExportRows(payload.clients || []).map((client) => ({ SN: client.SN, "Client ID": client["Client ID"], "Client Name": client["Client Name"], "PAN/Regn No.": client.PAN, Type: client["Client Type"], Contact: client["Contact No."], Place: client.Place, Status: client.Status }));
     await downloadPdfRows("client-master", rows, ["Muhammad & Associates,", "Chartered Accountants,", "Client Master"]);
   } catch (error) { toast(error.message); }
@@ -7881,8 +8708,6 @@ function openFileDrawer(id) {
         ${formField("contactNo", "Contact No", file.contactNo || file.contact_no || file.clientSnapshot?.contactNumber || "", "text", false)}
         ${formField("contactPerson", "Contact Person", file.contactPerson || file.clientSnapshot?.contactPerson || "", "text", false)}
         ${formField("clientEmail", "Email ID", file.clientEmail || file.clientSnapshot?.email || "", "email", false)}
-        ${formField("clientPlace", "Place", file.clientPlace || file.clientSnapshot?.place || "", "text", false)}
-        ${formField("clientAddress", "Address", file.clientAddress || file.clientSnapshot?.address || "", "text", false)}
         ${selectField("mode", "Mode", modeDropdownOptions(file.mode), file.mode || "Whatsapp")}
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
         ${workflowStatusField(file)}
@@ -8484,8 +9309,8 @@ async function saveFileFromDrawer() {
     contact_no: String(data.get("contactNo") || "").trim(),
     contactPerson: String(data.get("contactPerson") || "").trim(),
     clientEmail: String(data.get("clientEmail") || "").trim(),
-    clientPlace: String(data.get("clientPlace") || "").trim(),
-    clientAddress: String(data.get("clientAddress") || "").trim(),
+    clientPlace: String(selectedDrawerClient?.place || existingFile?.clientPlace || existingFile?.clientSnapshot?.place || existingFile?.client_snapshot?.place || "").trim(),
+    clientAddress: String(selectedDrawerClient?.address || existingFile?.clientAddress || existingFile?.clientSnapshot?.address || existingFile?.client_snapshot?.address || "").trim(),
     fy,
     mode: data.get("mode"),
     fileReceivedDate: data.get("fileReceivedDate"),
@@ -8896,7 +9721,8 @@ function renderStaffDetailsPage() {
           <p>Manage employee information, birthdays and work anniversaries.</p>
         </div>
         <div class="staff-details-actions">
-          <button class="secondary-button" id="staffDetailsExcel" ${rolePerm().export ? "" : "disabled"}>Excel</button>
+          ${canManageStaffDetails() ? `<button class="secondary-button" id="staffDownloadSample">Download Sample</button><button class="secondary-button" id="staffImportExcel">Import Excel</button><input class="hidden" id="staffImportInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">` : ""}
+          <button class="secondary-button" id="staffDetailsExcel" ${rolePerm().export ? "" : "disabled"}>Export Excel</button>
           <button class="secondary-button" id="staffDetailsPdf" ${rolePerm().export ? "" : "disabled"}>PDF</button>
           <button class="secondary-button" id="staffDetailsPrint">Print</button>
           ${canManageStaffDetails() ? `<button class="primary-button" id="showStaffForm">Add Staff</button>` : ""}
@@ -8914,8 +9740,9 @@ function renderStaffDetailsPage() {
           ${staffFilterInput("staffSearch", "Search", "Search by staff name, email, employee ID or position")}
           ${staffFilterSelect("staffDepartment", "Department", uniqueStaffValues("department"))}
           ${staffFilterSelect("staffPosition", "Position", uniqueStaffValues("position"))}
+          ${staffFilterSelect("staffEmploymentType", "Employment Type", staffEmploymentTypeOptions)}
           ${staffFilterSelect("staffStatus", "Status", ["Active", "On Leave", "Resigned", "Terminated", "Inactive"])}
-          ${staffFilterSelect("staffBranch", "Branch", uniqueStaffValues("branch"))}
+          ${staffFilterSelect("staffBloodGroup", "Blood Group", staffBloodGroupOptions)}
           ${staffFilterMonth("staffBirthdayMonth", "Birthday Month")}
           ${staffFilterMonth("staffJoiningMonth", "Joining Month")}
           <div class="field"><label>Sort By</label><select id="staffSort">${["Newest", "Staff Name", "DOJ", "DOB", "Position", "Department", "Status"].map((item) => `<option ${state.filters.staffSort === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
@@ -8936,10 +9763,18 @@ function staffSummaryCard(title, value, note, icon) {
   return `<div class="dashboard-kpi-card staff-summary-card"><div class="dashboard-kpi-top"><span class="dashboard-kpi-icon">${navIcon(icon)}</span><span class="dashboard-kpi-title">${escapeHtml(title)}</span></div><strong>${Number(value || 0).toLocaleString("en-IN")}</strong><div class="dashboard-kpi-meta"><small>${escapeHtml(note)}</small></div></div>`;
 }
 
-const staffPositionOptions = ["Assistant", "Manager"];
-const staffEmploymentTypeOptions = ["Permanent", "Temporary", "Contract", "Part-Time", "Intern", "CA Article", "CMA Article"];
-const staffGenderOptions = ["Male", "Female", "Transgender"];
-const staffDepartmentOptions = ["Accounts & Audit", "Audit", "Taxation", "Accounts", "Admin", "Other Operations", "Sales", "Marketing", "Other"];
+const staffPositionOptions = ["Assistant", "Manager", "Other"];
+const staffEmploymentTypeOptions = ["Permanent", "Probation", "Temporary", "Contract", "Intern", "CA Article", "CMA Article"];
+const staffGenderOptions = ["Male", "Female", "Transgender", "Prefer Not to Say"];
+const staffBloodGroupOptions = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Not Known"];
+const staffDepartmentOptions = ["Accounts & Audit", "Audit", "Taxation", "Accounts", "Admin", "Other Operations", "Sales", "Marketing"];
+const staffEmploymentStatusOptions = ["Active", "Inactive", "Resigned", "Terminated", "On Leave"];
+
+function normalizeStaffBloodGroup(value = "") {
+  const compact = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!compact || compact === "UNKNOWN" || compact === "NOTKNOWN" || compact === "NA" || compact === "N/A") return "Not Known";
+  return staffBloodGroupOptions.find((item) => item.toUpperCase() === compact) || String(value || "").trim();
+}
 
 function renderStaffDetailsForm() {
   if (!canManageStaffDetails()) return "";
@@ -8959,30 +9794,43 @@ function renderStaffDetailsForm() {
     </div>
     <form id="staffDetailsForm" class="staff-details-form">
       <input type="hidden" name="id" value="${v("id")}">
-      ${mode === "existing" ? `<div class="field staff-user-search"><label>Search Existing Users</label><input id="staffUserSearch" value="${escapeHtml(state.filters.staffUserSearch || "")}" placeholder="Search by name, email, user ID or role"></div><div class="field staff-user-picker"><label>Linked User</label><select name="linkedUserId" id="staffLinkedUser"><option value="">Select existing user</option>${selectableUsers.map((user) => `<option value="${escapeHtml(user.id)}" ${(selectedUser?.id || editing?.linkedUserId) === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.email)} - ${escapeHtml(user.role)}</option>`).join("")}</select></div>` : `<input type="hidden" name="linkedUserId" value="${v("linkedUserId")}">`}
-      ${staffFormField("staffName", "Staff Name", "text", v("staffName", selectedUser?.name || ""), true)}
-      ${staffFormField("staffCode", "Employee ID", "text", v("staffCode"))}
-      ${staffFormField("dateOfJoining", "DOJ", "date", v("dateOfJoining"), true)}
-      ${staffFormField("dateOfBirth", "DOB", "date", v("dateOfBirth"))}
-      ${staffFormField("email", "Email", "email", v("email", selectedUser?.email || ""))}
-      ${staffFormField("mobile", "Mobile", "tel", v("mobile"))}
-      ${staffSelectField("position", "Position", staffPositionOptions, raw("position", selectedUser?.role || ""), "Select Position", true)}
-      ${staffDepartmentField(raw("department"))}
-      <div class="field"><label>Reporting to</label><select name="reportingManagerId"><option value="">Select Manager</option>${state.users.filter((u) => ["Admin", "Manager", "Staff Manager"].includes(u.role)).map((u) => `<option value="${escapeHtml(u.id)}" ${editing?.reportingManagerId === u.id ? "selected" : ""}>${escapeHtml(u.name)}</option>`).join("")}</select></div>
-      ${staffFormField("branch", "Branch or Office", "text", v("branch"))}
-      ${staffSelectField("employmentType", "Employment Type", staffEmploymentTypeOptions, raw("employmentType"), "Select Employment Type")}
-      <div class="field"><label>Status</label><select name="employmentStatus">${["Active", "On Leave", "Resigned", "Terminated", "Inactive"].map((item) => `<option ${((editing?.employmentStatus || "Active") === item) ? "selected" : ""}>${item}</option>`).join("")}</select></div>
-      ${staffSelectField("gender", "Gender", staffGenderOptions, raw("gender"), "Select Gender")}
-      ${staffFormField("emergencyContactName", "Emergency Contact Name", "text", v("emergencyContactName"))}
-      ${staffFormField("emergencyContactNumber", "Emergency Contact Number", "tel", v("emergencyContactNumber"))}
-      ${staffFormField("profilePhotoUrl", "Profile Photo URL", "url", v("profilePhotoUrl"))}
-      <div class="field wide-field"><label>Qualifications</label><textarea name="qualifications" placeholder="Enter qualifications">${v("qualifications")}</textarea></div>
-      <div class="field wide-field"><label>Address</label><textarea name="address">${v("address")}</textarea></div>
-      <div class="field wide-field"><label>Remarks</label><textarea name="remarks">${v("remarks")}</textarea></div>
+      ${mode === "existing" ? `<section class="staff-form-section staff-link-section"><div class="staff-form-section-head"><h4>Application User Link</h4><p>Selecting a user links this staff record only; it does not change login credentials or permissions.</p></div><div class="staff-form-section-grid"><div class="field staff-user-search"><label>Search Existing Users</label><input id="staffUserSearch" value="${escapeHtml(state.filters.staffUserSearch || "")}" placeholder="Search by name, email, user ID or role"></div><div class="field staff-user-picker"><label>Linked User</label><select name="linkedUserId" id="staffLinkedUser"><option value="">Select existing user</option>${selectableUsers.map((user) => `<option value="${escapeHtml(user.id)}" ${(selectedUser?.id || editing?.linkedUserId) === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.email)} - ${escapeHtml(user.role)}</option>`).join("")}</select></div></div></section>` : `<input type="hidden" name="linkedUserId" value="${v("linkedUserId")}">`}
+      ${staffFormSection("Employment Information", "Core employment and organisation details.", `
+        ${staffFormField("staffName", "Staff Name", "text", v("staffName", selectedUser?.name || ""), true)}
+        ${staffFormField("staffCode", "Employee ID", "text", v("staffCode"), true)}
+        ${staffSelectField("position", "Position", staffPositionOptions, raw("position"), "Select Position", true)}
+        ${staffSelectField("department", "Department", staffDepartmentOptions, raw("department"), "Select Department", true)}
+        ${staffSelectField("employmentType", "Employment Type", staffEmploymentTypeOptions, raw("employmentType"), "Select Employment Type", true)}
+        ${staffFormField("dateOfJoining", "Date of Joining", "date", v("dateOfJoining"), true)}
+        ${staffSelectField("employmentStatus", "Employment Status", staffEmploymentStatusOptions, raw("employmentStatus", "Active"), "Select Status", true)}
+      `)}
+      ${staffFormSection("Personal Information", "Optional personal details used in the staff directory.", `
+        ${staffFormField("dateOfBirth", "Date of Birth", "date", v("dateOfBirth"))}
+        ${staffSelectField("gender", "Gender", staffGenderOptions, raw("gender"), "Select Gender")}
+        ${staffSelectField("bloodGroup", "Blood Group", staffBloodGroupOptions, raw("bloodGroup", "Not Known"), "Select Blood Group")}
+      `)}
+      ${staffFormSection("Contact Information", "Official contact and correspondence details.", `
+        ${staffFormField("mobile", "Mobile Number", "tel", v("mobile"))}
+        ${staffFormField("email", "Email ID", "email", v("email", selectedUser?.email || ""))}
+        <div class="field staff-field-full"><label>Address</label><textarea name="address">${v("address")}</textarea></div>
+      `)}
+      ${staffFormSection("Emergency Contact", "Person to contact in an emergency.", `
+        ${staffFormField("emergencyContactName", "Emergency Contact Person", "text", v("emergencyContactName"))}
+        ${staffFormField("emergencyContactNumber", "Emergency Contact Number", "tel", v("emergencyContactNumber"))}
+        ${staffFormField("emergencyContactRelationship", "Relationship", "text", v("emergencyContactRelationship"))}
+      `)}
+      ${staffFormSection("Additional Information", "Qualifications and internal notes.", `
+        <div class="field staff-field-full"><label>Qualification</label><textarea name="qualifications" placeholder="Enter qualification">${v("qualifications")}</textarea></div>
+        <div class="field staff-field-full"><label>Remarks</label><textarea name="remarks">${v("remarks")}</textarea></div>
+      `)}
       <div class="staff-form-errors" id="staffFormErrors"></div>
-      <div class="action-row staff-form-actions"><button class="primary-button" id="saveStaffDetails" type="submit">Save Staff</button><button class="secondary-button" id="cancelStaffDetails" type="button">Cancel</button></div>
+      <div class="action-row staff-form-actions"><button class="secondary-button" id="cancelStaffDetails" type="button">Cancel</button><button class="primary-button" id="saveStaffDetails" type="submit">${editing ? "Update Staff" : "Save Staff"}</button></div>
     </form>
   </section>`;
+}
+
+function staffFormSection(title, description, fields) {
+  return `<section class="staff-form-section"><div class="staff-form-section-head"><h4>${escapeHtml(title)}</h4><p>${escapeHtml(description)}</p></div><div class="staff-form-section-grid">${fields}</div></section>`;
 }
 
 function staffFormField(name, label, type, value, required = false) {
@@ -9012,18 +9860,6 @@ function staffValueAllowed(value, options, legacyValue = "") {
   return options.includes(cleanValue) || cleanValue === cleanLegacy;
 }
 
-function staffDepartmentField(currentValue = "") {
-  const cleanValue = String(currentValue || "").trim();
-  const isStandard = staffDepartmentOptions.some((item) => item.toLowerCase() === cleanValue.toLowerCase());
-  const selected = cleanValue && !isStandard ? "Other" : cleanValue;
-  const otherValue = cleanValue && !isStandard ? cleanValue : "";
-  return `<div class="field"><label>Department</label><select name="departmentChoice" id="staffDepartmentSelect">
-    <option value="">Select Department</option>
-    ${staffDepartmentOptions.map((item) => `<option value="${escapeHtml(item)}" ${selected === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
-  </select></div>
-  <div class="field staff-other-department ${selected === "Other" ? "" : "hidden"}" id="staffOtherDepartmentField"><label>Specify Department</label><input name="otherDepartment" type="text" value="${escapeHtml(otherValue)}" placeholder="Enter Department"></div>`;
-}
-
 function staffFilterInput(key, label, placeholder = "") {
   return `<div class="field"><label>${label}</label><input id="${key}" value="${escapeHtml(state.filters[key] || "")}" placeholder="${escapeHtml(placeholder)}"></div>`;
 }
@@ -9048,8 +9884,9 @@ function filteredStaffDetails() {
     if (search && !normalizeImportMatchText(`${row.staffName} ${row.staffCode} ${row.email} ${row.mobile} ${row.position} ${row.department}`).includes(search)) return false;
     if (state.filters.staffDepartment && row.department !== state.filters.staffDepartment) return false;
     if (state.filters.staffPosition && row.position !== state.filters.staffPosition) return false;
+    if (state.filters.staffEmploymentType && row.employmentType !== state.filters.staffEmploymentType) return false;
     if (state.filters.staffStatus && row.employmentStatus !== state.filters.staffStatus) return false;
-    if (state.filters.staffBranch && row.branch !== state.filters.staffBranch) return false;
+    if (state.filters.staffBloodGroup && row.bloodGroup !== state.filters.staffBloodGroup) return false;
     if (state.filters.staffBirthdayMonth && String(staffDateParts(row.dateOfBirth)?.month || "").padStart(2, "0") !== state.filters.staffBirthdayMonth) return false;
     if (state.filters.staffJoiningMonth && String(staffDateParts(row.dateOfJoining)?.month || "").padStart(2, "0") !== state.filters.staffJoiningMonth) return false;
     return true;
@@ -9067,19 +9904,18 @@ function filteredStaffDetails() {
 
 function renderStaffDetailsTable(rows) {
   if (!rows.length) return empty("No staff records found.");
-  const headers = ["SN", "Profile", "Staff Name", "Employee ID", "Position", "Department", "DOJ", "DOB", "Email", "Mobile", "Reporting to", "Status", "Actions"];
+  const headers = ["SN", "Staff Name", "Employee ID", "Position", "Department", "Employment Type", "Date of Joining", "Mobile Number", "Email ID", "Blood Group", "Status", "Actions"];
   return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
     <td>${index + 1}</td>
-    <td>${staffAvatar(row)}</td>
-    <td><strong>${escapeHtml(row.staffName)}</strong></td>
+    <td><div class="staff-name-cell">${staffAvatar(row)}<strong>${escapeHtml(row.staffName)}</strong></div></td>
     <td>${escapeHtml(row.staffCode || "")}</td>
     <td>${escapeHtml(row.position || "")}</td>
     <td>${escapeHtml(row.department || "")}</td>
+    <td>${escapeHtml(row.employmentType || "")}</td>
     <td>${displayDate(row.dateOfJoining)}</td>
-    <td>${canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)}</td>
-    <td>${escapeHtml(row.email || "")}</td>
     <td>${escapeHtml(row.mobile || "")}</td>
-    <td>${escapeHtml(staffManagerName(row.reportingManagerId))}</td>
+    <td>${escapeHtml(row.email || "")}</td>
+    <td>${escapeHtml(row.bloodGroup || "Not Known")}</td>
     <td><span class="staff-status status-${String(row.employmentStatus || "Active").toLowerCase().replaceAll(" ", "-")}">${escapeHtml(row.employmentStatus || "Active")}</span></td>
     <td class="action-col"><button class="mini-button" data-view-staff="${row.id}">View</button>${canManageStaffDetails() ? `<button class="mini-button" data-edit-staff="${row.id}">Edit</button><button class="mini-button" data-toggle-staff="${row.id}">${["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "Reactivate" : "Deactivate"}</button><button class="mini-button danger" data-delete-staff="${row.id}">Delete</button>` : ""}</td>
   </tr>`).join("")}</tbody></table></div>`;
@@ -9102,9 +9938,10 @@ function renderStaffProfile() {
   return `<div class="staff-profile">
     <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
     <div class="staff-profile-grid">
-      ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Branch", row.branch]])}
+      ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Status", row.employmentStatus]])}
+      ${staffProfileBlock("Personal Details", [["Date of Birth", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Gender", row.gender], ["Blood Group", row.bloodGroup || "Not Known"]])}
       ${staffProfileBlock("Qualifications", [["Qualifications", row.qualifications]])}
-      ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber].filter(Boolean).join(" - ")]])}
+      ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber, row.emergencyContactRelationship].filter(Boolean).join(" - ")]])}
       ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
       ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
     </div>
@@ -9142,7 +9979,7 @@ function bindStaffDetailsPage() {
       input.setSelectionRange(input.value.length, input.value.length);
     }
   });
-  ["staffSearch", "staffDepartment", "staffPosition", "staffStatus", "staffBranch", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"].forEach((id) => {
+  ["staffSearch", "staffDepartment", "staffPosition", "staffEmploymentType", "staffStatus", "staffBloodGroup", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"].forEach((id) => {
     document.querySelector(`#${id}`)?.addEventListener("input", (event) => {
       state.filters[id] = event.target.value;
       saveViewState();
@@ -9150,14 +9987,11 @@ function bindStaffDetailsPage() {
     });
   });
   document.querySelector("#clearStaffFilters")?.addEventListener("click", () => {
-    ["staffSearch", "staffDepartment", "staffPosition", "staffStatus", "staffBranch", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"].forEach((key) => state.filters[key] = "");
+    ["staffSearch", "staffDepartment", "staffPosition", "staffEmploymentType", "staffStatus", "staffBloodGroup", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"].forEach((key) => state.filters[key] = "");
     saveViewState();
     renderStaffDetailsPage();
   });
   document.querySelector("#staffDetailsForm")?.addEventListener("submit", saveStaffDetailsForm);
-  document.querySelector("#staffDepartmentSelect")?.addEventListener("change", (event) => {
-    document.querySelector("#staffOtherDepartmentField")?.classList.toggle("hidden", event.target.value !== "Other");
-  });
   document.querySelectorAll("[data-view-staff]").forEach((btn) => btn.addEventListener("click", () => {
     state.filters.staffProfileId = btn.dataset.viewStaff;
     saveViewState();
@@ -9173,6 +10007,9 @@ function bindStaffDetailsPage() {
   document.querySelector("#staffDetailsExcel")?.addEventListener("click", exportStaffDetailsExcel);
   document.querySelector("#staffDetailsPdf")?.addEventListener("click", exportStaffDetailsPdf);
   document.querySelector("#staffDetailsPrint")?.addEventListener("click", printStaffDetailsReport);
+  document.querySelector("#staffDownloadSample")?.addEventListener("click", downloadStaffDetailsSample);
+  document.querySelector("#staffImportExcel")?.addEventListener("click", () => document.querySelector("#staffImportInput")?.click());
+  document.querySelector("#staffImportInput")?.addEventListener("change", prepareStaffDetailsImport);
 }
 
 function closeStaffForm() {
@@ -9200,21 +10037,29 @@ function saveStaffDetailsForm(event) {
   const doj = normalizeImportDate(data.get("dateOfJoining"));
   const dob = normalizeImportDate(data.get("dateOfBirth"));
   const position = String(data.get("position") || "").trim();
-  const departmentChoice = String(data.get("departmentChoice") || "").trim();
-  const otherDepartment = String(data.get("otherDepartment") || "").trim();
-  const department = departmentChoice === "Other" ? (otherDepartment || "Other") : departmentChoice;
+  const department = String(data.get("department") || "").trim();
   const employmentType = String(data.get("employmentType") || "").trim();
+  const employmentStatus = String(data.get("employmentStatus") || "").trim();
   const gender = String(data.get("gender") || "").trim();
+  const bloodGroup = normalizeStaffBloodGroup(data.get("bloodGroup") || "Not Known");
+  const mobile = String(data.get("mobile") || "").trim();
+  const mobileDigits = mobile.replace(/\D/g, "");
   const old = state.staffDetails.find((row) => row.id === editingId) || {};
   if (!name) errors.push("Staff Name is required.");
   if (!doj) errors.push("DOJ is required.");
   if (!position) errors.push("Position is required.");
+  if (!department) errors.push("Department is required.");
+  if (!employmentType) errors.push("Employment Type is required.");
+  if (!employmentStatus) errors.push("Employment Status is required.");
+  if (!staffCode) errors.push("Employee ID is required.");
   if (!staffValueAllowed(position, staffPositionOptions, old.position)) errors.push("Select a valid Position.");
   if (!staffValueAllowed(employmentType, staffEmploymentTypeOptions, old.employmentType)) errors.push("Select a valid Employment Type.");
   if (!staffValueAllowed(gender, staffGenderOptions, old.gender)) errors.push("Select a valid Gender.");
-  if (departmentChoice && !staffDepartmentOptions.includes(departmentChoice)) errors.push("Select a valid Department.");
+  if (!staffBloodGroupOptions.includes(bloodGroup)) errors.push("Select a valid Blood Group.");
+  if (!staffValueAllowed(department, staffDepartmentOptions, old.department)) errors.push("Select a valid Department.");
+  if (!staffValueAllowed(employmentStatus, staffEmploymentStatusOptions, old.employmentStatus)) errors.push("Select a valid Employment Status.");
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Please enter a valid Email.");
-  if (data.get("mobile") && !/^[0-9+\-\s()]{6,20}$/.test(String(data.get("mobile")))) errors.push("Please enter a valid Mobile number.");
+  if (mobile && !/^[0-9+\-\s()]{6,20}$/.test(mobile)) errors.push("Please enter a valid Mobile number.");
   if (dob && dob > indiaTodayDate()) errors.push("DOB cannot be a future date.");
   if (doj && doj > indiaTodayDate()) errors.push("DOJ cannot be a future date.");
   if (email && state.staffDetails.some((row) => row.id !== editingId && normalizeEmail(row.email) === email && !["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus))) errors.push("Email is already used by another active staff record.");
@@ -9222,6 +10067,15 @@ function saveStaffDetailsForm(event) {
   if (staffCode && state.staffDetails.some((row) => row.id !== editingId && String(row.staffCode || "").toLowerCase() === staffCode.toLowerCase())) errors.push("Employee ID must be unique.");
   if (errors.length) {
     document.querySelector("#staffFormErrors").innerHTML = errors.map((error) => `<p>${escapeHtml(error)}</p>`).join("");
+    if (button) button.disabled = false;
+    return;
+  }
+  const duplicateWarnings = [];
+  const mobileMatch = mobileDigits && state.staffDetails.find((row) => row.id !== editingId && String(row.mobile || "").replace(/\D/g, "") === mobileDigits);
+  if (mobileMatch) duplicateWarnings.push(`Mobile Number is also used by ${mobileMatch.staffName} (${mobileMatch.staffCode || "Employee ID unavailable"}).`);
+  const personMatch = dob && state.staffDetails.find((row) => row.id !== editingId && normalizeImportMatchText(row.staffName) === normalizeImportMatchText(name) && normalizeImportDate(row.dateOfBirth) === dob);
+  if (personMatch) duplicateWarnings.push(`Staff Name and Date of Birth match ${personMatch.staffName} (${personMatch.staffCode || "Employee ID unavailable"}).`);
+  if (duplicateWarnings.length && !confirm(`${duplicateWarnings.join("\n")}\n\nSave this staff record anyway?`)) {
     if (button) button.disabled = false;
     return;
   }
@@ -9234,19 +10088,18 @@ function saveStaffDetailsForm(event) {
     dateOfJoining: doj,
     dateOfBirth: dob,
     email,
-    mobile: String(data.get("mobile") || "").trim(),
+    mobile,
     position,
     department,
-    reportingManagerId: data.get("reportingManagerId") || "",
-    branch: String(data.get("branch") || "").trim(),
     employmentType,
-    employmentStatus: data.get("employmentStatus") || "Active",
+    employmentStatus,
     gender,
+    bloodGroup,
     qualifications: String(data.get("qualifications") || "").trim(),
     address: String(data.get("address") || "").trim(),
     emergencyContactName: String(data.get("emergencyContactName") || "").trim(),
     emergencyContactNumber: String(data.get("emergencyContactNumber") || "").trim(),
-    profilePhotoUrl: String(data.get("profilePhotoUrl") || "").trim(),
+    emergencyContactRelationship: String(data.get("emergencyContactRelationship") || "").trim(),
     remarks: String(data.get("remarks") || "").trim(),
     createdByUserId: old.createdByUserId || state.session?.userId || "",
     createdByUserName: old.createdByUserName || state.currentUser || "",
@@ -9258,7 +10111,25 @@ function saveStaffDetailsForm(event) {
   state.staffDetails = editingId
     ? state.staffDetails.map((row) => row.id === editingId ? record : row)
     : [record, ...(state.staffDetails || [])];
-  addAuditLog(editingId ? "Staff details updated" : "Staff details added", { staffId: record.id, staffName: record.staffName });
+  const changedFields = Object.keys(record).filter((key) => !["updatedAt", "updatedByUserName"].includes(key) && String(old[key] ?? "") !== String(record[key] ?? ""));
+  addAuditLog(editingId ? "Staff details updated" : "Staff details added", {
+    staffId: record.id,
+    employeeId: record.staffCode,
+    staffName: record.staffName,
+    changedFields,
+    bloodGroupBefore: old.bloodGroup || "",
+    bloodGroupAfter: record.bloodGroup || "Not Known",
+    statusBefore: old.employmentStatus || "",
+    statusAfter: record.employmentStatus,
+  });
+  if (duplicateWarnings.length) {
+    addAuditLog("Staff duplicate warning overridden", {
+      staffId: record.id,
+      employeeId: record.staffCode,
+      staffName: record.staffName,
+      warnings: duplicateWarnings,
+    });
+  }
   state.filters.staffProfileId = record.id;
   state.filters.staffFormOpen = "";
   state.filters.staffEditingId = "";
@@ -9269,14 +10140,23 @@ function saveStaffDetailsForm(event) {
 
 function toggleStaffStatus(id) {
   if (!canManageStaffDetails()) return toast("Only Admin can update staff status.");
+  const current = (state.staffDetails || []).find((row) => row.id === id);
+  if (!current) return toast("Staff record not found.");
+  const nextStatus = ["Inactive", "Resigned", "Terminated"].includes(current.employmentStatus) ? "Active" : "Inactive";
   state.staffDetails = state.staffDetails.map((row) => row.id === id ? {
     ...row,
-    employmentStatus: ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "Active" : "Inactive",
-    deactivatedAt: ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "" : new Date().toISOString(),
+    employmentStatus: nextStatus,
+    deactivatedAt: nextStatus === "Active" ? "" : new Date().toISOString(),
     updatedByUserName: state.currentUser || "",
     updatedAt: Date.now(),
   } : row);
-  addAuditLog("Staff status updated", { staffId: id });
+  addAuditLog("Staff status updated", {
+    staffId: id,
+    employeeId: current.staffCode,
+    staffName: current.staffName,
+    statusBefore: current.employmentStatus,
+    statusAfter: nextStatus,
+  });
   saveState({ fullRemote: true });
   renderStaffDetailsPage();
 }
@@ -9291,23 +10171,337 @@ function deleteStaffDetail(id) {
 }
 
 function staffDetailsReportRows(rows = filteredStaffDetails()) {
-  return rows.map((row, index) => ({
-    SN: index + 1,
+  return rows.map((row) => ({
     "Staff Name": row.staffName,
     "Employee ID": row.staffCode,
-    DOJ: displayDate(row.dateOfJoining),
-    DOB: canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth),
     Position: row.position,
     Department: row.department,
-    Email: row.email,
-    Mobile: row.mobile,
-    "Reporting to": staffManagerName(row.reportingManagerId),
-    Qualifications: row.qualifications,
-    Status: row.employmentStatus,
+    "Employment Type": row.employmentType,
+    "Date of Joining": staffExcelDate(row.dateOfJoining),
+    "Employment Status": row.employmentStatus,
+    "Date of Birth": staffExcelDate(row.dateOfBirth),
+    Gender: row.gender,
+    "Blood Group": row.bloodGroup || "Not Known",
+    "Mobile Number": row.mobile,
+    "Email ID": row.email,
+    Address: row.address,
+    "Emergency Contact Person": row.emergencyContactName,
+    "Emergency Contact Number": row.emergencyContactNumber,
+    Relationship: row.emergencyContactRelationship,
+    Qualification: row.qualifications,
+    Remarks: row.remarks,
   }));
 }
 
-function exportStaffDetailsExcel() { exportExcel("staff-details-register", staffDetailsReportRows()); }
+const staffWorkbookColumns = [
+  "Staff Name", "Employee ID", "Position", "Department", "Employment Type",
+  "Date of Joining", "Employment Status", "Date of Birth", "Gender", "Blood Group",
+  "Mobile Number", "Email ID", "Address", "Emergency Contact Person",
+  "Emergency Contact Number", "Relationship", "Qualification", "Remarks",
+];
+
+let staffImportSession = null;
+
+function staffExcelDate(value) {
+  const normalized = normalizeImportDate(value);
+  if (!normalized) return "";
+  const [year, month, day] = normalized.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0);
+}
+
+function styleStaffWorksheet(sheet, rowCount = 0) {
+  const XLSX = window.XLSX;
+  sheet["!cols"] = [
+    { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 21 }, { wch: 18 }, { wch: 15 },
+    { wch: 17 }, { wch: 15 }, { wch: 18 }, { wch: 13 }, { wch: 16 }, { wch: 27 },
+    { wch: 30 }, { wch: 24 }, { wch: 24 }, { wch: 18 }, { wch: 24 }, { wch: 30 },
+  ];
+  sheet["!autofilter"] = { ref: `A1:R${Math.max(1, rowCount + 1)}` };
+  sheet["!freeze"] = { xSplit: 0, ySplit: 1, topLeftCell: "A2", activePane: "bottomLeft", state: "frozen" };
+  for (let row = 2; row <= rowCount + 1; row += 1) {
+    ["F", "H"].forEach((column) => {
+      const cell = sheet[`${column}${row}`];
+      if (cell?.v instanceof Date || cell?.t === "d") cell.z = "dd-mm-yyyy";
+    });
+    ["K", "O"].forEach((column) => {
+      const cell = sheet[`${column}${row}`];
+      if (cell) {
+        cell.t = "s";
+        cell.v = String(cell.v ?? "");
+      }
+    });
+  }
+  staffWorkbookColumns.forEach((_, index) => {
+    const address = XLSX.utils.encode_cell({ r: 0, c: index });
+    if (sheet[address]) sheet[address].s = { font: { bold: true }, fill: { fgColor: { rgb: "DCEBFF" } } };
+  });
+}
+
+async function exportStaffDetailsWorkbook(name, rows, sheetName = "Staff Details") {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  try {
+    await loadSheetJs();
+    const XLSX = window.XLSX;
+    const sheet = XLSX.utils.json_to_sheet(rows, { header: staffWorkbookColumns, cellDates: true });
+    styleStaffWorksheet(sheet, rows.length);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+    XLSX.writeFile(workbook, `${name}-${todayDate()}.xlsx`, { cellDates: true });
+    toast("Excel file downloaded");
+  } catch (error) {
+    console.error(error);
+    toast("Unable to generate the staff Excel file.");
+  }
+}
+
+async function downloadStaffDetailsSample() {
+  try {
+    await loadSheetJs();
+    const XLSX = window.XLSX;
+    const sheet = XLSX.utils.aoa_to_sheet([staffWorkbookColumns, Array(staffWorkbookColumns.length).fill("")], { cellDates: true });
+    styleStaffWorksheet(sheet, 1);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "Staff Details");
+    XLSX.writeFile(workbook, "staff-details-import-sample.xlsx", { cellDates: true });
+    toast("Staff import sample downloaded");
+  } catch (error) {
+    console.error(error);
+    toast("Unable to generate the staff import sample.");
+  }
+}
+
+function staffImportHeaderKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function staffImportCell(row, heading) {
+  const wanted = staffImportHeaderKey(heading);
+  const key = Object.keys(row || {}).find((candidate) => staffImportHeaderKey(candidate) === wanted);
+  return key ? row[key] : "";
+}
+
+function canonicalStaffOption(value, options, aliases = {}) {
+  const clean = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!clean) return "";
+  const alias = aliases[clean.toLowerCase()];
+  const candidate = alias || clean;
+  return options.find((option) => option.toLowerCase() === candidate.toLowerCase()) || "";
+}
+
+function staffImportDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return dateInput(value);
+  return normalizeImportDate(value);
+}
+
+function staffImportText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function evaluateStaffImport(mode = staffImportSession?.mode || "skip") {
+  if (!staffImportSession) return { rows: [], create: [], update: [], skipped: [], invalid: [] };
+  const existingByCode = new Map((state.staffDetails || []).map((row) => [String(row.staffCode || "").trim().toLowerCase(), row]));
+  const existingByEmail = new Map((state.staffDetails || []).filter((row) => row.email).map((row) => [normalizeEmail(row.email), row]));
+  const existingByMobile = new Map((state.staffDetails || []).filter((row) => row.mobile).map((row) => [String(row.mobile).replace(/\D/g, ""), row]));
+  const seenCodes = new Set();
+  const result = { rows: [], create: [], update: [], skipped: [], invalid: [] };
+  staffImportSession.sourceRows.forEach((raw, index) => {
+    const rowNumber = index + 2;
+    const staffName = staffImportText(staffImportCell(raw, "Staff Name"));
+    const staffCode = staffImportText(staffImportCell(raw, "Employee ID"));
+    const codeKey = staffCode.toLowerCase();
+    const existing = existingByCode.get(codeKey);
+    const errors = [];
+    const warnings = [];
+    if (!staffCode) errors.push("Employee ID is required");
+    if (codeKey && seenCodes.has(codeKey)) errors.push("Duplicate Employee ID in workbook");
+    if (codeKey) seenCodes.add(codeKey);
+
+    const positionRaw = staffImportText(staffImportCell(raw, "Position"));
+    const departmentRaw = staffImportText(staffImportCell(raw, "Department"));
+    const employmentTypeRaw = staffImportText(staffImportCell(raw, "Employment Type"));
+    const statusRaw = staffImportText(staffImportCell(raw, "Employment Status"));
+    const genderRaw = staffImportText(staffImportCell(raw, "Gender"));
+    const bloodRaw = staffImportText(staffImportCell(raw, "Blood Group"));
+    const position = canonicalStaffOption(positionRaw, staffPositionOptions);
+    const department = canonicalStaffOption(departmentRaw, staffDepartmentOptions);
+    const employmentType = canonicalStaffOption(employmentTypeRaw, staffEmploymentTypeOptions);
+    const employmentStatus = canonicalStaffOption(statusRaw, staffEmploymentStatusOptions);
+    const gender = canonicalStaffOption(genderRaw, staffGenderOptions);
+    const bloodGroup = bloodRaw
+      ? canonicalStaffOption(bloodRaw, staffBloodGroupOptions)
+      : (existing ? "" : "Not Known");
+    const dateOfJoining = staffImportDate(staffImportCell(raw, "Date of Joining"));
+    const dateOfBirth = staffImportDate(staffImportCell(raw, "Date of Birth"));
+    const email = normalizeEmail(staffImportCell(raw, "Email ID"));
+    const mobile = staffImportText(staffImportCell(raw, "Mobile Number"));
+    const mobileDigits = mobile.replace(/\D/g, "");
+
+    if (!existing && !staffName) errors.push("Staff Name is required");
+    if (!existing && !positionRaw) errors.push("Position is required");
+    if (positionRaw && !position) errors.push(`Invalid Position: ${positionRaw}`);
+    if (!existing && !departmentRaw) errors.push("Department is required");
+    if (departmentRaw && !department) errors.push(`Invalid Department: ${departmentRaw}`);
+    if (!existing && !employmentTypeRaw) errors.push("Employment Type is required");
+    if (employmentTypeRaw && !employmentType) errors.push(`Invalid Employment Type: ${employmentTypeRaw}`);
+    if (!existing && !dateOfJoining) errors.push("Valid Date of Joining is required");
+    if (!existing && !statusRaw) errors.push("Employment Status is required");
+    if (statusRaw && !employmentStatus) errors.push(`Invalid Employment Status: ${statusRaw}`);
+    if (genderRaw && !gender) errors.push(`Invalid Gender: ${genderRaw}`);
+    if (bloodRaw && !canonicalStaffOption(bloodRaw, staffBloodGroupOptions)) errors.push(`Invalid Blood Group: ${bloodRaw}`);
+    if (staffImportCell(raw, "Date of Birth") && !dateOfBirth) errors.push("Invalid Date of Birth");
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) errors.push("Invalid Email ID");
+    if (mobile && (mobileDigits.length < 6 || mobileDigits.length > 15)) errors.push("Mobile Number must contain 6 to 15 digits");
+    const emailOwner = email ? existingByEmail.get(email) : null;
+    if (emailOwner && emailOwner.id !== existing?.id) errors.push("Email ID belongs to another employee");
+    const mobileOwner = mobileDigits ? existingByMobile.get(mobileDigits) : null;
+    if (mobileOwner && mobileOwner.id !== existing?.id) warnings.push(`Mobile Number also belongs to Employee ID ${mobileOwner.staffCode || "unknown"}`);
+    if (staffName && dateOfBirth) {
+      const matchingPerson = (state.staffDetails || []).find((row) => row.id !== existing?.id && normalizeImportMatchText(row.staffName) === normalizeImportMatchText(staffName) && normalizeImportDate(row.dateOfBirth) === dateOfBirth);
+      if (matchingPerson) warnings.push(`Staff Name and Date of Birth match Employee ID ${matchingPerson.staffCode || "unknown"}`);
+    }
+
+    const values = {
+      staffName, staffCode, position, department, employmentType, dateOfJoining, employmentStatus,
+      dateOfBirth, gender, bloodGroup,
+      mobile,
+      email,
+      address: staffImportText(staffImportCell(raw, "Address")),
+      emergencyContactName: staffImportText(staffImportCell(raw, "Emergency Contact Person")),
+      emergencyContactNumber: staffImportText(staffImportCell(raw, "Emergency Contact Number")),
+      emergencyContactRelationship: staffImportText(staffImportCell(raw, "Relationship")),
+      qualifications: staffImportText(staffImportCell(raw, "Qualification")),
+      remarks: staffImportText(staffImportCell(raw, "Remarks")),
+    };
+    let action = existing ? (mode === "update" ? "update" : "skip") : "create";
+    if (errors.length) action = "invalid";
+    if (existing && mode !== "update") warnings.push("Existing Employee ID skipped");
+    const evaluated = { rowNumber, raw, values, existing, action, errors, warnings };
+    result.rows.push(evaluated);
+    if (action === "create") result.create.push(evaluated);
+    else if (action === "update") result.update.push(evaluated);
+    else if (action === "skip") result.skipped.push(evaluated);
+    else result.invalid.push(evaluated);
+  });
+  return result;
+}
+
+function closeStaffImportModal() {
+  document.querySelector("#staffImportModal")?.remove();
+  staffImportSession = null;
+}
+
+function renderStaffImportModal() {
+  document.querySelector("#staffImportModal")?.remove();
+  if (!staffImportSession) return;
+  const evaluated = evaluateStaffImport(staffImportSession.mode);
+  const modal = document.createElement("div");
+  modal.id = "staffImportModal";
+  modal.className = "staff-import-backdrop";
+  modal.innerHTML = `<section class="staff-import-modal" role="dialog" aria-modal="true" aria-labelledby="staffImportTitle">
+    <header><div><p class="eyebrow">STAFF DETAILS</p><h3 id="staffImportTitle">Review Excel Import</h3><p>${escapeHtml(staffImportSession.fileName)}</p></div><button type="button" class="icon-button" id="closeStaffImport" aria-label="Close">×</button></header>
+    <div class="staff-import-mode field"><label for="staffImportMode">Import mode</label><select id="staffImportMode"><option value="skip" ${staffImportSession.mode === "skip" ? "selected" : ""}>Skip existing employees (default)</option><option value="update" ${staffImportSession.mode === "update" ? "selected" : ""}>Update existing employees</option><option value="new" ${staffImportSession.mode === "new" ? "selected" : ""}>Import only new employees</option></select><small>Existing employees are matched only by Employee ID. Blank cells never erase saved values during update.</small></div>
+    <div class="staff-import-summary"><span><strong>${evaluated.rows.length}</strong> Total</span><span><strong>${evaluated.create.length}</strong> New</span><span><strong>${evaluated.update.length}</strong> Updates</span><span><strong>${evaluated.skipped.length}</strong> Duplicates / Skipped</span><span class="invalid"><strong>${evaluated.invalid.length}</strong> Failed</span></div>
+    <div class="table-wrap staff-import-preview"><table class="file-table"><thead><tr><th>Row</th><th>Employee ID</th><th>Staff Name</th><th>Action</th><th>Details</th></tr></thead><tbody>${evaluated.rows.slice(0, 200).map((item) => `<tr><td>${item.rowNumber}</td><td>${escapeHtml(item.values.staffCode)}</td><td>${escapeHtml(item.values.staffName || item.existing?.staffName || "")}</td><td><span class="staff-import-action action-${item.action}">${item.action}</span></td><td>${escapeHtml([...item.errors, ...item.warnings].join("; ") || "Ready")}</td></tr>`).join("")}</tbody></table></div>
+    ${evaluated.rows.length > 200 ? `<p class="small-muted">Showing the first 200 of ${evaluated.rows.length} rows.</p>` : ""}
+    <footer><button type="button" class="secondary-button" id="cancelStaffImport">Cancel</button><button type="button" class="primary-button" id="commitStaffImport" ${evaluated.create.length + evaluated.update.length ? "" : "disabled"}>Import ${evaluated.create.length + evaluated.update.length} Record(s)</button></footer>
+  </section>`;
+  document.body.appendChild(modal);
+  document.querySelector("#closeStaffImport").onclick = closeStaffImportModal;
+  document.querySelector("#cancelStaffImport").onclick = closeStaffImportModal;
+  document.querySelector("#staffImportMode").onchange = (event) => {
+    staffImportSession.mode = event.target.value;
+    renderStaffImportModal();
+  };
+  document.querySelector("#commitStaffImport").onclick = commitStaffDetailsImport;
+}
+
+async function prepareStaffDetailsImport(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  if (!/\.xlsx$/i.test(file.name)) return toast("Please select a valid .xlsx workbook.");
+  try {
+    await loadSheetJs();
+    const data = await file.arrayBuffer();
+    const workbook = window.XLSX.read(data, { type: "array", cellDates: true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet) throw new Error("The workbook does not contain a worksheet.");
+    const rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false, dateNF: "yyyy-mm-dd" });
+    if (!rows.length) throw new Error("The worksheet contains no staff rows.");
+    const headers = Object.keys(rows[0]).map(staffImportHeaderKey);
+    const missing = staffWorkbookColumns.filter((heading) => !headers.includes(staffImportHeaderKey(heading)));
+    if (missing.length) throw new Error(`Missing column(s): ${missing.join(", ")}`);
+    staffImportSession = { sourceRows: rows, fileName: file.name, mode: "skip" };
+    renderStaffImportModal();
+  } catch (error) {
+    console.error(error);
+    toast(`Staff import failed: ${error.message || "Invalid workbook"}`);
+  }
+}
+
+function nonBlankStaffImportValues(values) {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== "" && value !== null && value !== undefined));
+}
+
+async function commitStaffDetailsImport() {
+  const evaluated = evaluateStaffImport(staffImportSession?.mode);
+  const button = document.querySelector("#commitStaffImport");
+  if (!evaluated.create.length && !evaluated.update.length) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Importing...";
+  }
+  const now = Date.now();
+  const updatedIds = new Set(evaluated.update.map((item) => item.existing.id));
+  const updatedRows = (state.staffDetails || []).map((row) => {
+    const item = evaluated.update.find((candidate) => candidate.existing.id === row.id);
+    if (!item) return row;
+    const changes = nonBlankStaffImportValues(item.values);
+    return { ...row, ...changes, staffName: changes.staffName ? properCaseName(changes.staffName) : row.staffName, updatedByUserName: state.currentUser || "", updatedAt: now };
+  });
+  const createdRows = evaluated.create.map((item) => ({
+    id: `staff-${crypto.randomUUID()}`,
+    linkedUserId: "",
+    ...item.values,
+    staffName: properCaseName(item.values.staffName),
+    createdByUserId: state.session?.userId || "",
+    createdByUserName: state.currentUser || "",
+    createdAt: now,
+    updatedByUserName: state.currentUser || "",
+    updatedAt: now,
+    deactivatedAt: "",
+  }));
+  state.staffDetails = normalizeStaffDetails([...createdRows, ...updatedRows], state.users || []);
+  evaluated.create.forEach((item) => addAuditLog("Staff details imported", {
+    staffCode: item.values.staffCode,
+    staffName: item.values.staffName,
+    warnings: item.warnings || [],
+    source: staffImportSession.fileName,
+  }));
+  evaluated.update.forEach((item) => {
+    const changes = nonBlankStaffImportValues(item.values);
+    const changedFields = Object.keys(changes).filter((key) => String(item.existing[key] ?? "") !== String(changes[key] ?? ""));
+    addAuditLog("Staff details updated by import", {
+      staffId: item.existing.id,
+      employeeId: item.values.staffCode,
+      changedFields,
+      bloodGroupBefore: item.existing.bloodGroup || "",
+      bloodGroupAfter: changes.bloodGroup || item.existing.bloodGroup || "Not Known",
+      statusBefore: item.existing.employmentStatus || "",
+      statusAfter: changes.employmentStatus || item.existing.employmentStatus || "",
+      warnings: item.warnings || [],
+      source: staffImportSession.fileName,
+    });
+  });
+  addAuditLog("Staff Excel import completed", { created: createdRows.length, updated: updatedIds.size, skipped: evaluated.skipped.length, invalid: evaluated.invalid.length, source: staffImportSession.fileName });
+  saveState({ fullRemote: true });
+  closeStaffImportModal();
+  renderStaffDetailsPage();
+  toast(`Import completed: ${evaluated.rows.length} total, ${createdRows.length} added, ${updatedIds.size} updated, ${evaluated.skipped.length} skipped, ${evaluated.invalid.length} failed.`);
+}
+
+function exportStaffDetailsExcel() { exportStaffDetailsWorkbook("staff-details-register", staffDetailsReportRows(), "Staff Details"); }
 async function exportStaffDetailsPdf() { await downloadPdfRows("staff-details-register", staffDetailsReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Staff Details Register"]); }
 function printStaffDetailsReport() {
   printStructuredReport({ title: "Staff Details Register", sections: [{ title: "Staff Details", rows: staffDetailsReportRows() }], format: "print" });
@@ -9370,7 +10564,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="newUserRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
-        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Credential Access</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label></div>` : ""}
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Master Access</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="newUserManageClientMasters" type="checkbox"> Manage client types and masters</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="createUser" ${canManage && rolePerm().roles ? "" : "disabled"}>Create User</button>
@@ -9397,7 +10591,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="accessRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
-        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Credential Access</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label></div>` : ""}
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Master Access</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="accessManageClientMasters" type="checkbox"> Manage client types and masters</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="updateAccess" ${canManage && rolePerm().roles ? "" : "disabled"}>Update User</button>
@@ -9429,6 +10623,7 @@ function renderUsersPage() {
     const permissions = Array.isArray(selected?.permissions) ? selected.permissions : [];
     if (document.querySelector("#accessViewCredentials")) document.querySelector("#accessViewCredentials").checked = permissions.includes("view_client_credentials");
     if (document.querySelector("#accessEditCredentials")) document.querySelector("#accessEditCredentials").checked = permissions.includes("edit_client_credentials");
+    if (document.querySelector("#accessManageClientMasters")) document.querySelector("#accessManageClientMasters").checked = permissions.includes("manage_client_masters");
   };
   setAccessForm();
   accessUser.onchange = setAccessForm;
@@ -9440,6 +10635,7 @@ function renderUsersPage() {
     const permissions = [
       document.querySelector("#newUserViewCredentials")?.checked ? "view_client_credentials" : "",
       document.querySelector("#newUserEditCredentials")?.checked ? "edit_client_credentials" : "",
+      document.querySelector("#newUserManageClientMasters")?.checked ? "manage_client_masters" : "",
     ].filter(Boolean);
     if (!name || !email || !password) return toast("Please enter name, email and password.");
     if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
@@ -9473,6 +10669,7 @@ function renderUsersPage() {
     const permissions = [
       document.querySelector("#accessViewCredentials")?.checked ? "view_client_credentials" : "",
       document.querySelector("#accessEditCredentials")?.checked ? "edit_client_credentials" : "",
+      document.querySelector("#accessManageClientMasters")?.checked ? "manage_client_masters" : "",
     ].filter(Boolean);
     if (!email) return toast("Please enter email ID.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Please enter a valid email ID.");
@@ -10210,6 +11407,7 @@ async function downloadXlsxSheets(name, sheets) {
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const headers = Object.keys(rows[0] || {});
     worksheet["!cols"] = headers.map((header) => ({ wch: Math.max(6, Math.min(36, header.length + 8)) }));
+    if (typeof sheet.prepare === "function") sheet.prepare(worksheet, rows, XLSX);
     XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name.slice(0, 31));
   });
   XLSX.writeFile(workbook, `${name}.xlsx`);
@@ -12765,8 +13963,7 @@ function renderExpensesPage() {
     return;
   }
   const tab = state.filters.expenseTab || "collections";
-  const balance = cashBalanceForRange();
-  const totalCashCollections = balance.feeCollections + balance.otherCollections;
+  const balances = financeBalancesForRange();
   root.innerHTML = `
     <div class="expense-shell">
       <div class="transactions-page-head">
@@ -12776,17 +13973,19 @@ function renderExpensesPage() {
         </div>
       </div>
       <div class="expense-overview-grid">
-        ${expenseOverviewCard("Current Cash Balance", balance.closing, "balance", "Live cash position", "wallet")}
-        ${expenseOverviewCard("Total Cash Collections", totalCashCollections, "collection", "Cash receipts only", "arrow-down")}
-        ${expenseOverviewCard("Total Cash Expenses", balance.cashExpenses, "expense", "Cash payments only", "arrow-up")}
-        ${expenseOverviewCard("Fee Collections", balance.feeCollections, "fee", "Cash fee receipts", "receipt")}
+        ${expenseOverviewCard("Cash in Hand", balances.cash.closing, "balance", "Reconciled cash account", "wallet")}
+        ${expenseOverviewCard("Federal Bank", balances.federal_bank.closing, "collection", "Federal Bank balance", "arrow-down")}
+        ${expenseOverviewCard("TMB", balances.tmb.closing, "fee", "TMB balance", "receipt")}
+        ${Number(balances.unclassified_bank?.closing || 0) !== 0 ? expenseOverviewCard("Unclassified Bank", balances.unclassified_bank.closing, "expense", "Legacy Bank entries awaiting classification", "wallet") : ""}
+        ${expenseOverviewCard("Combined Balance", balances.combined.closing, "expense", "All accounts", "wallet")}
       </div>
       <div class="expense-tabs">
         ${expenseTabButton("collections", "Collections", tab, "arrow-down")}
         ${expenseTabButton("expenses", "Expenses", tab, "arrow-up")}
+        ${expenseTabButton("transfers", "Account Transfers", tab, "wallet")}
         ${expenseTabButton("balance", "Cash Reconciliation", tab, "wallet")}
       </div>
-      ${tab === "collections" ? renderCashCollectionsTab() : tab === "balance" ? renderCashBalanceTab() : renderExpenseEntryTab()}
+      ${tab === "collections" ? renderCashCollectionsTab() : tab === "balance" ? renderCashBalanceTab() : tab === "transfers" ? renderAccountTransfersTab() : renderExpenseEntryTab()}
     </div>
   `;
   bindExpensePage();
@@ -12886,7 +14085,8 @@ function renderExpenseEntryTab() {
           ${expenseItemField(editingExpense()?.particulars || "")}
           ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "", "text", "", "wide-field")}
           ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01", "compact-field amount-field")}
-          ${expenseSelect("expenseMode", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingExpense()?.mode || "Cash")}
+          ${expenseSelect("expenseMode", "Payment Method", paymentModes(), editingExpense()?.paymentMethod || editingExpense()?.payment_method || editingExpense()?.mode || "Cash")}
+          ${financeAccountSelect("expenseAccount", "Account", transactionAccountKey(editingExpense() || {}, "cash"))}
           ${expenseInput("expenseVoucherNo", "Voucher No.", editingExpense()?.voucherNo || "", "text", "", "compact-field ref-field")}
           ${expenseInput("expenseEnteredBy", "Entered By", editingExpense()?.createdBy || editingExpense()?.enteredBy || state.currentUser || "", "text")}
           ${expenseTextarea("expenseRemarks", "Remarks", editingExpense()?.remarks || "")}
@@ -12916,15 +14116,16 @@ function renderOpeningBalancePanel() {
     <div class="expense-tools-card opening-balance-card admin-opening-balance">
       <div class="expense-card-head">
         <span>Admin Only</span>
-        <h3>Set Opening Cash Balance</h3>
-        <p>Enter the opening cash position from which reconciliation should begin</p>
+        <h3>Set Opening Account Balance</h3>
+        <p>Enter a separate opening balance for Cash in Hand, Federal Bank or TMB</p>
       </div>
       <form id="openingBalanceForm" class="opening-balance-form">
-        ${expenseInput("openingDate", "Opening Balance Date", todayDate(), "date", "", "compact-field")}
+        ${expenseInput("openingDate", "Opening Balance As On", todayDate(), "date", "", "compact-field")}
+        ${financeAccountSelect("openingAccount", "Account", "cash")}
         ${expenseInput("openingAmount", "Opening Balance Amount", "", "number", "0.01", "compact-field amount-field")}
         <div class="field opening-balance-actions"><label>Action</label><button class="primary-button" type="submit">Save Opening Balance</button><button class="secondary-button" id="resetOpeningBalanceForm" type="button">Reset</button></div>
       </form>
-      ${rows.length ? `<div class="table-wrap opening-balance-list"><table class="file-table expense-table transaction-table"><thead><tr><th>Effective Date</th><th class="amount-col">Opening Amount</th><th>Entered By</th><th>Entered On</th><th>Updated On</th><th>Actions</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "")}</td><td>${escapeHtml(formatDateTime(item.createdAt || item.created_at || ""))}</td><td>${escapeHtml(formatDateTime(item.updatedAt || item.updated_at || ""))}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${rows.length ? `<div class="table-wrap opening-balance-list"><table class="file-table expense-table transaction-table"><thead><tr><th>Effective Date</th><th>Account</th><th class="amount-col">Opening Amount</th><th>Entered By</th><th>Entered On</th><th>Updated On</th><th>Actions</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "")}</td><td>${escapeHtml(formatDateTime(item.createdAt || item.created_at || ""))}</td><td>${escapeHtml(formatDateTime(item.updatedAt || item.updated_at || ""))}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : ""}
     </div>
   `;
 }
@@ -12943,7 +14144,8 @@ function renderCashCollectionsTab() {
           ${collectionTypeSelect("cashCollectionType", "Collection Type", editingCashCollection()?.collectionType || editingCashCollection()?.collection_type || "other_cash_collection")}
           ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
           ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01", "compact-field amount-field")}
-          ${expenseSelect("cashModeEntry", "Payment Mode", ["Cash", "Bank", "UPI", "Cheque"], editingCashCollection()?.mode || "Cash")}
+          ${expenseSelect("cashModeEntry", "Payment Method", paymentModes(), editingCashCollection()?.paymentMethod || editingCashCollection()?.payment_method || editingCashCollection()?.mode || "Cash")}
+          ${financeAccountSelect("cashAccountEntry", "Account", transactionAccountKey(editingCashCollection() || {}, "cash"))}
           ${expenseInput("cashVoucherNo", "Ref No.", editingCashCollection()?.voucherNo || "", "text", "", "compact-field ref-field")}
           ${collectionParticularsSelect(editingCashCollection()?.particulars || "Fee Collection")}
           ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
@@ -12968,13 +14170,40 @@ function renderCashCollectionsTab() {
   `;
 }
 
+function renderAccountTransfersTab() {
+  const transfers = (state.accountTransfers || []).filter((item) => item.isDeleted !== true);
+  const legacyRows = [
+    ...(state.otherCashCollections || []).filter((item) => item.isDeleted !== true && transactionAccountKey(item) === "unclassified_bank").map((item) => ({ ...item, transactionType: "collection" })),
+    ...(state.expenses || []).filter((item) => item.isDeleted !== true && transactionAccountKey(item) === "unclassified_bank").map((item) => ({ ...item, transactionType: "expense" })),
+  ];
+  return `<div class="expense-stack">
+    <form id="accountTransferForm" class="expense-form">
+      <div class="expense-card-head"><span>Account Movement</span><h3>Transfer Between Accounts</h3><p>Transfers change account balances without affecting combined funds.</p></div>
+      ${expenseDateField("transferDate", "Transfer Date", todayDate())}
+      ${financeAccountSelect("transferFromAccount", "From Account", "cash")}
+      ${financeAccountSelect("transferToAccount", "To Account", "federal_bank")}
+      ${expenseInput("transferAmount", "Amount", "", "number", "0.01", "compact-field amount-field")}
+      ${expenseInput("transferReference", "Reference", "", "text", "", "compact-field")}
+      ${expenseTextarea("transferRemarks", "Remarks", "")}
+      <div class="action-row"><button class="primary-button" type="submit">Save Transfer</button></div>
+    </form>
+    <div class="expense-tools-card">
+      <div class="expense-card-head"><h3>Account Transfer Register</h3></div>
+      <div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>Date</th><th>From</th><th>To</th><th class="amount-col">Amount</th><th>Reference</th><th>Entered By</th><th>Actions</th></tr></thead><tbody>${transfers.length ? transfers.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(item.fromAccountKey))}</td><td>${escapeHtml(financeAccountLabel(item.toAccountKey))}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.reference || "-")}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td><button class="mini-button danger" data-delete-transfer="${item.id}">Delete</button></td></tr>`).join("") : `<tr><td colspan="7">No account transfers recorded.</td></tr>`}</tbody></table></div>
+    </div>
+    ${state.currentRole === "Admin" ? `<div class="expense-tools-card"><div class="expense-card-head"><span>Admin Only</span><h3>Classify Legacy Bank Entries</h3><p>Historical generic Bank entries remain unclassified until you select their actual account.</p></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>Date</th><th>Type</th><th>Particulars</th><th class="amount-col">Amount</th><th>Classify As</th></tr></thead><tbody>${legacyRows.length ? legacyRows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(item.transactionType)}</td><td>${escapeHtml(item.particulars || item.receivedFrom || item.paidTo || "-")}</td><td class="amount-cell">${money(item.amount)}</td><td><button class="mini-button" data-classify-bank="${item.id}" data-transaction-type="${item.transactionType}" data-account-key="federal_bank">Federal Bank</button> <button class="mini-button" data-classify-bank="${item.id}" data-transaction-type="${item.transactionType}" data-account-key="tmb">TMB</button></td></tr>`).join("") : `<tr><td colspan="5">No unclassified Bank entries.</td></tr>`}</tbody></table></div></div>` : ""}
+  </div>`;
+}
+
 function renderTransactionSidePanel(tab) {
   const balance = cashBalanceForRange();
   const today = indiaTodayDate();
   const collections = activeCashCollections();
   const todaysCollections = collections.filter((item) => item.date === today);
-  const cashCollections = collections.filter((item) => item.mode === "Cash");
-  const bankCollections = collections.filter((item) => item.mode === "Bank");
+  const cashCollections = collections.filter((item) => transactionAccountKey(item) === "cash");
+  const federalCollections = collections.filter((item) => transactionAccountKey(item) === "federal_bank");
+  const tmbCollections = collections.filter((item) => transactionAccountKey(item) === "tmb");
+  const unclassifiedCollections = collections.filter((item) => transactionAccountKey(item) === "unclassified_bank");
   const otherCollections = collections.filter((item) => !isCollectionType(item, "fee_collection"));
   return `<aside class="transaction-side-column">
     <section class="transaction-side-card">
@@ -12985,7 +14214,9 @@ function renderTransactionSidePanel(tab) {
       ${transactionInfoRow("Today's Collections", todaysCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "collection")}
       ${transactionInfoRow("Total Collections", balance.feeCollections + balance.otherCollections, "balance")}
       ${transactionInfoRow("Cash Collections", cashCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "collection")}
-      ${transactionInfoRow("Bank Collections", bankCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "fee")}
+      ${transactionInfoRow("Federal Bank Collections", federalCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "fee")}
+      ${transactionInfoRow("TMB Collections", tmbCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "fee")}
+      ${unclassifiedCollections.length ? transactionInfoRow("Unclassified Bank Collections", unclassifiedCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "count") : ""}
       ${transactionInfoRow("Other Collections", otherCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "balance")}
       ${transactionInfoRow("Record Count", tab === "expenses" ? filteredExpenses().length : filteredCashCollections().length, "count", false)}
     </section>
@@ -13106,7 +14337,8 @@ function renderExpenseFilters() {
       ${expenseFilterInput("expenseParticulars", "Search")}
       ${expenseFilterInput("expenseFrom", "From Date", "date")}
       ${expenseFilterInput("expenseTo", "To Date", "date")}
-      ${expenseFilterSelect("expenseMode", "Payment Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
+      ${expenseFilterSelect("expenseMode", "Payment Method", ["", ...paymentModes()])}
+      ${financeAccountFilterSelect("expenseAccount", "Account")}
       ${expenseFilterInput("expenseItemFilter", "Expense Item")}
       ${expenseFilterInput("expensePaidTo", "Paid To")}
       ${expenseFilterInput("expenseEnteredBy", "Entered By")}
@@ -13125,7 +14357,8 @@ function renderCashFilters() {
       ${expenseFilterInput("cashParticulars", "Search")}
       ${expenseFilterInput("cashFrom", "From Date", "date")}
       ${expenseFilterInput("cashTo", "To Date", "date")}
-      ${expenseFilterSelect("cashMode", "Mode", ["", "Cash", "Bank", "UPI", "Cheque"])}
+      ${expenseFilterSelect("cashMode", "Payment Method", ["", ...paymentModes()])}
+      ${financeAccountFilterSelect("cashAccount", "Account")}
       ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", ...collectionTypeOptions.map((option) => option.label)])}
       ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
       <div class="field"><label>Apply</label><button class="secondary-button" id="cashSearch">Apply Filter</button></div>
@@ -13250,6 +14483,11 @@ function expenseFilterSelect(key, label, options) {
   return `<div class="field"><label>${label}</label><select data-expense-filter="${key}">${options.map((option) => `<option value="${escapeHtml(option)}" ${state.filters[key] === option ? "selected" : ""}>${escapeHtml(option || "All")}</option>`).join("")}</select></div>`;
 }
 
+function financeAccountFilterSelect(key, label) {
+  const options = [{ value: "", label: "All" }, ...financeAccounts, { value: "unclassified_bank", label: "Unclassified Bank" }];
+  return `<div class="field"><label>${escapeHtml(label)}</label><select data-expense-filter="${escapeHtml(key)}">${options.map((option) => `<option value="${option.value}" ${state.filters[key] === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>`;
+}
+
 function bindExpensePage() {
   document.querySelectorAll("[data-expense-tab]").forEach((btn) => {
     btn.onclick = () => {
@@ -13273,6 +14511,10 @@ function bindExpensePage() {
   });
   const cashForm = document.querySelector("#cashCollectionForm");
   if (cashForm) cashForm.onsubmit = saveCashCollectionEntry;
+  bindPaymentAccountControls("#expenseMode", "#expenseAccount");
+  bindPaymentAccountControls("#cashModeEntry", "#cashAccountEntry");
+  const transferForm = document.querySelector("#accountTransferForm");
+  if (transferForm) transferForm.onsubmit = saveAccountTransferEntry;
   document.querySelector("#cancelExpenseEdit")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
   document.querySelector("#cancelCashEdit")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
   document.querySelector("#resetExpenseForm")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
@@ -13338,6 +14580,8 @@ function bindExpensePage() {
   document.querySelectorAll("[data-edit-expense]").forEach((btn) => btn.onclick = () => { state.filters.editExpenseId = btn.dataset.editExpense; saveState(); renderAll(); });
   document.querySelectorAll("[data-delete-expense]").forEach((btn) => btn.onclick = () => deleteExpense(btn.dataset.deleteExpense));
   document.querySelectorAll("[data-delete-opening]").forEach((btn) => btn.onclick = () => deleteOpeningBalance(btn.dataset.deleteOpening));
+  document.querySelectorAll("[data-delete-transfer]").forEach((btn) => btn.onclick = () => deleteAccountTransfer(btn.dataset.deleteTransfer));
+  document.querySelectorAll("[data-classify-bank]").forEach((btn) => btn.onclick = () => classifyLegacyBankTransaction(btn.dataset.transactionType, btn.dataset.classifyBank, btn.dataset.accountKey));
   document.querySelectorAll("[data-edit-cash]").forEach((btn) => btn.onclick = () => { state.filters.editCashId = btn.dataset.editCash; saveState(); renderAll(); });
   document.querySelectorAll("[data-delete-cash]").forEach((btn) => btn.onclick = () => deleteCashCollection(btn.dataset.deleteCash));
 }
@@ -13355,6 +14599,8 @@ async function saveExpenseEntry(event) {
   const existing = editingExpense();
   const uploadedAttachment = await readExpenseAttachment(document.querySelector("#expenseAttachment")?.files?.[0]);
   const attachment = uploadedAttachment || existing?.attachment || null;
+  const paymentMethod = document.querySelector("#expenseMode").value;
+  const accountKey = paymentMethod === "Cash" ? "cash" : document.querySelector("#expenseAccount")?.value;
   const record = {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
@@ -13362,7 +14608,13 @@ async function saveExpenseEntry(event) {
     particulars: document.querySelector("#expenseParticularsEntry").value,
     voucherNo: document.querySelector("#expenseVoucherNo").value.trim(),
     amount,
-    mode: document.querySelector("#expenseMode").value,
+    mode: paymentMethod,
+    paymentMethod,
+    payment_method: paymentMethod,
+    accountKey,
+    account_key: accountKey,
+    accountName: financeAccountLabel(accountKey),
+    account_name: financeAccountLabel(accountKey),
     category: document.querySelector("#expenseCategory")?.value || existing?.category || "General",
     paidTo: document.querySelector("#expensePaidTo").value.trim(),
     remarks: document.querySelector("#expenseRemarks").value.trim(),
@@ -13401,19 +14653,24 @@ async function saveOpeningBalance(event) {
   if (state.currentRole !== "Admin") return toast("Only Admin can add opening balances.");
   const amount = Number(document.querySelector("#openingAmount")?.value || 0);
   const date = document.querySelector("#openingDate")?.value || todayDate();
+  const accountKey = document.querySelector("#openingAccount")?.value || "cash";
   if (!date) return toast("Select opening balance date.");
   if (Number.isNaN(amount)) return toast("Enter opening balance amount.");
-  const existing = (state.openingBalances || []).find((item) => item.date === date);
+  const existing = (state.openingBalances || []).find((item) => item.date === date && transactionAccountKey(item) === accountKey);
   if (existing && !confirm("Opening balance already exists for this date. Update it?")) return;
   const now = new Date().toISOString();
   const record = {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
-    particulars: "Opening Cash Balance",
+    particulars: `Opening Balance - ${financeAccountLabel(accountKey)}`,
     date,
     balance_date: date,
     amount,
     opening_balance: amount,
+    accountKey,
+    account_key: accountKey,
+    accountName: financeAccountLabel(accountKey),
+    account_name: financeAccountLabel(accountKey),
     enteredBy: existing?.enteredBy || state.currentUser || "",
     entered_by_user_name: existing?.entered_by_user_name || state.currentUser || "",
     createdAt: existing?.createdAt || now,
@@ -13501,6 +14758,8 @@ async function saveCashCollectionEntry(event) {
   const existing = editingCashCollection();
   const uploadedAttachment = await readExpenseAttachment(document.querySelector("#cashAttachment")?.files?.[0]);
   const attachment = uploadedAttachment || existing?.attachment || null;
+  const paymentMethod = document.querySelector("#cashModeEntry").value;
+  const accountKey = paymentMethod === "Cash" ? "cash" : document.querySelector("#cashAccountEntry")?.value;
   const record = {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
@@ -13510,7 +14769,13 @@ async function saveCashCollectionEntry(event) {
     particulars: document.querySelector("#cashParticularsEntry").value.trim(),
     voucherNo: document.querySelector("#cashVoucherNo").value.trim(),
     amount,
-    mode: document.querySelector("#cashModeEntry").value,
+    mode: paymentMethod,
+    paymentMethod,
+    payment_method: paymentMethod,
+    accountKey,
+    account_key: accountKey,
+    accountName: financeAccountLabel(accountKey),
+    account_name: financeAccountLabel(accountKey),
     receivedFrom: properCaseName(document.querySelector("#newCashReceivedFrom")?.value.trim() || document.querySelector("#cashReceivedFrom").value.trim()),
     remarks: document.querySelector("#cashRemarks")?.value.trim() || existing?.remarks || "",
     createdBy: document.querySelector("#cashCollectedBy")?.value.trim() || existing?.createdBy || state.currentUser || "",
@@ -13541,6 +14806,67 @@ async function saveCashCollectionEntry(event) {
   saveState();
   toast(existing ? "Cash collection updated" : "Cash collection saved");
   renderAll();
+}
+
+async function saveAccountTransferEntry(event) {
+  event.preventDefault();
+  const fromAccountKey = document.querySelector("#transferFromAccount")?.value || "";
+  const toAccountKey = document.querySelector("#transferToAccount")?.value || "";
+  const amount = Number(document.querySelector("#transferAmount")?.value || 0);
+  if (!amount || amount <= 0) return toast("Please enter a valid transfer amount.");
+  if (!fromAccountKey || !toAccountKey || fromAccountKey === toAccountKey) return toast("Source and destination accounts must be different.");
+  const now = new Date().toISOString();
+  const transfer = {
+    id: crypto.randomUUID(),
+    date: document.querySelector("#transferDate")?.value || todayDate(),
+    fromAccountKey,
+    fromAccountName: financeAccountLabel(fromAccountKey),
+    toAccountKey,
+    toAccountName: financeAccountLabel(toAccountKey),
+    amount,
+    reference: document.querySelector("#transferReference")?.value.trim() || "",
+    remarks: document.querySelector("#transferRemarks")?.value.trim() || "",
+    createdBy: state.currentUser || "",
+    createdAt: now,
+    updatedAt: now,
+  };
+  try {
+    if (isSupabaseMode()) await saveAccountTransferToApi(transfer);
+    else {
+      state.accountTransfers = [transfer, ...(state.accountTransfers || [])];
+      saveState();
+    }
+    toast("Account transfer saved successfully.");
+    renderAll();
+  } catch (error) { toast(error.message || "Account transfer could not be saved."); }
+}
+
+async function deleteAccountTransfer(id) {
+  if (!confirm("Delete this account transfer?")) return;
+  try {
+    if (isSupabaseMode()) await deleteAccountTransferFromApi(id);
+    else {
+      state.accountTransfers = (state.accountTransfers || []).filter((item) => item.id !== id);
+      saveState();
+    }
+    toast("Account transfer deleted.");
+    renderAll();
+  } catch (error) { toast(error.message || "Account transfer could not be deleted."); }
+}
+
+async function classifyLegacyBankTransaction(transactionType, transactionId, accountKey) {
+  if (state.currentRole !== "Admin") return toast("Only Admin can classify legacy Bank entries.");
+  if (!confirm(`Classify this entry as ${financeAccountLabel(accountKey)}?`)) return;
+  try {
+    if (isSupabaseMode()) await classifyLegacyBankTransactionToApi(transactionType, transactionId, accountKey);
+    else {
+      const key = transactionType === "expense" ? "expenses" : "otherCashCollections";
+      state[key] = (state[key] || []).map((item) => item.id === transactionId ? { ...item, accountKey, account_key: accountKey, accountName: financeAccountLabel(accountKey), account_name: financeAccountLabel(accountKey) } : item);
+      saveState();
+    }
+    toast(`Entry classified as ${financeAccountLabel(accountKey)}.`);
+    renderAll();
+  } catch (error) { toast(error.message || "Legacy Bank entry could not be classified."); }
 }
 
 function editingExpense() {
@@ -13683,11 +15009,11 @@ function revertLocalFeeReceipt(file = {}) {
 }
 
 function expenseSearchActive() {
-  return ["expenseFrom", "expenseTo", "expenseParticulars", "expensePaidTo"].some((key) => state.filters[key]);
+  return ["expenseFrom", "expenseTo", "expenseParticulars", "expensePaidTo", "expenseMode", "expenseAccount", "expenseItemFilter", "expenseEnteredBy"].some((key) => state.filters[key]);
 }
 
 function cashSearchActive() {
-  return ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashCollectionTypeFilter", "cashCollectedByFilter"].some((key) => state.filters[key]);
+  return ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashAccount", "cashCollectionTypeFilter", "cashCollectedByFilter"].some((key) => state.filters[key]);
 }
 
 function filteredExpenses() {
@@ -13696,7 +15022,8 @@ function filteredExpenses() {
     if (state.filters.expenseTo && item.date > state.filters.expenseTo) return false;
     if (state.filters.expenseParticulars && !item.particulars.toLowerCase().includes(state.filters.expenseParticulars.toLowerCase())) return false;
     if (state.filters.expenseItemFilter && !item.particulars.toLowerCase().includes(state.filters.expenseItemFilter.toLowerCase())) return false;
-    if (state.filters.expenseMode && item.mode !== state.filters.expenseMode) return false;
+    if (state.filters.expenseMode && normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode) !== state.filters.expenseMode) return false;
+    if (state.filters.expenseAccount && transactionAccountKey(item) !== state.filters.expenseAccount) return false;
     if (state.filters.expenseCategoryFilter && (item.category || "General") !== state.filters.expenseCategoryFilter) return false;
     if (state.filters.expensePaidTo && !item.paidTo.toLowerCase().includes(state.filters.expensePaidTo.toLowerCase())) return false;
     if (state.filters.expenseEnteredBy && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.expenseEnteredBy.toLowerCase())) return false;
@@ -13709,7 +15036,8 @@ function filteredCashCollections() {
     if (state.filters.cashFrom && item.date < state.filters.cashFrom) return false;
     if (state.filters.cashTo && item.date > state.filters.cashTo) return false;
     if (state.filters.cashParticulars && !item.particulars.toLowerCase().includes(state.filters.cashParticulars.toLowerCase())) return false;
-    if (state.filters.cashMode && item.mode !== state.filters.cashMode) return false;
+    if (state.filters.cashMode && normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode) !== state.filters.cashMode) return false;
+    if (state.filters.cashAccount && transactionAccountKey(item) !== state.filters.cashAccount) return false;
     if (state.filters.cashCollectionTypeFilter && collectionTypeLabel(item.collectionType || item.collection_type) !== state.filters.cashCollectionTypeFilter) return false;
     if (state.filters.cashCollectedByFilter && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.cashCollectedByFilter.toLowerCase())) return false;
     return true;
@@ -13719,7 +15047,7 @@ function filteredCashCollections() {
 function renderExpenseTable(rows) {
   if (!rows.length) return empty("No expense entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th class="wide-col expense-item-column">Expense Item</th><th class="wide-col paid-to-column">Paid To</th><th>Mode</th><th class="ref-col voucher-column">Voucher No.</th><th class="amount-col amount-column">Amount</th><th>Entered By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td class="wide-cell expense-item-cell">${escapeHtml(item.particulars)}</td><td class="wide-cell paid-to-cell">${escapeHtml(item.paidTo)}</td><td>${escapeHtml(item.mode)}</td><td class="ref-cell voucher-cell" title="${escapeHtml(item.voucherNo)}">${escapeHtml(item.voucherNo)}</td><td class="amount-cell amount-column">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th class="wide-col expense-item-column">Expense Item</th><th class="wide-col paid-to-column">Paid To</th><th>Payment Method</th><th>Account</th><th class="ref-col voucher-column">Voucher No.</th><th class="amount-col amount-column">Amount</th><th>Entered By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td class="wide-cell expense-item-cell">${escapeHtml(item.particulars)}</td><td class="wide-cell paid-to-cell">${escapeHtml(item.paidTo)}</td><td>${escapeHtml(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode))}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="ref-cell voucher-cell" title="${escapeHtml(item.voucherNo)}">${escapeHtml(item.voucherNo)}</td><td class="amount-cell amount-column">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function expenseAttachmentLink(item) {
@@ -13734,17 +15062,17 @@ function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const canDelete = ["Admin", "Manager"].includes(state.currentRole);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Mode</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(item.mode)}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button>${canDelete ? `<button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button>` : ""}</td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Payment Method</th><th>Account</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode))}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button>${canDelete ? `<button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button>` : ""}</td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
 }
 
 function resetExpenseFilters() {
-  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expenseCategoryFilter", "expenseItemFilter", "expensePaidTo", "expenseEnteredBy", "expenseVoucher"].forEach((key) => state.filters[key] = "");
+  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expenseAccount", "expenseCategoryFilter", "expenseItemFilter", "expensePaidTo", "expenseEnteredBy", "expenseVoucher"].forEach((key) => state.filters[key] = "");
   saveState();
   renderAll();
 }
 
 function resetCashFilters() {
-  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashCollectionTypeFilter", "cashCollectedByFilter", "cashReceivedFrom", "cashVoucher"].forEach((key) => state.filters[key] = "");
+  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashAccount", "cashCollectionTypeFilter", "cashCollectedByFilter", "cashReceivedFrom", "cashVoucher"].forEach((key) => state.filters[key] = "");
   saveState();
   renderAll();
 }
@@ -13760,23 +15088,32 @@ function resetBalanceFilters() {
 }
 
 function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
+  return financeBalancesForRange(from, to).cash;
+}
+
+function financeBalancesForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
   const effectiveTo = to || from || todayDate();
-  const openingEntry = applicableOpeningBalance(from, effectiveTo);
-  const openingDate = openingEntry?.date || "";
-  const effectiveFrom = from || openingDate || "";
-  const inRange = (date) => (!effectiveFrom || date >= effectiveFrom) && (!effectiveTo || date <= effectiveTo);
-  const mode = state.filters.balanceMode || "";
-  const modeOk = (itemMode) => !mode || itemMode === mode;
-  const opening = Number(openingEntry?.amount ?? state.openingCashBalance ?? 0) || 0;
-  const feeCollections = activeCashCollections().filter((item) => isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const otherCollections = activeCashCollections().filter((item) => !isCollectionType(item, "fee_collection") && item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const cashExpenses = activeExpenses().filter((item) => item.mode === "Cash" && modeOk(item.mode) && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const calculatedClosing = opening + feeCollections + otherCollections - cashExpenses;
-  const approved = (state.cashReconciliations || []).filter((item) => item.approvalStatus === "approved" && item.isDeleted !== true && inRange(item.reconciliationDate || item.toDate || item.to_date));
-  const approvedExcess = approved.filter((item) => item.adjustmentType === "excess").reduce((sum, item) => sum + Number(item.adjustmentAmount || 0), 0);
-  const approvedShortage = approved.filter((item) => item.adjustmentType === "shortage").reduce((sum, item) => sum + Number(item.adjustmentAmount || 0), 0);
-  const approvedAdjustment = approvedExcess - approvedShortage;
-  return { opening, feeCollections, otherCollections, cashExpenses, calculatedClosing, approvedExcess, approvedShortage, approvedAdjustment, adjustments: approvedAdjustment, closing: calculatedClosing + approvedAdjustment };
+  const results = {};
+  financeBalanceAccounts.forEach(({ value: accountKey }) => {
+    const openingEntry = applicableOpeningBalance(from, effectiveTo, accountKey);
+    const effectiveFrom = from || openingEntry?.date || "";
+    const inRange = (date) => (!effectiveFrom || date >= effectiveFrom) && (!effectiveTo || date <= effectiveTo);
+    const opening = Number(openingEntry?.amount ?? (accountKey === "cash" ? state.openingCashBalance : 0) ?? 0) || 0;
+    const accountCollections = activeCashCollections().filter((item) => transactionAccountKey(item) === accountKey && inRange(item.date));
+    const feeCollections = accountCollections.filter((item) => isCollectionType(item, "fee_collection")).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const otherCollections = accountCollections.filter((item) => !isCollectionType(item, "fee_collection")).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const expenses = activeExpenses().filter((item) => transactionAccountKey(item) === accountKey && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const transfersIn = (state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.toAccountKey === accountKey && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const transfersOut = (state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.fromAccountKey === accountKey && inRange(item.date)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const calculatedClosing = opening + feeCollections + otherCollections - expenses + transfersIn - transfersOut;
+    const approved = accountKey === "cash" ? (state.cashReconciliations || []).filter((item) => item.approvalStatus === "approved" && item.isDeleted !== true && inRange(item.reconciliationDate || item.toDate || item.to_date)) : [];
+    const approvedExcess = approved.filter((item) => item.adjustmentType === "excess").reduce((sum, item) => sum + Number(item.adjustmentAmount || 0), 0);
+    const approvedShortage = approved.filter((item) => item.adjustmentType === "shortage").reduce((sum, item) => sum + Number(item.adjustmentAmount || 0), 0);
+    const approvedAdjustment = approvedExcess - approvedShortage;
+    results[accountKey] = { opening, feeCollections, otherCollections, cashExpenses: expenses, expenses, transfersIn, transfersOut, calculatedClosing, approvedExcess, approvedShortage, approvedAdjustment, adjustments: approvedAdjustment, closing: calculatedClosing + approvedAdjustment };
+  });
+  results.combined = { closing: financeAccounts.reduce((sum, account) => sum + Number(results[account.value]?.closing || 0), 0) };
+  return results;
 }
 
 async function verifyCashReconciliation() {
@@ -13815,10 +15152,12 @@ async function decideCashAdjustment(id, decision) {
   } catch (error) { toast(error.message || "Cash adjustment could not be updated."); }
 }
 
-function applicableOpeningBalance(from = "", to = todayDate()) {
+function applicableOpeningBalance(from = "", to = todayDate(), accountKey = "cash") {
   const target = from || to || todayDate();
   return [...(state.openingBalances || [])]
-    .filter((item) => item.date && item.date <= target)
+    .filter((item) => {
+      return item.date && item.date <= target && transactionAccountKey(item) === accountKey;
+    })
     .sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt || b.updated_at || b.createdAt || "").localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || "")))[0] || null;
 }
 
@@ -13831,7 +15170,7 @@ function cashMovementRows() {
   const enteredByFilter = normalizeImportMatchText(state.filters.balanceEnteredBy || "");
   const typeFilter = state.filters.balanceType || "";
   const rows = [
-    ...activeCashCollections().filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
+    ...activeCashCollections().filter((item) => transactionAccountKey(item) === "cash" && inRange(item.date)).map((item) => ({
       date: item.date,
       time: item.time || "",
       type: "Collection",
@@ -13842,7 +15181,7 @@ function cashMovementRows() {
       enteredBy: item.createdBy || item.enteredBy || "",
       createdAt: item.createdAt || item.created_at || "",
     })),
-    ...activeExpenses().filter((item) => item.mode === "Cash" && inRange(item.date)).map((item) => ({
+    ...activeExpenses().filter((item) => transactionAccountKey(item) === "cash" && inRange(item.date)).map((item) => ({
       date: item.date,
       time: item.time || "",
       type: "Expense",
@@ -13872,13 +15211,13 @@ function renderCashMovementTable() {
 }
 
 function expenseReportRows(rows = filteredExpenses()) {
-  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Expense Item": item.particulars, "Paid To": item.paidTo, Mode: item.mode, "Voucher No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
-  return [...mapped, { SN: "", Date: "", Particulars: "", "V.No": "", "Paid To": "", Mode: "Total", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), Remarks: "" }];
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Expense Item": item.particulars, "Paid To": item.paidTo, "Payment Method": normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), Account: financeAccountLabel(transactionAccountKey(item)), "Voucher No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
+  return [...mapped, { SN: "", Date: "", "Expense Item": "", "Paid To": "", "Payment Method": "", Account: "Total", "Voucher No": "", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), "Entered By": "", Remarks: "" }];
 }
 
 function cashReportRows(rows = filteredCashCollections()) {
-  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Collection Type": collectionTypeLabel(item.collectionType || item.collection_type), "Received From": item.receivedFrom, Particulars: item.particulars, Mode: item.mode, "Reference No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
-  return [...mapped, { SN: "", Date: "", Particulars: "", "V.No": "", "Received From": "", Mode: "Total", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), Remarks: "" }];
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Collection Type": collectionTypeLabel(item.collectionType || item.collection_type), "Received From": item.receivedFrom, Particulars: item.particulars, "Payment Method": normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), Account: financeAccountLabel(transactionAccountKey(item)), "Reference No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
+  return [...mapped, { SN: "", Date: "", "Collection Type": "", "Received From": "", Particulars: "", "Payment Method": "", Account: "Total", "Reference No": "", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), "Entered By": "", Remarks: "" }];
 }
 
 function transactionReportDateLine(fromKey, toKey) {
@@ -13950,6 +15289,61 @@ function addAuditLog(action, details = {}) {
 
 function dailyReportDate() {
   return state.filters.dailyReportDate || todayDate();
+}
+
+const dailyReportBalanceCache = new Map();
+const dailyReportBalanceRequests = new Map();
+
+function emptyDailyReportBalanceSummary(date = dailyReportDate()) {
+  return { reportDate: date, cashBalance: 0, federalBankBalance: 0, tmbBalance: 0, totalBalance: 0 };
+}
+
+async function getDailyReportBalanceSummary(date = dailyReportDate(), { force = false } = {}) {
+  if (!force && dailyReportBalanceCache.has(date)) return dailyReportBalanceCache.get(date);
+  if (!force && dailyReportBalanceRequests.has(date)) return dailyReportBalanceRequests.get(date);
+  const request = backendApiJson(`/api/finance/daily-report-summary?date=${encodeURIComponent(date)}`)
+    .then((result) => {
+      const summary = { ...emptyDailyReportBalanceSummary(date), ...(result?.summary || {}) };
+      dailyReportBalanceCache.set(date, summary);
+      return summary;
+    })
+    .finally(() => dailyReportBalanceRequests.delete(date));
+  dailyReportBalanceRequests.set(date, request);
+  return request;
+}
+
+function dailyReportBalanceRows(summary = emptyDailyReportBalanceSummary(), numeric = false) {
+  const value = (amount) => numeric ? Number(amount || 0) : `₹ ${money(amount)}`;
+  return [
+    { Account: "Cash Balance", "Closing Balance": value(summary.cashBalance) },
+    { Account: "Balance in Federal Bank", "Closing Balance": value(summary.federalBankBalance) },
+    { Account: "Balance in TMB", "Closing Balance": value(summary.tmbBalance) },
+    { Account: "Total Balance", "Closing Balance": value(summary.totalBalance) },
+  ];
+}
+
+function renderDailyBalanceSummary(summary = emptyDailyReportBalanceSummary(), { loading = false, error = "" } = {}) {
+  if (loading) return `<section class="daily-report-section daily-balance-summary" id="dailyReportBalanceSummary"><h3>Balance Summary</h3><div class="daily-balance-loading">Loading balances for the selected date...</div></section>`;
+  if (error) return `<section class="daily-report-section daily-balance-summary" id="dailyReportBalanceSummary"><h3>Balance Summary</h3><div class="daily-balance-error">${escapeHtml(error)}</div></section>`;
+  const rows = dailyReportBalanceRows(summary);
+  return `<section class="daily-report-section daily-balance-summary" id="dailyReportBalanceSummary">
+    <div class="daily-balance-heading"><div><h3>Balance Summary</h3><p>Closing balances as at ${escapeHtml(displayDate(summary.reportDate || dailyReportDate()))}</p></div><span>As of selected date</span></div>
+    <div class="daily-balance-grid">${rows.map((row, index) => `<div class="daily-balance-card${index === rows.length - 1 ? " is-total" : ""}"><span>${escapeHtml(row.Account)}</span><strong>${escapeHtml(row["Closing Balance"])}</strong></div>`).join("")}</div>
+  </section>`;
+}
+
+async function loadDailyReportBalanceIntoPage(date, { force = false } = {}) {
+  if (!document.querySelector("#dailyReportBalanceSummary")) return null;
+  try {
+    const summary = await getDailyReportBalanceSummary(date, { force });
+    const current = document.querySelector("#dailyReportBalanceSummary");
+    if (current && dailyReportDate() === date) current.outerHTML = renderDailyBalanceSummary(summary);
+    return summary;
+  } catch (error) {
+    const current = document.querySelector("#dailyReportBalanceSummary");
+    if (current && dailyReportDate() === date) current.outerHTML = renderDailyBalanceSummary(emptyDailyReportBalanceSummary(date), { error: error.message || "Balance summary could not be loaded." });
+    return null;
+  }
 }
 
 function dailyCompletedFiles(date = dailyReportDate()) {
@@ -14045,7 +15439,8 @@ function dailyExpenseRows(date = dailyReportDate()) {
     Date: displayDate(normalizeImportDate(expense.date || expense.expense_date)),
     "Expense Item": expense.expense_item || expense.particulars || "",
     "Paid To": expense.paidTo || expense.paid_to || "",
-    "Payment Mode": expense.mode || expense.payment_mode || "",
+    "Payment Method": normalizeTransactionPaymentMethod(expense.paymentMethod || expense.payment_method || expense.mode),
+    Account: financeAccountLabel(transactionAccountKey(expense)),
     "Voucher No.": expense.voucherNo || expense.voucher_number || "",
     Amount: money(expense.amount),
     "Paid By": expense.paidBy || expense.paid_by || expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
@@ -14061,7 +15456,8 @@ function dailyExpensePdfRows(date = dailyReportDate()) {
       Date: displayDate(normalizeImportDate(expense.date || expense.expense_date)),
       "Expense Item": expense.expense_item || expense.particulars || "",
       "Paid To": expense.paidTo || expense.paid_to || "",
-      "Payment Mode": expense.mode || expense.payment_mode || "",
+      "Payment Method": normalizeTransactionPaymentMethod(expense.paymentMethod || expense.payment_method || expense.mode),
+      Account: financeAccountLabel(transactionAccountKey(expense)),
       "Voucher No.": expense.voucherNo || expense.voucher_number || "",
       Amount: dailyPdfMoney(expense.amount),
       "Paid By": expense.paidBy || expense.paid_by || expense.createdBy || expense.enteredBy || expense.entered_by_user_name || "",
@@ -14081,7 +15477,8 @@ function dailyCollectionRows(date = dailyReportDate()) {
       "Received from": collection.receivedFrom || collection.particulars || "",
       Particulars: collection.particulars || "",
       "Ref No": collection.voucherNo || "",
-      Mode: collection.mode || "",
+      "Payment Method": normalizeTransactionPaymentMethod(collection.paymentMethod || collection.payment_method || collection.mode),
+      Account: financeAccountLabel(transactionAccountKey(collection)),
       Amount: money(collection.amount),
       "Collected By": collection.createdBy || collection.enteredBy || "",
     }));
@@ -14104,6 +15501,7 @@ function renderDailyReportPage() {
   const visitorRows = dailyVisitorRows(date);
   const collectionRows = dailyCollectionRows(date);
   const expenseRows = dailyExpenseRows(date);
+  const cachedBalanceSummary = dailyReportBalanceCache.get(date);
   page.innerHTML = `
     <div class="panel daily-report-panel">
       <div class="daily-report-head">
@@ -14122,14 +15520,16 @@ function renderDailyReportPage() {
         <label>Report Date</label>
         <input type="date" id="dailyReportDate" max="9999-12-31" value="${date}">
       </div>
+      ${cachedBalanceSummary ? renderDailyBalanceSummary(cachedBalanceSummary) : renderDailyBalanceSummary(emptyDailyReportBalanceSummary(date), { loading: true })}
       ${renderDailySection("New Work Came", newWorkRows, ["SN", "Name", "Type of Service", "C/o", "Assigned To"], `Total New Work Received: ${newWorkRows.length}`, "No new work was received on the selected date.")}
       ${renderDailySection("Completed Files", completedRows, ["SN", "Name", "Type of Service", "C/o", "Work Done By", "Checked By"], `Total Completed Files: ${completedRows.length}`, "No files were completed on the selected date.")}
       ${renderDailySection("Visitors List", visitorRows, ["SN", "Visitor Name", "Mobile No", "Company", "Purpose", "Time", "Met"], `Total Visitors: ${visitorRows.length}`, "No visitors were recorded on the selected date.")}
-      ${renderDailySection("Collections", collectionRows, ["SN", "Received from", "Particulars", "Ref No", "Mode", "Amount", "Collected By"], `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No collections were recorded on the selected date.")}
-      ${renderDailySection("Expense Report", expenseRows, ["SN", "Date", "Expense Item", "Paid To", "Payment Mode", "Voucher No.", "Amount", "Paid By"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
+      ${renderDailySection("Collections", collectionRows, ["SN", "Received from", "Particulars", "Ref No", "Payment Method", "Account", "Amount", "Collected By"], `Total Collections: ${money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No collections were recorded on the selected date.")}
+      ${renderDailySection("Expense Report", expenseRows, ["SN", "Date", "Expense Item", "Paid To", "Payment Method", "Account", "Voucher No.", "Amount", "Paid By"], `Total Expenses: ${money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0))}`, "No expenses were recorded on the selected date.")}
     </div>
   `;
   bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
+  if (!cachedBalanceSummary) loadDailyReportBalanceIntoPage(date);
 }
 
 function renderDailySection(title, rows, headers, totalText, emptyText) {
@@ -14155,16 +15555,21 @@ function bindDailyReportPage(date, newWorkRows, completedRows, visitorRows, coll
     saveState();
     renderDailyReportPage();
   };
-  document.querySelector("#dailyReportRefresh").onclick = (event) => {
+  document.querySelector("#dailyReportRefresh").onclick = async (event) => {
     const button = event.currentTarget;
     if (button.disabled) return;
     button.disabled = true;
     button.classList.add("is-refreshing");
-    window.setTimeout(() => {
+    try {
+      dailyReportBalanceCache.delete(date);
+      await loadDailyReportBalanceIntoPage(date, { force: true });
       syncSharedState(localStorage.getItem(STORAGE_KEY), false);
       renderDailyReportPage();
       toast("Daily Report refreshed");
-    }, 450);
+    } finally {
+      button.disabled = false;
+      button.classList.remove("is-refreshing");
+    }
   };
   document.querySelector("#dailyReportPdf").onclick = (event) => exportDailyReport("PDF", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
   document.querySelector("#dailyReportExcel").onclick = (event) => exportDailyReport("Excel", date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, event.currentTarget);
@@ -14183,14 +15588,17 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
   const title = `Daily Report M&A - ${displayDate(date)}`;
   const pdfTitle = `Daily Report - ${displayDate(date)}`;
   try {
+    const balanceSummary = await getDailyReportBalanceSummary(date, { force: true });
+    const balanceRows = dailyReportBalanceRows(balanceSummary);
     if (format === "Excel") {
-      await downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows);
+      await downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, balanceSummary);
       addAuditLog("Daily Report exported", { reportDate: date, format, newWork: newWorkRows.length, completedFiles: completedRows.length, visitors: visitorRows.length, collections: collectionRows.length, expenses: expenseRows.length });
       saveState();
       toast("Daily Report Excel downloaded");
       return;
     }
     const pdfSections = [
+      { title: "Balance Summary", rows: balanceRows, total: `Total Balance: ₹ ${money(balanceSummary.totalBalance)}`, rightAlign: ["Closing Balance"] },
       { title: "Completed Files", rows: completedRows, total: `Total Completed Files: ${completedRows.length}`, empty: "No files were completed on the selected date." },
       { title: "New Work Came", rows: newWorkRows, total: `Total New Work Received: ${newWorkRows.length}`, empty: "No new work was received on the selected date." },
       { title: "Visitors List", rows: dailyVisitorPdfRows(date), total: `Total Visitors: ${visitorRows.length}`, empty: "No visitor records for the selected date.", columnStyles: dailyVisitorPdfColumnStyles() },
@@ -14205,6 +15613,7 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
       return;
     }
     const sections = [
+      { title: "Balance Summary", rows: balanceRows, total: `Total Balance: ₹ ${money(balanceSummary.totalBalance)}` },
       { title: "New Work Came", rows: newWorkRows, total: `Total New Work Received: ${newWorkRows.length}`, empty: "No new work was received on the selected date." },
       { title: "Completed Files", rows: completedRows, total: `Total Completed Files: ${completedRows.length}`, empty: "No files were completed on the selected date." },
       { title: "Visitors List", rows: visitorRows, total: `Total Visitors: ${visitorRows.length}`, empty: "No visitors were recorded on the selected date." },
@@ -14353,21 +15762,35 @@ function dailyExpensePdfColumnStyles() {
     1: { cellWidth: 66 },
     2: { cellWidth: 150 },
     3: { cellWidth: 130 },
-    4: { cellWidth: 82 },
+    4: { cellWidth: 70 },
     5: { cellWidth: 76 },
-    6: { cellWidth: 82, halign: "right" },
-    7: { cellWidth: 100 },
+    6: { cellWidth: 68 },
+    7: { cellWidth: 76, halign: "right" },
+    8: { cellWidth: 88 },
   };
 }
 
-async function downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows) {
+async function downloadDailyReportWorkbook(date, newWorkRows, completedRows, visitorRows, collectionRows, expenseRows, balanceSummary = emptyDailyReportBalanceSummary(date)) {
   const title = `Daily Report M&A - ${displayDate(date)}`;
+  const balanceRows = [
+    { Account: title, "Closing Balance": "" },
+    { Account: `Balance Summary as at ${displayDate(date)}`, "Closing Balance": "" },
+    ...dailyReportBalanceRows(balanceSummary, true),
+  ];
   await downloadXlsxSheets(`daily-report-${date}`, [
+    { name: "Balance Summary", rows: balanceRows, prepare: (worksheet) => {
+      worksheet["!cols"] = [{ wch: 30 }, { wch: 20 }];
+      for (let row = 4; row <= 7; row += 1) {
+        const cell = worksheet[`B${row}`];
+        if (cell) cell.z = '₹#,##0.00';
+      }
+      ["A7", "B7"].forEach((address) => { if (worksheet[address]) worksheet[address].s = { font: { bold: true } }; });
+    } },
     { name: "New Work Came", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Assigned To": "" }, ...newWorkRows, { SN: "", Name: `Total New Work Received: ${newWorkRows.length}`, "Type of Service": "", "C/o": "", "Assigned To": "" }] },
     { name: "Completed Files", rows: [{ SN: "", Name: title, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }, ...completedRows, { SN: "", Name: `Total Completed Files: ${completedRows.length}`, "Type of Service": "", "C/o": "", "Work Done By": "", "Checked By": "" }] },
     { name: "Visitors List", rows: [{ SN: "", "Visitor Name": title, "Mobile No": "", Company: "", Purpose: "", Time: "", Met: "" }, ...visitorRows, { SN: "", "Visitor Name": `Total Visitors: ${visitorRows.length}`, "Mobile No": "", Company: "", Purpose: "", Time: "", Met: "" }] },
-    { name: "Collections", rows: [{ SN: "", "Received from": title, Particulars: "", "Ref No": "", Mode: "", Amount: "", "Collected By": "" }, ...collectionRows, { SN: "", "Received from": "Total Collections", Particulars: "", "Ref No": "", Mode: "", Amount: money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Collected By": "" }] },
-    { name: "Expense Report", rows: [{ SN: "", Date: title, "Expense Item": "", "Paid To": "", "Payment Mode": "", "Voucher No.": "", Amount: "", "Paid By": "" }, ...expenseRows, { SN: "", Date: "", "Expense Item": "Total Expenses", "Paid To": "", "Payment Mode": "", "Voucher No.": "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Paid By": "" }] },
+    { name: "Collections", rows: [{ SN: "", "Received from": title, Particulars: "", "Ref No": "", "Payment Method": "", Account: "", Amount: "", "Collected By": "" }, ...collectionRows, { SN: "", "Received from": "Total Collections", Particulars: "", "Ref No": "", "Payment Method": "", Account: "", Amount: money(collectionRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Collected By": "" }] },
+    { name: "Expense Report", rows: [{ SN: "", Date: title, "Expense Item": "", "Paid To": "", "Payment Method": "", Account: "", "Voucher No.": "", Amount: "", "Paid By": "" }, ...expenseRows, { SN: "", Date: "", "Expense Item": "Total Expenses", "Paid To": "", "Payment Method": "", Account: "", "Voucher No.": "", Amount: money(expenseRows.reduce((sum, row) => sum + Number(String(row.Amount).replace(/,/g, "") || 0), 0)), "Paid By": "" }] },
   ]);
 }
 
@@ -15025,8 +16448,158 @@ function flattenFile(file) {
   };
 }
 
+const desktopNotificationPreferenceFields = [
+  ["assignment_enabled", "Assignments"],
+  ["correction_enabled", "Corrections"],
+  ["checking_enabled", "Checking and completion"],
+  ["due_enabled", "Due-date reminders"],
+  ["billing_enabled", "Billing and fee updates"],
+  ["chat_enabled", "Chat messages"],
+  ["announcement_enabled", "Announcements"],
+  ["sound_enabled", "Browser notification sound"],
+];
+
+function desktopNotificationStatus() {
+  if (!desktopNotificationsSupported()) return { label: "Not Supported", tone: "muted", detail: "Desktop alerts require a supported browser and a secure HTTPS connection." };
+  if (Notification.permission === "denied") return { label: "Blocked by Browser", tone: "danger", detail: "Allow notifications in this site's browser permissions, then return here." };
+  if (!desktopNotificationConfig?.supported) return { label: "Server setup required", tone: "warning", detail: "VAPID keys or notification database tables are not configured yet." };
+  if (Notification.permission === "granted" && desktopNotificationConfig?.preferences?.desktop_enabled && currentDeviceSubscribed) {
+    return { label: "Enabled", tone: "success", detail: `Active on ${desktopNotificationDeviceLabel()}.` };
+  }
+  return { label: "Disabled", tone: "muted", detail: "Enable alerts to receive important updates even when this page is not open." };
+}
+
+function renderDesktopNotificationSettings() {
+  const status = desktopNotificationStatus();
+  const preferences = desktopNotificationConfig?.preferences || {};
+  const organization = desktopNotificationConfig?.organization || {};
+  const devices = Array.isArray(desktopNotificationConfig?.devices) ? desktopNotificationConfig.devices : [];
+  const enabled = status.label === "Enabled";
+  const admin = state.currentRole === "Admin";
+  return `
+    <details class="desktop-notification-settings">
+      <summary>
+        <span class="desktop-notification-summary-copy"><strong>Desktop Notifications</strong><small>${escapeHtml(status.detail)}</small></span>
+        <span class="desktop-notification-status ${status.tone}">${status.label}</span>
+      </summary>
+      <div class="desktop-notification-settings-body">
+        <div class="desktop-notification-actions">
+          ${enabled
+            ? `<button class="mini-button desktop-test-button" id="testDesktopNotifications" type="button">Send Test</button><button class="mini-button desktop-disable-button" id="disableDesktopNotifications" type="button">Disable on This Device</button>`
+            : `<button class="mini-button desktop-enable-button" id="enableDesktopNotifications" type="button" ${desktopNotificationsSupported() && Notification.permission !== "denied" ? "" : "disabled"}>Enable Desktop Notifications</button>`}
+        </div>
+        ${devices.length ? `<div class="desktop-device-list"><strong>${devices.length} active device${devices.length === 1 ? "" : "s"}</strong>${devices.map((device) => `<span>${escapeHtml(device.device_label || "Browser device")}</span>`).join("")}</div>` : ""}
+        ${desktopNotificationConfig?.supported ? `
+          <div class="desktop-preference-grid">
+            ${desktopNotificationPreferenceFields.map(([key, label]) => `
+              <label><input type="checkbox" data-desktop-preference="${key}" ${preferences[key] !== false ? "checked" : ""} /> <span>${label}</span></label>
+            `).join("")}
+          </div>
+          <button class="mini-button" id="saveDesktopNotificationPreferences" type="button">Save Preferences</button>
+        ` : ""}
+        ${admin ? `
+          <section class="desktop-admin-controls">
+            <h4>Admin Controls</h4>
+            <label class="desktop-admin-toggle"><input id="desktopOrganizationEnabled" type="checkbox" ${organization.organization_enabled !== false ? "checked" : ""} /> Enable desktop alerts for the organisation</label>
+            <div class="desktop-admin-category-grid">
+              ${desktopNotificationPreferenceFields.filter(([key]) => key !== "sound_enabled").map(([key, label]) => `<label><input type="checkbox" data-desktop-admin-category="${key}" ${organization[key] !== false ? "checked" : ""} /> ${label}</label>`).join("")}
+            </div>
+            <label>Reminder offsets (1 = tomorrow, 0 = today, -1 = overdue)<input id="desktopReminderDays" value="${escapeHtml((organization.due_reminder_days || [1, 0, -1]).join(", "))}" placeholder="1, 0, -1" /></label>
+            <div class="desktop-notification-actions">
+              <button class="mini-button" id="saveDesktopAdminSettings" type="button">Save Admin Settings</button>
+              <button class="mini-button" id="loadDesktopDeliveryStatus" type="button">Delivery Status</button>
+            </div>
+            ${desktopNotificationAdminStatus ? `<div class="desktop-delivery-summary"><p>Last 7 days: ${Number(desktopNotificationAdminStatus.total || 0)} attempt(s), ${Number(desktopNotificationAdminStatus.delivered || 0)} delivered, ${Number(desktopNotificationAdminStatus.failed || 0)} failed.</p>${(desktopNotificationAdminStatus.recentFailures || []).slice(0, 5).map((failure) => `<small>${escapeHtml(failure.error_message || "Delivery failed")}</small>`).join("")}</div>` : ""}
+            <div class="desktop-announcement-form">
+              <label>Announcement title<input id="desktopAnnouncementTitle" maxlength="80" placeholder="Office announcement" /></label>
+              <label>Message<textarea id="desktopAnnouncementMessage" maxlength="180" placeholder="Write a short announcement"></textarea></label>
+              <button class="mini-button desktop-enable-button" id="sendDesktopAnnouncement" type="button">Send to Active Users</button>
+            </div>
+          </section>
+        ` : ""}
+      </div>
+    </details>`;
+}
+
+function renderDesktopNotificationHeaderAction() {
+  const status = desktopNotificationStatus();
+  const enabled = status.label === "Enabled";
+  const blocked = status.label === "Blocked by Browser";
+  const label = enabled ? "Desktop Alerts On" : blocked ? "Desktop Alerts Blocked" : "Enable Desktop Alerts";
+  return `<button class="mini-button desktop-header-action ${enabled ? "is-enabled" : ""}" id="desktopNotificationHeaderAction" type="button" title="${escapeHtml(status.detail)}" ${enabled ? "disabled" : ""}>${label}</button>`;
+}
+
+function bindDesktopNotificationSettings(panel) {
+  panel.querySelector("#desktopNotificationHeaderAction")?.addEventListener("click", enableDesktopNotifications);
+  panel.querySelector("#enableDesktopNotifications")?.addEventListener("click", enableDesktopNotifications);
+  panel.querySelector("#disableDesktopNotifications")?.addEventListener("click", disableDesktopNotifications);
+  panel.querySelector("#testDesktopNotifications")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await apiJson("/api/notifications/test", { method: "POST" });
+      toast(result.sent ? "Test notification sent." : "No active desktop device was available.");
+    } catch (error) { toast(error.message || "Unable to send the test notification."); }
+    finally { button.disabled = false; }
+  });
+  panel.querySelector("#saveDesktopNotificationPreferences")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const body = {};
+    panel.querySelectorAll("[data-desktop-preference]").forEach((input) => { body[input.dataset.desktopPreference] = input.checked; });
+    button.disabled = true;
+    try {
+      await apiJson("/api/notifications/preferences", { method: "PUT", body: JSON.stringify(body) });
+      await loadDesktopNotificationConfig(true);
+      openNotifications();
+      toast("Desktop notification preferences saved.");
+    } catch (error) { toast(error.message || "Unable to save preferences."); }
+    finally { button.disabled = false; }
+  });
+  panel.querySelector("#saveDesktopAdminSettings")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const dueReminderDays = String(panel.querySelector("#desktopReminderDays")?.value || "").split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
+    const body = { organization_enabled: panel.querySelector("#desktopOrganizationEnabled")?.checked, due_reminder_days: dueReminderDays };
+    panel.querySelectorAll("[data-desktop-admin-category]").forEach((input) => { body[input.dataset.desktopAdminCategory] = input.checked; });
+    button.disabled = true;
+    try {
+      await apiJson("/api/notifications/admin/settings", { method: "PUT", body: JSON.stringify(body) });
+      await loadDesktopNotificationConfig(true);
+      openNotifications();
+      toast("Desktop notification settings saved.");
+    } catch (error) { toast(error.message || "Unable to save admin settings."); }
+    finally { button.disabled = false; }
+  });
+  panel.querySelector("#loadDesktopDeliveryStatus")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      const result = await apiJson("/api/notifications/admin/status");
+      desktopNotificationAdminStatus = result.summary || {};
+      openNotifications();
+    } catch (error) { toast(error.message || "Unable to load delivery status."); }
+  });
+  panel.querySelector("#sendDesktopAnnouncement")?.addEventListener("click", async (event) => {
+    const title = panel.querySelector("#desktopAnnouncementTitle")?.value.trim() || "Office announcement";
+    const message = panel.querySelector("#desktopAnnouncementMessage")?.value.trim();
+    if (!message) return toast("Enter an announcement message.");
+    const userIds = (state.users || []).filter((user) => user.isActive !== false && user.is_active !== false).map((user) => user.authUserId || user.auth_user_id).filter(Boolean);
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await apiJson("/api/notifications/admin/announcement", { method: "POST", body: JSON.stringify({ title, message, userIds }) });
+      toast(`Announcement sent to ${result.recipients || 0} active user(s).`);
+      panel.querySelector("#desktopAnnouncementMessage").value = "";
+    } catch (error) { toast(error.message || "Unable to send announcement."); }
+    finally { button.disabled = false; }
+  });
+}
+
 function openNotifications() {
   const panel = document.querySelector("#notificationPanel");
+  if (!desktopNotificationConfig && state.session?.loggedIn && isSupabaseMode()) {
+    loadDesktopNotificationConfig().then(() => {
+      if (panel?.classList.contains("open")) openNotifications();
+    });
+  }
   const allItems = allNotificationItems();
   const activeFilter = panel?.dataset.filter || "all";
   const items = filterNotificationItems(allItems, activeFilter);
@@ -15039,11 +16612,13 @@ function openNotifications() {
         <p class="small-muted">${unreadTotal} unread update(s)</p>
       </div>
       <div class="drawer-head-actions">
+        ${renderDesktopNotificationHeaderAction()}
         <button class="mini-button" id="markAllRead" ${unreadTotal ? "" : "disabled"}>Mark All as Read</button>
         <button class="icon-button drawer-close" id="closeNotifications" title="Close">X</button>
       </div>
     </div>
     <div class="drawer-body notification-drawer-body">
+      ${renderDesktopNotificationSettings()}
       <div class="notification-tabs">
         ${notificationFilterTab("all", "All", activeFilter)}
         ${notificationFilterTab("unread", "Unread", activeFilter)}
@@ -15062,6 +16637,7 @@ function openNotifications() {
   panel.classList.add("open");
   document.querySelector("#backdrop").classList.add("show");
   document.querySelector("#closeNotifications").onclick = closeOverlays;
+  bindDesktopNotificationSettings(panel);
   document.querySelector("#markAllRead").onclick = () => {
     markNotificationItemsRead(allItems);
     panel.dataset.filter = "unread";
@@ -16046,7 +17622,11 @@ async function bootApp() {
   }
   if (state.session?.loggedIn && isSupabaseMode()) {
     const loaded = await loadStateFromApi();
-    if (loaded) return;
+    if (loaded) {
+      registerDesktopNotificationWorker().catch((error) => console.warn("Service worker registration failed", error));
+      loadDesktopNotificationConfig().then(applyDesktopNotificationRouteFromLocation).catch(() => {});
+      return;
+    }
   }
   mount();
 }
