@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -6,6 +7,11 @@ let capturedState = {
   files: [{
     id: "fee-mode-test-file",
     name: "Fee mode test client",
+    billedAmount: 1000,
+    stages: { Billed: true },
+  }, {
+    id: "fee-discount-test-file",
+    name: "TEST ABCD EVE 2",
     billedAmount: 1000,
     stages: { Billed: true },
   }],
@@ -73,6 +79,24 @@ async function main() {
   for (let index = 0; index < cases.length; index += 1) {
     await saveMode(cases[index][0], cases[index][1], index);
   }
+  const settled = await saveFeeReceipt("fee-discount-test-file", {
+    feeReceiptId: "fee-discount-settlement",
+    receivedDate: "2026-08-04",
+    receivedAmount: 950,
+    discountAmount: 50,
+    paymentMode: "UPI",
+    accountKey: "federal_bank",
+    pushToTransactions: false,
+  }, {}, profile.id, profile);
+  const settledFile = settled.files.find((file) => file.id === "fee-discount-test-file");
+  assert.equal(settledFile.feeReceived, true);
+  assert.equal(settledFile.balanceAmount, 0);
+  assert.equal(settledFile.paymentStatus, "Fee Received");
+
+  const browserAppSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  const pendingAmountBody = browserAppSource.match(/function filePendingAmount\(file\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(pendingAmountBody, /feeReceiptSummaryForFile\(file\)\.outstandingAmount/,
+    "Fee Pending must use the receipt summary, including discounts");
   console.log("Fee receipt payment mode and account tests passed.");
 }
 

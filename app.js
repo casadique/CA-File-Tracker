@@ -4904,7 +4904,7 @@ function dashboardFinancials() {
   const today = indiaTodayDate();
   const totalBilled = files.filter(isBilledFile).reduce((sum, file) => sum + dashboardFileAmount(file, "billed"), 0);
   const feeReceived = files.filter((file) => file.feeReceived).reduce((sum, file) => sum + dashboardFileAmount(file, "received"), 0);
-  const feePending = Math.max(totalBilled - feeReceived, 0);
+  const feePending = files.filter(isBilledFile).reduce((sum, file) => sum + filePendingAmount(file), 0);
   const collectionsToday = activeCashCollections().filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const expensesToday = activeExpenses().filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return { totalBilled, feeReceived, feePending, collectionsToday, expensesToday, balance: financeBalancesForRange().combined.closing };
@@ -6969,12 +6969,15 @@ function feeReceiptSummaryForFile(file = {}) {
   const hasReceiptHistory = (indexedFeeReceipts().get(file.id) || []).length > 0;
   const billedAmount = Number(file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || 0);
   const legacyReceived = Number(file.feeReceivedAmount || file.amountReceived || file.amount_received || dashboardFileAmount(file, "received") || 0);
+  const legacyDiscount = Number(file.discountAmount || file.discount_amount || file.discount || 0);
   const totalReceived = receipts.length
     ? receipts.reduce((sum, receipt) => sum + Math.max(Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0), 0), 0)
     : (hasReceiptHistory ? 0 : Math.max(Number.isFinite(legacyReceived) ? legacyReceived : 0, 0));
-  const totalDiscount = receipts.reduce((sum, receipt) => sum + Math.max(Number(
-    receipt.discountAmount || receipt.discount_amount || receipt.discount || 0,
-  ), 0), 0);
+  const totalDiscount = receipts.length
+    ? receipts.reduce((sum, receipt) => sum + Math.max(Number(
+      receipt.discountAmount || receipt.discount_amount || receipt.discount || 0,
+    ), 0), 0)
+    : (hasReceiptHistory ? 0 : Math.max(Number.isFinite(legacyDiscount) ? legacyDiscount : 0, 0));
   const latestReceiptDate = receipts.length
     ? feeReceiptRecordDate(receipts[0])
     : (!hasReceiptHistory && totalReceived > 0 ? normalizeImportDate(file.feeReceivedDate || file.receivedDate || file.received_date || file.receivedOn || file.received_on || "") : "");
@@ -16550,9 +16553,7 @@ function filePdfAmount(value) {
 }
 
 function filePendingAmount(file) {
-  const billed = dashboardFileAmount(file, "billed");
-  const received = dashboardFileAmount(file, "received");
-  return Math.max(billed - received, 0);
+  return feeReceiptSummaryForFile(file).outstandingAmount;
 }
 
 function fileCrNumber(file = {}) {
