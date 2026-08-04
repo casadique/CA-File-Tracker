@@ -5701,7 +5701,7 @@ function staffFilePageTitle(listView) {
     nonBilled: "Non-Billed Files",
     billed: "Billed Files",
     feePending: "Fee Pending Files",
-    feeReceived: "Fee Received Files",
+    feeReceived: "FEE RECEIVED FILES REPORT",
     reAssigned: "Re Assigned Files",
   };
   return titleMap[listView] || "My Files";
@@ -6100,13 +6100,7 @@ function staffReportRow(file, listView = "") {
     };
   }
   if (listView === "feeReceived") {
-    return {
-      "Client Name": file.name,
-      Service: file.serviceType,
-      FY: file.fy || "NA",
-      ...feeReceiptReportFields(file, "Balance"),
-      "Received By": file.feeReceivedBy || file.collectionStaff || "-",
-    };
+    return feeReceivedFilesReportRow(file, 0, { includeSn: false, format: "display" });
   }
   if (listView === "feePending") {
     return feePendingReportRow(file, 0, { includeSn: false, format: "display" });
@@ -6253,8 +6247,12 @@ async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
-    : (listView === "feePending" ? feePendingReportRow(file, index, { format: "excel" }) : staffReportRow(file, listView)));
-  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles, { numeric: listView === "feePending" }) : baseRows;
+    : listView === "feePending"
+      ? feePendingReportRow(file, index, { format: "excel" })
+      : listView === "feeReceived"
+      ? feeReceivedFilesReportRow(file, index, { format: "excel" })
+        : staffReportRow(file, listView));
+  const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles, { numeric: true }) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadXlsxRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
   toast("Excel file downloaded");
@@ -6264,7 +6262,11 @@ async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
-    : (listView === "feePending" ? feePendingReportRow(file, index, { format: "display" }) : staffReportRow(file, listView)));
+    : listView === "feePending"
+      ? feePendingReportRow(file, index, { format: "display" })
+      : listView === "feeReceived"
+      ? feeReceivedFilesReportRow(file, index, { format: "display" })
+        : staffReportRow(file, listView));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to export.");
   await downloadPdfRows(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -6275,7 +6277,11 @@ function printStaffPageReport(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
-    : (listView === "feePending" ? feePendingReportRow(file, index, { format: "display" }) : staffReportRow(file, listView)));
+    : listView === "feePending"
+      ? feePendingReportRow(file, index, { format: "display" })
+      : listView === "feeReceived"
+      ? feeReceivedFilesReportRow(file, index, { format: "display" })
+        : staffReportRow(file, listView));
   const rows = ["feePending", "feeReceived"].includes(listView) ? appendFeeReceiptTotals(baseRows, reportFiles) : baseRows;
   if (!rows.length) return toast("No data to print.");
   printReport(staffExportName(listView), rows, staffExportHeaderLines(listView));
@@ -6501,7 +6507,7 @@ function renderFeeReceivedFileTable(files) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact fee-received-table">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Receipt Amount</th><th class="amount-column">Balance</th><th>Receipt Date</th><th>Payment Mode</th><th>Account</th><th>Status</th><th>Transaction</th><th>Actions</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Receipt Amount</th><th class="amount-column">Balance</th><th>Receipt Date</th><th>Payment Mode</th><th>Transaction</th><th>Actions</th></tr></thead>
         <tbody>
           ${rows.map(({ file, receipt }, index) => {
             const linked = receipt ? linkedCollectionForFeeReceipt(receipt) : linkedFeeReceiptCollection(file);
@@ -6509,7 +6515,6 @@ function renderFeeReceivedFileTable(files) {
             const amount = receipt
               ? Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0)
               : dashboardFileAmount(file, "received");
-            const status = receipt ? feeReceiptRecordStatus(receipt) : "Received";
             const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
             const canReverse = Boolean(active && !linked && !receiptWasPushed(receipt) && canManageReceipt);
             const transactionAction = linked
@@ -6533,8 +6538,6 @@ function renderFeeReceivedFileTable(files) {
               <td class="amount-cell amount-column">${rupee(filePendingAmount(file))}</td>
               <td>${fmt(receipt ? feeReceiptRecordDate(receipt) : (file.feeReceivedDate || file.receivedOn || file.received_on))}</td>
               <td>${escapeHtml(receipt?.paymentMode || receipt?.payment_mode || file.paymentMode || file.receiptMode || "-")}</td>
-              <td>${escapeHtml(financeAccountLabel(transactionAccountKey(receipt || file, "")))}</td>
-              <td><span class="badge ${active ? "filed" : "returned"}">${escapeHtml(status)}</span></td>
               <td><div class="action-row fee-transaction-actions">${transactionAction}</div></td>
               <td><div class="action-row">
                 ${receipt?.id ? `<button class="mini-button" data-view-fee-receipt="${escapeHtml(receipt.id)}">View</button>` : ""}
@@ -6548,7 +6551,7 @@ function renderFeeReceivedFileTable(files) {
             <td class="amount-cell amount-column">${rupee(totals.billed)}</td>
             <td class="amount-cell amount-column">${rupee(totals.received)}</td>
             <td class="amount-cell amount-column">${rupee(totals.balance)}</td>
-            <td colspan="6"></td>
+            <td colspan="4"></td>
           </tr>
         </tfoot>
       </table>
@@ -6888,6 +6891,25 @@ function feeReceiptReportFields(file = {}, balanceLabel = "Balance Amount") {
   };
 }
 
+function feeReceivedFilesReportRow(file = {}, index = 0, options = {}) {
+  const { includeSn = true, format = "display" } = options;
+  const summary = feeReceiptSummaryForFile(file);
+  const amountValue = (value) => format === "excel" ? Number(value || 0) : money(value);
+  const dateValue = (value) => format === "excel" ? excelDateValue(value) : displayDate(value);
+  const row = {
+    "Client Name": filePdfText(file.name),
+    "Service Type": filePdfText(file.serviceType),
+    FY: filePdfText(fileFy(file), "NA"),
+    "Bill Date": dateValue(file.billDate || file.bill_date || file.billedDate),
+    "Billed Amount": amountValue(summary.billedAmount),
+    "Received Amount": amountValue(summary.totalReceived),
+    Balance: amountValue(summary.outstandingAmount),
+    "Received Date": dateValue(summary.latestReceiptDate),
+    "Payment Mode": filePdfText(file.paymentMode || file.receiptMode, "-"),
+  };
+  return includeSn ? { SN: index + 1, ...row } : row;
+}
+
 function feePendingReportFields(file = {}) {
   const summary = feeReceiptSummaryForFile(file);
   return {
@@ -7122,6 +7144,21 @@ function feePendingPdfColumnStyles() {
     "Outstanding Amount": { halign: "right", cellWidth: 50 },
     "Assigned Staff / Done By": { cellWidth: 58 },
     Remarks: { cellWidth: 72 },
+  };
+}
+
+function feeReceivedPdfColumnStyles() {
+  return {
+    SN: { halign: "center", cellWidth: 26 },
+    "Client Name": { cellWidth: 150 },
+    "Service Type": { cellWidth: 100 },
+    FY: { halign: "center", cellWidth: 40 },
+    "Bill Date": { halign: "center", cellWidth: 62 },
+    "Billed Amount": { halign: "right", cellWidth: 70 },
+    "Received Amount": { halign: "right", cellWidth: 70 },
+    Balance: { halign: "right", cellWidth: 65 },
+    "Received Date": { halign: "center", cellWidth: 65 },
+    "Payment Mode": { cellWidth: 75 },
   };
 }
 
@@ -11720,6 +11757,10 @@ async function downloadXlsxRows(name, rows, title = "") {
       "Checked Date": 15,
       "Bill Date": 14,
       "Bill No.": 14,
+      "Billed Amount": 16,
+      "Received Amount": 17,
+      Balance: 14,
+      "Payment Mode": 18,
       "Bill Amount": 16,
       "Amount Received": 18,
       "Received Date": 15,
@@ -11729,6 +11770,16 @@ async function downloadXlsxRows(name, rows, title = "") {
     };
     return { wch: preferred[header] || Math.max(14, Math.min(34, header.length + 8)) };
   });
+  const feeReceivedReport = headers.includes("Billed Amount")
+    && headers.includes("Received Amount")
+    && headers.includes("Balance")
+    && headers.includes("Payment Mode")
+    && !headers.includes("Bill No.");
+  if (feeReceivedReport) {
+    worksheet["!rows"] = Array.from({ length: range.e.r + 1 }, (_, rowIndex) => ({
+      hpt: rowIndex === headerRowIndex ? 24 : rowIndex > headerRowIndex ? 20 : 18,
+    }));
+  }
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
   XLSX.writeFile(workbook, `${name}.xlsx`);
@@ -11810,7 +11861,11 @@ async function downloadPdfSections(name, sections, title = "") {
       styles: { fontSize: compactReport ? 5.4 : 8, cellPadding: compactReport ? 2 : 4, overflow: "linebreak", valign: "middle" },
       headStyles: { fillColor: [30, 58, 138], textColor: 255 },
       margin: { left: compactReport ? 14 : 40, right: compactReport ? 14 : 40, bottom: 30 },
-      columnStyles: headers.includes("Outstanding Amount") ? feePendingPdfColumnStyles() : {},
+      columnStyles: headers.includes("Outstanding Amount")
+        ? feePendingPdfColumnStyles()
+        : headers.includes("Payment Mode") && headers.includes("Billed Amount") && headers.includes("Balance") && !headers.includes("Bill No.")
+          ? feeReceivedPdfColumnStyles()
+          : {},
       didParseCell: (data) => {
         const header = headers[data.column.index];
         if (isFeeAmountReportHeader(header)) data.cell.styles.halign = "right";
@@ -16643,15 +16698,7 @@ function fileListReportRows(files, options = {}) {
       return feePendingReportRow(file, index, { format });
     }
     if (section === "feeReceived") {
-      return {
-        SN: base.SN,
-        "Client Name": base["Client Name"],
-        "Service Type": base["Service Type"],
-        FY: base.FY,
-        ...feeReceiptReportFields(file, "Balance"),
-        "Received By": filePdfText(file.receivedByUserName || file.received_by_user_name || file.feeReceivedBy, "-"),
-        "Payment Status": "Received",
-      };
+        return feeReceivedFilesReportRow(file, index, { format });
     }
     return {
       SN: base.SN,

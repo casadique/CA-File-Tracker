@@ -97,6 +97,21 @@ async function main() {
   const pendingAmountBody = browserAppSource.match(/function filePendingAmount\(file\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(pendingAmountBody, /feeReceiptSummaryForFile\(file\)\.outstandingAmount/,
     "Fee Pending must use the receipt summary, including discounts");
+  const receivedReportBody = browserAppSource.match(
+    /function feeReceivedFilesReportRow[\s\S]*?(?=\nfunction feePendingReportRow)/,
+  )?.[0] || "";
+  for (const column of ["Client Name", "Service Type", "Billed Amount", "Received Amount", "Balance", "Payment Mode"]) {
+    assert.match(receivedReportBody, new RegExp(`"${column}"|${column}:`),
+      `Fee Received report must include ${column}`);
+  }
+  assert.doesNotMatch(receivedReportBody, /"Bill No\."|"Transaction Status"|"Payment Status"|"Received By"/,
+    "Fee Received report must exclude obsolete columns");
+  const receivedTableBody = browserAppSource.match(
+    /function renderFeeReceivedFileTable[\s\S]*?(?=\nfunction feeReceiptIdForFile)/,
+  )?.[0] || "";
+  const receivedTableHeader = receivedTableBody.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] || "";
+  assert.doesNotMatch(receivedTableHeader, /<th>Account<\/th>|<th>Status<\/th>/,
+    "Fee Received display must not show Account or Status columns");
   console.log("Fee receipt payment mode and account tests passed.");
 }
 
