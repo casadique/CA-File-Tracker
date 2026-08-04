@@ -6116,7 +6116,8 @@ textarea {
 }
 
 .fee-pending-report-table {
-  min-width: 1900px;
+  min-width: 1180px;
+  table-layout: fixed;
 }
 
 .fee-pending-report-table th {
@@ -6128,9 +6129,21 @@ textarea {
 }
 
 .fee-pending-report-table th:nth-child(2),
-.fee-pending-report-table td:nth-child(2),
+.fee-pending-report-table td:nth-child(2) {
+  width: 160px;
+  min-width: 140px;
+  max-width: 160px;
+  white-space: normal;
+}
+
 .fee-pending-report-table th:nth-child(6),
-.fee-pending-report-table td:nth-child(6),
+.fee-pending-report-table td:nth-child(6) {
+  width: 90px;
+  min-width: 80px;
+  max-width: 90px;
+  white-space: normal;
+}
+
 .fee-pending-report-table th:nth-child(17),
 .fee-pending-report-table td:nth-child(17) {
   min-width: 150px;

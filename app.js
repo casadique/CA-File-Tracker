@@ -7049,7 +7049,12 @@ function feePendingDisplayRow(file = {}, index = 0) {
     "Remarks",
   ]);
   return Object.fromEntries(
-    Object.entries(reportRow).filter(([header]) => !hiddenColumns.has(header)),
+    Object.entries(reportRow)
+      .filter(([header]) => !hiddenColumns.has(header))
+      .map(([header, value]) => [
+        header === "Amount Received" ? "Received" : header === "Outstanding Amount" ? "Balance" : header,
+        value,
+      ]),
   );
 }
 
@@ -7087,6 +7092,7 @@ function appendFeeReceiptTotals(rows = [], files = [], options = {}) {
   if (Object.hasOwn(totalRow, "Bill Amount")) totalRow["Bill Amount"] = amountValue(totals.billed);
   if (Object.hasOwn(totalRow, "Received Amount")) totalRow["Received Amount"] = amountValue(totals.received);
   if (Object.hasOwn(totalRow, "Amount Received")) totalRow["Amount Received"] = amountValue(totals.received);
+  if (Object.hasOwn(totalRow, "Received")) totalRow.Received = amountValue(totals.received);
   if (Object.hasOwn(totalRow, "Balance")) totalRow.Balance = amountValue(totals.balance);
   if (Object.hasOwn(totalRow, "Balance Amount")) totalRow["Balance Amount"] = amountValue(totals.balance);
   if (Object.hasOwn(totalRow, "Outstanding Amount")) totalRow["Outstanding Amount"] = amountValue(totals.balance);
@@ -7094,7 +7100,7 @@ function appendFeeReceiptTotals(rows = [], files = [], options = {}) {
 }
 
 function isFeeAmountReportHeader(header = "") {
-  return ["Billed Amount", "Bill Amount", "Received Amount", "Amount Received", "Balance", "Balance Amount", "Outstanding Amount"].includes(header);
+  return ["Billed Amount", "Bill Amount", "Received Amount", "Amount Received", "Received", "Balance", "Balance Amount", "Outstanding Amount"].includes(header);
 }
 
 function feePendingPdfColumnStyles() {
