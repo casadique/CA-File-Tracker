@@ -1277,14 +1277,20 @@ function readLocalDesktopSentIds() {
 }
 
 function writeLocalDesktopSentIds(ids) {
-  localStorage.setItem(localDesktopStorageKey(DESKTOP_LOCAL_SENT_KEY), JSON.stringify([...ids].slice(-400)));
+  try {
+    localStorage.setItem(localDesktopStorageKey(DESKTOP_LOCAL_SENT_KEY), JSON.stringify([...ids].slice(-400)));
+  } catch (error) {
+    console.warn("Unable to save local desktop notification history", error);
+  }
 }
 
 function localDesktopAlertsEnabled() {
   return desktopNotificationsSupported()
     && Notification.permission === "granted"
     && desktopNotificationConfig?.preferences?.desktop_enabled
-    && currentDeviceSubscribed;
+    // A subscribed device receives the same event through Web Push. Showing it
+    // here as well creates a second Windows notification when the page is open.
+    && !currentDeviceSubscribed;
 }
 
 function desktopNotificationRouteForItem(item = {}) {
@@ -1342,9 +1348,18 @@ function cleanTextForNotification(value, max = 180) {
 function dispatchLocalDesktopNotifications() {
   if (!state.session?.loggedIn || !localDesktopAlertsEnabled()) return;
   const baselineKey = localDesktopStorageKey(DESKTOP_LOCAL_BASELINE_KEY);
-  const baseline = Number(localStorage.getItem(baselineKey) || 0);
+  let baseline = 0;
+  try {
+    baseline = Number(localStorage.getItem(baselineKey) || 0);
+  } catch (error) {
+    console.warn("Unable to read local desktop notification baseline", error);
+  }
   if (!baseline) {
-    localStorage.setItem(baselineKey, String(Date.now()));
+    try {
+      localStorage.setItem(baselineKey, String(Date.now()));
+    } catch (error) {
+      console.warn("Unable to save local desktop notification baseline", error);
+    }
     return;
   }
   const sent = readLocalDesktopSentIds();

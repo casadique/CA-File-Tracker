@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   activeNotificationRows,
   applyInitialNotificationCleanup,
@@ -40,5 +42,10 @@ const repeatedCleanup = applyInitialNotificationCleanup(cleanup.state, {
 });
 assert.equal(repeatedCleanup.changed, false);
 assert.equal(repeatedCleanup.state.auditLog.length, cleanup.state.auditLog.length);
+
+const browserAppSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+const localDesktopGate = browserAppSource.match(/function localDesktopAlertsEnabled\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+assert.match(localDesktopGate, /!currentDeviceSubscribed/, "Local desktop alerts must be disabled when Web Push is subscribed");
+assert.doesNotMatch(localDesktopGate, /&&\s*currentDeviceSubscribed\s*;/, "Subscribed devices must not use the local duplicate path");
 
 console.log("Notification cleanup and retention tests passed.");
