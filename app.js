@@ -3134,7 +3134,7 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const configuredBillingView = ["completed", "nonBilled", "feePending", "feeReceived"].includes(f.listView);
+    const configuredBillingView = ["active", "completed", "nonBilled", "feePending", "feeReceived"].includes(f.listView);
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
       ? configuredFinancialSearchHaystack(file)
@@ -5591,7 +5591,38 @@ function configuredFinancialFilterConfigs() {
     "Completion Date - Newest First", "Completion Date - Oldest First", "Checked Date - Newest First",
     "Checked Date - Oldest First", "Client Name - A to Z", "Service Type", "Done By", "Checked By", "Billing Status",
   ];
+  const activeSort = [
+    "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
+    "Due Date - Latest First", "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority", "Workflow Status",
+  ];
   return {
+    active: {
+      title: "Search & Filter Active Files",
+      mobileTitle: "Filter Active Files",
+      mainPrimary: [
+        { ...common.search, placeholder: "Search client, PAN, service, staff, C/o or remarks" },
+        common.client, common.careOf, common.service, common.staff,
+        { key: "activeStatus", label: "Workflow Status", type: "select", emptyLabel: "All active statuses", options: ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Corrected & Completed", "Approved", "Overdue"] },
+      ],
+      mainSecondary: [
+        { label: "Received Date Range", type: "range", controls: [
+          { key: "activeReceivedFrom", label: "Received From", type: "date" },
+          { key: "activeReceivedTo", label: "Received To", type: "date" },
+        ] },
+        { label: "Due Date Range", type: "range", controls: [
+          { key: "activeDueFrom", label: "Due From", type: "date" },
+          { key: "activeDueTo", label: "Due To", type: "date" },
+        ] },
+        { key: "priority", label: "Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+        { key: "activeOverdue", label: "Overdue", type: "select", emptyLabel: "All due states", options: ["Yes", "No"] },
+        { key: "activeSort", label: "Sort By", type: "select", options: activeSort, defaultValue: activeSort[0] },
+      ],
+      advanced: [common.pan, common.fy,
+        { key: "activeAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Assigned", "Reassigned"] },
+        { key: "activeApproval", label: "Approval", type: "select", emptyLabel: "All approval states", options: ["Pending", "Approved", "Not Submitted"] },
+        common.hasRemarks,
+      ],
+    },
     completed: {
       title: "Search & Filter Completed Files",
       mobileTitle: "Filter Completed Files",
@@ -5850,6 +5881,8 @@ function configuredFinancialFacts(file = {}) {
     receiptDate: normalizeImportDate(summary.latestReceiptDate || file.feeReceivedDate || file.receivedOn || file.received_on || ""),
     checkedDate: normalizeImportDate(file.checkedDate || file.checked_date || file.checkedAt || file.checked_at || ""),
     completionDate: fileActualCompletionDate(file),
+    receivedDate: normalizeImportDate(file.fileReceivedDate || file.receivedDate || file.received_date || ""),
+    dueDate: normalizeImportDate(file.dueDate || file.due_date || ""),
     billNumber: String(file.billNumber || file.billNo || file.bill_no || file.invoiceNumber || file.invoice_no || ""),
     contact: String(file.mobileNumber || file.mobile || file.contactNumber || file.contact || file.phone || ""),
     remarks: String(file.remarks || file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || ""),
@@ -5882,6 +5915,23 @@ function configuredFinancialFileMatches(file, listView, filters) {
   if (filters.financialFy && fileFy(file) !== filters.financialFy) return false;
   if (filters.hasRemarks === "Yes" && !facts.remarks.trim()) return false;
   if (filters.hasRemarks === "No" && facts.remarks.trim()) return false;
+  if (listView === "active") {
+    if (filters.activeStatus && statusOf(file).label !== filters.activeStatus) return false;
+    if (filters.priority && String(file.priority || "Medium") !== filters.priority) return false;
+    if (!configuredFinancialDateInRange(facts.receivedDate, filters.activeReceivedFrom, filters.activeReceivedTo)) return false;
+    if (!configuredFinancialDateInRange(facts.dueDate, filters.activeDueFrom, filters.activeDueTo)) return false;
+    if (filters.activeOverdue === "Yes" && !isOverdue(file)) return false;
+    if (filters.activeOverdue === "No" && isOverdue(file)) return false;
+    const assignee = currentFileAssignee(file);
+    const assigned = hasAssignedStaffValue(assignee.name) || Boolean(assignee.id || assignee.email);
+    if (filters.activeAssignment === "Assigned" && !assigned) return false;
+    if (filters.activeAssignment === "Not Assigned" && assigned) return false;
+    if (filters.activeAssignment === "Reassigned" && !isReassignedFile(file)) return false;
+    if (filters.activeApproval === "Pending" && !pendingApproval(file)) return false;
+    if (filters.activeApproval === "Approved" && !file.approved) return false;
+    if (filters.activeApproval === "Not Submitted" && (file.shared || file.approved)) return false;
+    return true;
+  }
   if (listView === "completed") {
     const doneBy = String(file.completedBy || file.workDoneBy || file.assignedStaff || "");
     if (filters.completedDoneBy && !sameStaffName(doneBy, filters.completedDoneBy)) return false;
@@ -6268,7 +6318,7 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
   document.querySelector("#files").innerHTML = `<div class="panel">
     ${renderConfiguredFinancialFilterPanel(files, config)}
     ${billedFilesActionToolbar()}
-    <div id="fileResults">${listView === "completed" ? renderCompletedFileTable(files) : renderStaffFileTable(files, listView)}</div>
+    <div id="fileResults">${listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : renderStaffFileTable(files, listView)}</div>
   </div>`;
   bindConfiguredFinancialFilters(config);
   const exportExcelButton = document.querySelector("#exportFiltered");
@@ -6666,6 +6716,10 @@ function sortConfiguredFinancialFiles(files, listView) {
     else if (sortLabel === "Bill Date - Oldest First" || sortLabel === "Oldest Pending First") result = dateCompare(left.billDate, right.billDate, "asc");
     else if (sortLabel === "Receipt Date - Newest First") result = dateCompare(left.receiptDate, right.receiptDate);
     else if (sortLabel === "Receipt Date - Oldest First") result = dateCompare(left.receiptDate, right.receiptDate, "asc");
+    else if (sortLabel === "Received Date - Newest First") result = dateCompare(left.receivedDate, right.receivedDate);
+    else if (sortLabel === "Received Date - Oldest First") result = dateCompare(left.receivedDate, right.receivedDate, "asc");
+    else if (sortLabel === "Due Date - Earliest First") result = dateCompare(left.dueDate, right.dueDate, "asc");
+    else if (sortLabel === "Due Date - Latest First") result = dateCompare(left.dueDate, right.dueDate);
     else if (sortLabel === "Outstanding - Highest First") result = right.pdfRecord.balanceAmount - left.pdfRecord.balanceAmount;
     else if (sortLabel === "Outstanding - Lowest First") result = left.pdfRecord.balanceAmount - right.pdfRecord.balanceAmount;
     else if (sortLabel === "Received Amount - Highest First") result = right.pdfRecord.receivedAmount - left.pdfRecord.receivedAmount;
@@ -6676,6 +6730,11 @@ function sortConfiguredFinancialFiles(files, listView) {
     else if (sortLabel === "Done By") result = textCompare(a.completedBy || a.workDoneBy || a.assignedStaff, b.completedBy || b.workDoneBy || b.assignedStaff);
     else if (sortLabel === "Checked By") result = textCompare(a.checkedBy, b.checkedBy);
     else if (sortLabel === "Billing Status") result = textCompare(completedFileBillingCategory(a), completedFileBillingCategory(b));
+    else if (sortLabel === "Priority") {
+      const rank = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
+      result = (rank[b.priority] || 0) - (rank[a.priority] || 0);
+    }
+    else if (sortLabel === "Workflow Status") result = textCompare(statusOf(a).label, statusOf(b).label);
     else if (sortLabel === "C/o") result = textCompare(a.careOf, b.careOf);
     else if (sortLabel === "Payment Account") result = textCompare(left.receiptModes[0] || "Not Recorded", right.receiptModes[0] || "Not Recorded");
     else if (sortLabel === "Received By") result = textCompare(left.receivedBy[0], right.receivedBy[0]);
@@ -6684,7 +6743,7 @@ function sortConfiguredFinancialFiles(files, listView) {
 }
 
 function sortFilesForDisplay(files) {
-  if (["completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView)) return sortConfiguredFinancialFiles(files, state.filters.listView);
+  if (["active", "completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView)) return sortConfiguredFinancialFiles(files, state.filters.listView);
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -7072,8 +7131,10 @@ function refreshConfiguredFinancialResults(config) {
   setConfiguredFinancialFilterLoading(false);
   const results = document.querySelector("#fileResults");
   if (results) {
-    results.innerHTML = state.filters.listView === "completed"
-      ? renderCompletedFileTable(files)
+    results.innerHTML = state.filters.listView === "active"
+      ? renderActiveFileTable(files)
+      : state.filters.listView === "completed"
+        ? renderCompletedFileTable(files)
       : (isStaffLogin() ? renderStaffFileTable(files, state.filters.listView) : renderFileTable(files));
     bindFileActions();
   }
@@ -7416,6 +7477,72 @@ function renderBilledFileTable(files = []) {
   </div>`;
 }
 
+function activeFileActions(file = {}) {
+  const fileId = escapeHtml(file.id || "");
+  const canEdit = Boolean(rolePerm().edit);
+  const canDelete = Boolean(rolePerm().delete);
+  const menuItems = [];
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete="${fileId}"`, danger: true, divider: true }));
+  const primaryLabel = canEdit ? "Update File" : "View File";
+  return `<div class="billed-actions active-file-actions" data-billed-actions="${fileId}">
+    <button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>${primaryLabel}</span></button>
+    ${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}
+  </div>`;
+}
+
+function activeTimeline(file = {}) {
+  const due = displayDate(file.dueDate) || "Not set";
+  return `<div class="active-timeline"><span><b>Received</b>${escapeHtml(displayDate(file.fileReceivedDate) || "-")}</span><span><b>Allotted</b>${escapeHtml(displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-")}</span><span class="${isOverdue(file) ? "is-overdue" : ""}"><b>Due</b>${escapeHtml(due)}</span></div>`;
+}
+
+function activeExpandedDetails(file = {}) {
+  const assignee = currentFileAssignee(file);
+  const workStarted = file.workStartedDate || file.work_started_date || (file.stages?.WIP ? file.workAllotmentDate : "");
+  return `<div class="active-expanded-grid">
+    <div><span>Work Started</span><strong>${escapeHtml(displayDate(workStarted) || "Not recorded")}</strong></div>
+    <div><span>Assignment</span><strong>${escapeHtml(isReassignedFile(file) ? "Reassigned" : (hasAssignedStaffValue(assignee.name) ? "Assigned" : "Not Assigned"))}</strong></div>
+    <div><span>Mode</span><strong>${escapeHtml(file.mode || "Not recorded")}</strong></div>
+    <div><span>Last Updated</span><strong>${escapeHtml(displayDate(file.lastUpdatedDate || file.updated_at) || "-")}</strong></div>
+    <div><span>DP</span><strong>${escapeHtml(file.dp || file.dealingPerson || file.dealtBy || "Not recorded")}</strong></div>
+    <div><span>SP</span><strong>${escapeHtml(file.sp || file.supervisor || file.salesPerson || "Not recorded")}</strong></div>
+    <div class="active-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div>
+  </div>`;
+}
+
+function activeDesktopRows(files = []) {
+  return files.map((file, index) => {
+    const status = statusOf(file);
+    const assignee = currentFileAssignee(file);
+    return `<tr class="active-file-row file-row-${status.className}">
+      <td class="active-sn-cell">${fileSerialNumber(file, index)}</td>
+      <td class="active-client-cell"><div class="active-client-line"><button type="button" class="billed-expand-toggle" data-active-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(file)}</div></div></td>
+      <td class="active-service-cell"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")}</span></td>
+      <td class="active-timeline-cell">${activeTimeline(file)}</td>
+      <td class="active-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
+      <td class="active-status-cell"><span class="badge ${status.className}">${escapeHtml(status.label)}</span><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></td>
+      <td class="active-staff-cell"><strong>${escapeHtml(assignee.name || "Not Assigned")}</strong>${isReassignedFile(file) ? `<span>Reassigned${assignee.date ? ` · ${escapeHtml(displayDate(assignee.date))}` : ""}</span>` : ""}</td>
+      <td class="active-actions-column"><div class="action-row">${activeFileActions(file)}</div></td>
+    </tr><tr class="active-details-row" hidden><td colspan="8">${activeExpandedDetails(file)}</td></tr>`;
+  }).join("");
+}
+
+function activeMobileCard(file = {}, index = 0) {
+  const status = statusOf(file);
+  const assignee = currentFileAssignee(file);
+  return `<article class="active-mobile-card${index % 2 ? " is-alt" : ""}">
+    <div class="active-mobile-head"><button type="button" class="billed-expand-toggle" data-active-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
+    <div class="active-mobile-badges"><span class="badge ${status.className}">${escapeHtml(status.label)}</span><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></div>
+    <div class="active-mobile-summary"><div><span>Assigned Staff</span><strong>${escapeHtml(assignee.name || "Not Assigned")}</strong></div><div><span>C/o</span><strong>${escapeHtml(file.careOf || "Direct")}</strong></div></div>
+    ${activeTimeline(file)}
+    <div class="active-mobile-actions">${activeFileActions(file)}</div><div class="active-mobile-details" hidden>${activeExpandedDetails(file)}</div>
+  </article>`;
+}
+
+function renderActiveFileTable(files = []) {
+  return `<div class="table-wrap active-table-wrap"><table class="file-table active-modern-table"><thead><tr><th class="active-sn-cell">SN</th><th class="active-client-cell">Client</th><th>Service</th><th>Work Timeline</th><th>C/o</th><th>Status</th><th>Assigned Staff</th><th class="active-actions-column">Actions</th></tr></thead><tbody>${activeDesktopRows(files)}</tbody></table><div class="active-mobile-list">${files.map(activeMobileCard).join("")}</div></div>`;
+}
+
 function completedBillingBadge(file = {}) {
   const label = completedFileBillingCategory(file);
   const className = label === "Billed" ? "is-billed" : label === "Non Billable" ? "is-non-billable" : "is-unbilled";
@@ -7497,6 +7624,7 @@ function renderFileTable(files) {
   if (state.filters.listView === "feePending") return renderFeePendingFileTable(files);
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   if (state.filters.listView === "billed") return renderBilledFileTable(files);
+  if (state.filters.listView === "active") return renderActiveFileTable(files);
   if (state.filters.listView === "completed") return renderCompletedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
@@ -8938,6 +9066,22 @@ function bindFileActions() {
       const details = desktopRow?.nextElementSibling?.classList.contains("completed-details-row")
         ? desktopRow.nextElementSibling
         : mobileCard?.querySelector(".completed-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
+  document.querySelectorAll("[data-active-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".active-file-row");
+      const mobileCard = button.closest(".active-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("active-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".active-mobile-details");
       if (!details) return;
       const opening = details.hidden;
       details.hidden = !opening;

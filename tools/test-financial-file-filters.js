@@ -30,7 +30,7 @@ for (const required of [
   "Cash", "Federal Bank", "TMB", "Not Recorded", "Receipt Date - Newest First", "Received Amount - Highest First",
 ]) assert.match(configBlock, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `Missing configured filter: ${required}`);
 
-for (const irrelevant of ["Approval Pending", "Overdue Files", "Generic Workflow", "Generic Billing", "Due Date"]) {
+for (const irrelevant of ["Overdue Files", "Generic Workflow", "Generic Billing"]) {
   assert.doesNotMatch(configBlock, new RegExp(irrelevant), `Configured financial panels must not include ${irrelevant}`);
 }
 
