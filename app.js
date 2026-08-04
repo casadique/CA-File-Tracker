@@ -18616,6 +18616,427 @@ function drawBilledPdfFooters(doc) {
   }
 }
 
+const FEE_PENDING_PDF_AGING_BUCKETS = [
+  { label: "0–15 Days", min: 0, max: 15, text: BILLED_PDF_COLORS.green, fill: BILLED_PDF_COLORS.lightGreen },
+  { label: "16–30 Days", min: 16, max: 30, text: BILLED_PDF_COLORS.blue, fill: BILLED_PDF_COLORS.lightBlue },
+  { label: "31–60 Days", min: 31, max: 60, text: BILLED_PDF_COLORS.amber, fill: BILLED_PDF_COLORS.lightAmber },
+  { label: "61–90 Days", min: 61, max: 90, text: [194, 65, 12], fill: [255, 247, 237] },
+  { label: "Above 90 Days", min: 91, max: Number.POSITIVE_INFINITY, text: BILLED_PDF_COLORS.red, fill: BILLED_PDF_COLORS.lightRed },
+];
+
+function feePendingPdfBillingIsActive(file = {}) {
+  if (!isBilledFile(file) || isRemovedFileRecord(file)) return false;
+  const billingType = String(file.billingType || file.billing_type || "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  if (billingType === "non billable") return false;
+  if (file.billingDeleted === true || file.billing_deleted === true
+    || file.billingCancelled === true || file.billing_cancelled === true
+    || file.billingReversed === true || file.billing_reversed === true) return false;
+  const billingStatus = String(
+    file.billingStatus || file.billing_status || file.billStatus || file.bill_status || "",
+  ).trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return !["deleted", "cancelled", "canceled", "reversed", "non billable"].includes(billingStatus);
+}
+
+function feePendingPdfContact(file = {}) {
+  return filePdfText(
+    file.contactNo || file.contact_no || file.contactNumber || file.contact_number
+    || file.mobile || file.mobileNo || file.mobile_no || file.phone || file.phoneNumber || file.phone_number
+    || file.clientSnapshot?.contactNo || file.clientSnapshot?.contact_no || file.clientSnapshot?.contactNumber
+    || file.clientSnapshot?.mobile || file.clientSnapshot?.mobileNo || file.clientSnapshot?.phone
+    || file.client_snapshot?.contactNo || file.client_snapshot?.contact_no || file.client_snapshot?.contactNumber
+    || file.client_snapshot?.mobile || file.client_snapshot?.mobileNo || file.client_snapshot?.phone,
+    "Not Recorded",
+  );
+}
+
+function feePendingPdfAging(billDate, reportDate = indiaTodayDate()) {
+  const normalizedBillDate = normalizeImportDate(billDate || "");
+  const normalizedReportDate = normalizeImportDate(reportDate || "");
+  if (!normalizedBillDate || !normalizedReportDate) {
+    return { days: null, category: "Date Not Recorded", text: "Date Not Recorded" };
+  }
+  const billTime = Date.parse(`${normalizedBillDate}T00:00:00Z`);
+  const reportTime = Date.parse(`${normalizedReportDate}T00:00:00Z`);
+  if (!Number.isFinite(billTime) || !Number.isFinite(reportTime)) {
+    return { days: null, category: "Date Not Recorded", text: "Date Not Recorded" };
+  }
+  const days = Math.max(Math.floor((reportTime - billTime) / MS_DAY), 0);
+  const bucket = FEE_PENDING_PDF_AGING_BUCKETS.find(({ min, max }) => days >= min && days <= max)
+    || FEE_PENDING_PDF_AGING_BUCKETS[0];
+  return { days, category: bucket.label, text: `${days} Day${days === 1 ? "" : "s"}\n${bucket.label}` };
+}
+
+function feePendingPdfStaff(file = {}) {
+  const assigned = filePdfText(file.assignedStaff || file.reAssignedStaff || file.assigned_staff || "");
+  const doneBy = filePdfText(file.completedBy || file.workDoneBy || file.work_done_by || "");
+  if (assigned && doneBy && assigned.toLowerCase() !== doneBy.toLowerCase()) return `Assigned: ${assigned}\nDone By: ${doneBy}`;
+  if (assigned) return `Assigned: ${assigned}`;
+  if (doneBy) return `Done By: ${doneBy}`;
+  return "Not Assigned";
+}
+
+function feePendingPdfRecord(file = {}, index = 0, reportDate = indiaTodayDate()) {
+  const financial = billedPdfRecord(file, index);
+  const billDateRaw = file.billDate || file.bill_date || file.billedDate || "";
+  const completed = filePdfDate(fileActualCompletionDate(file)) || "-";
+  const checkedRaw = file.checkedDate || file.checked_date || file.checkedAt || file.checked_at || "";
+  const checked = filePdfDate(checkedRaw) || "-";
+  const registration = filePdfText(fileRegistrationNumber(file), "Not Recorded");
+  const careOf = filePdfText(
+    file.careOf || file.care_of || file.c_o
+    || file.clientSnapshot?.careOf || file.clientSnapshot?.care_of || file.clientSnapshot?.c_o
+    || file.client_snapshot?.careOf || file.client_snapshot?.care_of || file.client_snapshot?.c_o,
+    "Direct",
+  );
+  const staffText = feePendingPdfStaff(file);
+  return {
+    ...financial,
+    index: index + 1,
+    clientDetails: `${financial.clientName}\nPAN/Reg: ${registration}\nContact: ${feePendingPdfContact(file)}`,
+    workDetails: `${financial.serviceType}\nFY: ${filePdfText(fileFy(file), "Not Recorded")}\nCompleted: ${completed}\nChecked: ${checked}`,
+    careOf,
+    billDetails: `Bill No: ${filePdfText(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo, "Not Recorded")}\nBill Date: ${filePdfDate(billDateRaw) || "-"}`,
+    aging: feePendingPdfAging(billDateRaw, reportDate),
+    assignedStaff: filePdfText(file.assignedStaff || file.reAssignedStaff || file.assigned_staff || "Not Assigned", "Not Assigned"),
+    staffText,
+    remarks: filePdfText(file.remarks || file.billingRemarks || file.feeRemarks, "-"),
+    pendingStatus: financial.receivedAmount > 0 ? "Partially Received" : "Not Received",
+  };
+}
+
+function feePendingPdfRecords(sourceFiles = [], reportDate = indiaTodayDate()) {
+  return sourceFiles
+    .filter(feePendingPdfBillingIsActive)
+    .map((file) => feePendingPdfRecord(file, 0, reportDate))
+    .filter((record) => record.balanceAmount > 0.005 && record.netBillAmount > 0.005)
+    .map((record, index) => ({ ...record, index: index + 1 }));
+}
+
+function feePendingPdfSummary(records = []) {
+  const aging = Object.fromEntries([
+    ...FEE_PENDING_PDF_AGING_BUCKETS.map(({ label }) => label),
+    "Date Not Recorded",
+  ].map((label) => [label, { label, files: 0, outstandingAmount: 0 }]));
+  const staff = new Map();
+  const summary = records.reduce((totals, record) => {
+    totals.totalRecords += 1;
+    totals.grossBilledAmount += record.grossBilledAmount;
+    totals.discountAmount += record.discountAmount;
+    totals.netBillAmount += record.netBillAmount;
+    totals.receivedAmount += record.receivedAmount;
+    totals.balanceAmount += record.balanceAmount;
+    if (record.pendingStatus === "Partially Received") totals.partiallyReceivedFiles += 1;
+    else totals.notReceivedFiles += 1;
+    if (record.aging.days !== null) totals.oldestPendingDays = Math.max(totals.oldestPendingDays, record.aging.days);
+    aging[record.aging.category].files += 1;
+    aging[record.aging.category].outstandingAmount += record.balanceAmount;
+    const staffName = record.assignedStaff || "Not Assigned";
+    const staffRow = staff.get(staffName) || { staff: staffName, files: 0, outstandingAmount: 0 };
+    staffRow.files += 1;
+    staffRow.outstandingAmount += record.balanceAmount;
+    staff.set(staffName, staffRow);
+    return totals;
+  }, {
+    totalRecords: 0,
+    grossBilledAmount: 0,
+    discountAmount: 0,
+    netBillAmount: 0,
+    receivedAmount: 0,
+    balanceAmount: 0,
+    notReceivedFiles: 0,
+    partiallyReceivedFiles: 0,
+    oldestPendingDays: 0,
+  });
+  summary.agingRows = Object.values(aging);
+  summary.staffRows = [...staff.values()].sort((a, b) => b.outstandingAmount - a.outstandingAmount || a.staff.localeCompare(b.staff));
+  return summary;
+}
+
+function feePendingPdfFilterSummary() {
+  const config = configuredFinancialFilterConfig("feePending");
+  if (!config) return "No Additional Filters Applied";
+  const parts = configuredFinancialActiveFilters(config)
+    .filter(({ key }) => key !== "feePendingSort")
+    .map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`);
+  return parts.length ? parts.join(" | ") : "No Additional Filters Applied";
+}
+
+function feePendingPdfSortSummary() {
+  return state.filters.feePendingSort || "Bill Date - Newest First";
+}
+
+function feePendingPdfCardItems(summary) {
+  return [
+    ["Gross Billed Amount", billedPdfMoney(summary.grossBilledAmount), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+    ["Approved Discounts", billedPdfMoney(summary.discountAmount), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Net Bill Amount", billedPdfMoney(summary.netBillAmount), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+    ["Amount Received", billedPdfMoney(summary.receivedAmount), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Total Outstanding", billedPdfMoney(summary.balanceAmount), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["Completely Unpaid", String(summary.notReceivedFiles), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["Partially Received", String(summary.partiallyReceivedFiles), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Oldest Pending Days", String(summary.oldestPendingDays), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+  ];
+}
+
+function drawFeePendingPdfFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, records, filterSummary, sortSummary, generatedBy, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* Branded text remains visible. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(14);
+  doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(8.2);
+  doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(15);
+  doc.text("FEE PENDING FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.blue);
+  doc.setLineWidth(1.5);
+  doc.line(pageWidth / 2 - 93, 69, pageWidth / 2 + 93, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Pending Records: ${records.length}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 125)}  |  Sort: ${sortSummary}`, margin + 8, 103);
+  drawBilledPdfCards(doc, feePendingPdfCardItems(summary), margin, 121, pageWidth - margin * 2, 8);
+}
+
+function drawFeePendingPdfCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24);
+  doc.text("Fee Pending Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" });
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 110)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.setLineWidth(0.5);
+  doc.line(30, 46, pageWidth - 30, 46);
+}
+
+function feePendingPdfTableRows(records = []) {
+  return records.map((record) => ({
+    sn: record.index,
+    client: record.clientDetails,
+    work: record.workDetails,
+    careOf: record.careOf,
+    bill: record.billDetails,
+    gross: billedPdfMoney(record.grossBilledAmount),
+    discount: billedPdfMoney(record.discountAmount),
+    net: billedPdfMoney(record.netBillAmount),
+    received: `${billedPdfMoney(record.receivedAmount)}\n${record.pendingStatus}`,
+    outstanding: billedPdfMoney(record.balanceAmount),
+    aging: record.aging.text,
+    staff: record.staffText,
+    remarks: record.remarks,
+  }));
+}
+
+function drawFeePendingPdfFinalSummary(doc, context) {
+  const { pageWidth, pageHeight, summary } = context;
+  let y = (doc.lastAutoTable?.finalY || 60) + 14;
+  if (y + 122 > pageHeight - 34) {
+    doc.addPage();
+    drawFeePendingPdfCompactHeader(doc, context);
+    y = 62;
+  }
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(30, y, pageWidth - 60, 102, 4, 4, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(10);
+  doc.text("FEE PENDING TOTALS", 40, y + 16);
+  drawBilledPdfCards(doc, feePendingPdfCardItems(summary), 40, y + 25, pageWidth - 80, 4);
+
+  y += 118;
+  if (y + 155 > pageHeight - 34) {
+    doc.addPage();
+    drawFeePendingPdfCompactHeader(doc, context);
+    y = 62;
+  }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(9);
+  doc.text("AGING SUMMARY", 30, y);
+  const agingRows = summary.agingRows.map((row) => ({ category: row.label, files: row.files, amount: billedPdfMoney(row.outstandingAmount) }));
+  agingRows.push({ category: "Total", files: summary.totalRecords, amount: billedPdfMoney(summary.balanceAmount) });
+  doc.autoTable({
+    startY: y + 8,
+    columns: [
+      { header: "Aging Category", dataKey: "category" },
+      { header: "Files", dataKey: "files" },
+      { header: "Outstanding Amount", dataKey: "amount" },
+    ],
+    body: agingRows,
+    theme: "grid",
+    tableWidth: 355,
+    margin: { left: 30, right: pageWidth - 385, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: 3, textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.35 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { category: { cellWidth: 165 }, files: { halign: "right", cellWidth: 60 }, amount: { halign: "right", cellWidth: 130 } },
+    didParseCell: (data) => {
+      if (data.section === "body" && agingRows[data.row.index]?.category === "Total") {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightBlue;
+      }
+    },
+  });
+
+  let staffY = y;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(9);
+  doc.text("STAFF-WISE OUTSTANDING", 407, staffY);
+  doc.autoTable({
+    startY: staffY + 8,
+    columns: [
+      { header: "Assigned Staff", dataKey: "staff" },
+      { header: "Pending Files", dataKey: "files" },
+      { header: "Outstanding Amount", dataKey: "amount" },
+    ],
+    body: summary.staffRows.map((row) => ({ staff: row.staff, files: row.files, amount: billedPdfMoney(row.outstandingAmount) })),
+    theme: "grid",
+    tableWidth: pageWidth - 437,
+    margin: { left: 407, right: 30, bottom: 32, top: 58 },
+    showHead: "everyPage",
+    rowPageBreak: "avoid",
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: 3, textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.35 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { staff: { cellWidth: 190 }, files: { halign: "right", cellWidth: 75 }, amount: { halign: "right", cellWidth: pageWidth - 702 } },
+    willDrawPage: (data) => {
+      if (data.pageNumber > 1) drawFeePendingPdfCompactHeader(doc, context);
+    },
+  });
+}
+
+async function createFeePendingFilesPdfDocument(sourceFiles) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = feePendingPdfRecords(sourceFiles);
+  const summary = feePendingPdfSummary(records);
+  const context = {
+    doc,
+    assets,
+    records,
+    summary,
+    generatedAt: fileExportDateTime(),
+    generatedBy: loggedInUser()?.name || state.currentUser || "Not Recorded",
+    filterSummary: feePendingPdfFilterSummary(),
+    sortSummary: feePendingPdfSortSummary(),
+    pageWidth: doc.internal.pageSize.getWidth(),
+    pageHeight: doc.internal.pageSize.getHeight(),
+  };
+  if (!records.length) return { doc, records, summary };
+  const rows = feePendingPdfTableRows(records);
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "sn" },
+      { header: "Client Details", dataKey: "client" },
+      { header: "Work Details", dataKey: "work" },
+      { header: "C/o", dataKey: "careOf" },
+      { header: "Bill Details", dataKey: "bill" },
+      { header: "Gross Bill", dataKey: "gross" },
+      { header: "Discount", dataKey: "discount" },
+      { header: "Net Bill", dataKey: "net" },
+      { header: "Received", dataKey: "received" },
+      { header: "Outstanding\nAmount", dataKey: "outstanding" },
+      { header: "Aging", dataKey: "aging" },
+      { header: "Staff", dataKey: "staff" },
+      { header: "Remarks", dataKey: "remarks" },
+    ],
+    body: rows,
+    theme: "grid",
+    showHead: "everyPage",
+    pageBreak: "auto",
+    rowPageBreak: "avoid",
+    margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: {
+      font: "DejaVuSans",
+      fontStyle: "normal",
+      fontSize: 6.25,
+      cellPadding: { top: 3.2, right: 2.1, bottom: 3.2, left: 2.1 },
+      overflow: "linebreak",
+      valign: "middle",
+      textColor: BILLED_PDF_COLORS.text,
+      lineColor: BILLED_PDF_COLORS.border,
+      lineWidth: 0.3,
+      minCellHeight: 28,
+    },
+    headStyles: {
+      font: "DejaVuSans",
+      fontStyle: "bold",
+      fontSize: 6.75,
+      fillColor: BILLED_PDF_COLORS.navy,
+      textColor: [255, 255, 255],
+      halign: "center",
+      valign: "middle",
+      lineColor: BILLED_PDF_COLORS.border,
+      lineWidth: 0.35,
+      minCellHeight: 27,
+    },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: {
+      sn: { halign: "center", cellWidth: 20 },
+      client: { halign: "left", cellWidth: 133, fontStyle: "bold" },
+      work: { halign: "left", cellWidth: 110 },
+      careOf: { halign: "left", cellWidth: 45 },
+      bill: { halign: "left", cellWidth: 60 },
+      gross: { halign: "right", cellWidth: 48 },
+      discount: { halign: "right", cellWidth: 48 },
+      net: { halign: "right", cellWidth: 48 },
+      received: { halign: "right", cellWidth: 48 },
+      outstanding: { halign: "right", cellWidth: 50, fontStyle: "bold", textColor: BILLED_PDF_COLORS.red },
+      aging: { halign: "center", cellWidth: 44 },
+      staff: { halign: "left", cellWidth: 53 },
+      remarks: { halign: "left", cellWidth: 75 },
+    },
+    willDrawPage: () => {
+      const page = doc.internal.getCurrentPageInfo().pageNumber;
+      if (page === 1) drawFeePendingPdfFirstHeader(doc, context);
+      else drawFeePendingPdfCompactHeader(doc, context);
+    },
+    didParseCell: (data) => {
+      if (data.section === "head" && data.column.dataKey === "outstanding") {
+        data.cell.styles.fontSize = 6;
+      }
+      if (data.section !== "body") return;
+      const record = records[data.row.index];
+      if (data.column.dataKey === "received") {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = record.pendingStatus === "Partially Received" ? BILLED_PDF_COLORS.amber : BILLED_PDF_COLORS.red;
+        data.cell.styles.fillColor = record.pendingStatus === "Partially Received" ? BILLED_PDF_COLORS.lightAmber : BILLED_PDF_COLORS.lightRed;
+      }
+      if (data.column.dataKey === "aging") {
+        const bucket = FEE_PENDING_PDF_AGING_BUCKETS.find(({ label }) => label === record.aging.category);
+        if (bucket) {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.textColor = bucket.text;
+          data.cell.styles.fillColor = bucket.fill;
+        }
+      }
+    },
+  });
+  drawFeePendingPdfFinalSummary(doc, context);
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
 async function createBilledFilesPdfDocument(sourceFiles) {
   await loadPdfTools();
   const assets = await loadBilledPdfAssets();
@@ -18745,6 +19166,16 @@ async function exportFilteredFilesPdf(files, button) {
       const { doc } = await createBilledFilesPdfDocument(sourceFiles);
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
       toast("Billed Files PDF downloaded");
+      return;
+    }
+    if (feePendingPdf) {
+      const { doc, records } = await createFeePendingFilesPdfDocument(sourceFiles);
+      if (!records.length) {
+        toast("No pending records available for the selected filters.");
+        return;
+      }
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Fee Pending Files PDF downloaded");
       return;
     }
     await loadPdfTools();
