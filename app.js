@@ -345,6 +345,7 @@ let desktopNotificationConfig = null;
 let desktopServiceWorkerRegistration = null;
 let desktopNotificationMessageBound = false;
 let desktopNotificationConfigPromise = null;
+let supabaseBrowserLoadPromise = null;
 let desktopNotificationAdminStatus = null;
 let currentDeviceSubscribed = false;
 let filterTimer = null;
@@ -448,8 +449,13 @@ setInterval(() => {
 }, 5000);
 
 function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) return applyTabSession(normalizeState(JSON.parse(saved)));
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return applyTabSession(normalizeState(JSON.parse(saved)));
+  } catch (error) {
+    console.warn("Saved browser cache could not be restored; starting with a clean cache.", error);
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* Browser storage is unavailable. */ }
+  }
   return applyTabSession(normalizeState({
     files: seedFiles,
     services: defaultServices,
@@ -1020,8 +1026,17 @@ function saveState(options = {}) {
   if (!options.skipMerge) mergeLatestSharedStateBeforeSave();
   refreshFileStaffLinks();
   saveTabSession();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedStateForStorage(state)));
-  localStorage.setItem(SYNC_EVENT_KEY, String(Date.now()));
+  try {
+    if (isSupabaseMode()) {
+      // The central API is authoritative. Avoid filling browser storage with the full database.
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedStateForStorage(state)));
+    }
+    localStorage.setItem(SYNC_EVENT_KEY, String(Date.now()));
+  } catch (error) {
+    console.warn("Browser cache write skipped; the app will continue using central data.", error);
+  }
   if (options.fullRemote && !options.skipRemote) saveStateToApi();
   if (syncChannel) syncChannel.postMessage({ type: "state-updated", at: Date.now() });
 }
@@ -2425,15 +2440,19 @@ function autoLoadPreparedDataIfEmpty() {
 }
 
 function saveTabSession() {
-  sessionStorage.setItem(TAB_SESSION_KEY, JSON.stringify({
-    session: state.session || { loggedIn: false },
-    currentUser: state.currentUser || "",
-    currentRole: state.currentRole || "",
-    activePage,
-    filters: state.filters || {},
-    readNotifications: state.readNotifications || [],
-    readChatMessages: state.readChatMessages || [],
-  }));
+  try {
+    sessionStorage.setItem(TAB_SESSION_KEY, JSON.stringify({
+      session: state.session || { loggedIn: false },
+      currentUser: state.currentUser || "",
+      currentRole: state.currentRole || "",
+      activePage,
+      filters: state.filters || {},
+      readNotifications: state.readNotifications || [],
+      readChatMessages: state.readChatMessages || [],
+    }));
+  } catch (error) {
+    console.warn("Tab session could not be cached; continuing without browser session cache.", error);
+  }
 }
 
 function tabSession() {
@@ -4024,7 +4043,7 @@ async function handlePasswordRecovery(recoverySession) {
   if (!password || password.length < 8) return toast("Password must be at least 8 characters.");
   if (password !== confirm) return toast("Passwords do not match.");
   try {
-    if (!window.supabase?.createClient) throw new Error("Password recovery service is still loading. Please try again.");
+    await ensureSupabaseBrowserClient();
     const config = await backendApiJson("/api/auth/public-config", { skipAuthRefresh: true });
     const client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -4042,6 +4061,25 @@ async function handlePasswordRecovery(recoverySession) {
   } catch (error) {
     toast(error.message || "Password recovery link expired. Send recovery email again.");
   }
+}
+
+function ensureSupabaseBrowserClient() {
+  if (window.supabase?.createClient) return Promise.resolve(window.supabase);
+  if (supabaseBrowserLoadPromise) return supabaseBrowserLoadPromise;
+  supabaseBrowserLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "/vendor/supabase.umd.js?v=2.45.4";
+    script.async = true;
+    script.onload = () => window.supabase?.createClient
+      ? resolve(window.supabase)
+      : reject(new Error("Password recovery service did not initialize."));
+    script.onerror = () => reject(new Error("Password recovery service could not load."));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    supabaseBrowserLoadPromise = null;
+    throw error;
+  });
+  return supabaseBrowserLoadPromise;
 }
 
 async function handleLogin() {
@@ -4181,15 +4219,23 @@ function bindMainContentScrollGuard() {
 }
 
 function isSidebarCollapsed() {
-  return localStorage.getItem(`${STORAGE_KEY}-sidebar-collapsed`) === "Yes";
+  try {
+    return localStorage.getItem(`${STORAGE_KEY}-sidebar-collapsed`) === "Yes";
+  } catch {
+    return false;
+  }
 }
 
 function resetSidebarLayoutForOperationsTheme() {
   const themeVersionKey = `${STORAGE_KEY}-sidebar-theme-version`;
   const currentVersion = "filing-index-operations-20260730";
-  if (localStorage.getItem(themeVersionKey) === currentVersion) return;
-  localStorage.removeItem(`${STORAGE_KEY}-sidebar-collapsed`);
-  localStorage.setItem(themeVersionKey, currentVersion);
+  try {
+    if (localStorage.getItem(themeVersionKey) === currentVersion) return;
+    localStorage.removeItem(`${STORAGE_KEY}-sidebar-collapsed`);
+    localStorage.setItem(themeVersionKey, currentVersion);
+  } catch (error) {
+    console.warn("Sidebar preference cache is unavailable; using the default layout.", error);
+  }
 }
 
 function userInitials(name) {
@@ -14369,6 +14415,7 @@ function renderOpeningBalancePanel() {
       <form id="openingBalanceForm" class="opening-balance-form">
         <div class="table-wrap opening-balance-entry-wrap">
           <table class="opening-balance-entry-table">
+            <colgroup><col class="opening-date-column"><col class="opening-account-column"><col class="opening-amount-column"></colgroup>
             <thead><tr><th>Date</th><th>Account</th><th>Amount</th></tr></thead>
             <tbody>${entryRows.map((item) => `<tr>
               <td><input type="date" data-opening-date="${item.value}" value="${escapeHtml(item.date)}" max="9999-12-31" aria-label="${escapeHtml(item.label)} opening balance date"></td>
@@ -14501,7 +14548,16 @@ function renderCashBalanceTab() {
   const to = state.filters.balanceTo || "";
   const balance = cashBalanceForRange(from, to);
   return `
-    ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
+    <div class="balance-opening-summary-grid ${state.currentRole === "Admin" ? "has-opening-balances" : "summary-only"}">
+      ${state.currentRole === "Admin" ? renderOpeningBalancePanel() : ""}
+      <section class="reconciliation-section cash-reconciliation-summary"><div class="reconciliation-section-head"><div><span>Reconciliation Summary</span><h3>Cash position for the selected period</h3></div>${cashReconciliationBadge(currentCashReconciliation(from, to))}</div><div class="cash-balance-grid reconciliation-summary-grid">
+        ${cashBalanceCard("Opening Cash Balance", balance.opening)}
+        ${cashBalanceCard("Cash Collections", balance.feeCollections + balance.otherCollections)}
+        ${cashBalanceCard("Cash Expenses", balance.cashExpenses)}
+        ${cashBalanceCard("Approved Excess / Shortage", balance.approvedAdjustment || 0)}
+        ${cashBalanceCard("Adjusted Closing Cash Balance", balance.closing, true)}
+      </div></section>
+    </div>
     <div class="expense-tools-card balance-tools">
       <div class="expense-card-head">
         <h3>Cash Reconciliation</h3>
@@ -14516,13 +14572,6 @@ function renderCashBalanceTab() {
         <div class="balance-filter-group compact-actions"><span>Export &amp; Print</span><button class="secondary-button" id="balanceExcel">Excel</button><button class="secondary-button" id="balancePdf">PDF</button><button class="secondary-button" id="balancePrint">Print</button></div>
       </div>
     </div>
-    <section class="reconciliation-section"><div class="reconciliation-section-head"><div><span>Reconciliation Summary</span><h3>Cash position for the selected period</h3></div>${cashReconciliationBadge(currentCashReconciliation(from, to))}</div><div class="cash-balance-grid reconciliation-summary-grid">
-      ${cashBalanceCard("Opening Cash Balance", balance.opening)}
-      ${cashBalanceCard("Cash Collections", balance.feeCollections + balance.otherCollections)}
-      ${cashBalanceCard("Cash Expenses", balance.cashExpenses)}
-      ${cashBalanceCard("Approved Excess / Shortage", balance.approvedAdjustment || 0)}
-      ${cashBalanceCard("Adjusted Closing Cash Balance", balance.closing, true)}
-    </div></section>
     ${renderCashVerificationPanel(balance)}
     <div class="cash-details-toggle"><button class="secondary-button" id="toggleCashDetails">${state.filters.balanceShowDetails ? "Hide Transaction Details" : "View Transaction Details"}</button></div>
     ${state.filters.balanceShowDetails ? renderCashMovementTable() : ""}
@@ -17900,19 +17949,24 @@ async function bootApp() {
     return;
   }
   if (state.session?.loggedIn && isSupabaseMode()) {
-    const loaded = await loadStateFromApi();
-    if (loaded) {
+    // Render cached UI immediately. Central data refresh must never hold the app on its loading screen.
+    mount();
+    loadStateFromApi().then((loaded) => {
+      if (!loaded) return;
       registerDesktopNotificationWorker().catch((error) => console.warn("Service worker registration failed", error));
       loadDesktopNotificationConfig().then(() => {
         applyDesktopNotificationRouteFromLocation();
         dispatchLocalDesktopNotifications();
       }).catch(() => {});
-      return;
-    }
+    }).catch((error) => console.warn("Background central load failed", error));
+    return;
   }
   mount();
 }
 
-bootApp();
+bootApp().catch((error) => {
+  console.error("Application startup failed", error);
+  try { mount(); } catch (mountError) { console.error("Application recovery render failed", mountError); }
+});
 
 
