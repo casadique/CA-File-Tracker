@@ -7921,6 +7921,71 @@ function renderReAssignedFileTable(files) {
   `;
 }
 
+function feeReceivedDisplayRow(file = {}, receipt = null) {
+  const linked = receipt ? linkedCollectionForFeeReceipt(receipt) : linkedFeeReceiptCollection(file);
+  const receivedAmount = receipt
+    ? Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0)
+    : Number(dashboardFileAmount(file, "received") || 0);
+  const discountAmount = receipt
+    ? Number(receipt.discountAmount || receipt.discount_amount || receipt.discount || 0)
+    : Number(file.discountAmount || file.discount_amount || file.discount || 0);
+  const paymentMode = normalizeTransactionPaymentMethod(receipt?.paymentMode || receipt?.payment_method || receipt?.mode || file.paymentMode || file.receiptMode || "") || "Not recorded";
+  const transactionReference = linked?.voucherNo || linked?.referenceNumber || linked?.reference_number || receipt?.transactionReference || receipt?.transaction_reference || receipt?.refNo || receipt?.ref_no || "";
+  return {
+    file,
+    receipt,
+    linked,
+    billedAmount: Number(dashboardFileAmount(file, "billed") || 0),
+    receivedAmount,
+    discountAmount,
+    balanceAmount: Number(filePendingAmount(file) || 0),
+    receiptDate: feeReceiptRecordDate(receipt || {}) || file.feeReceivedDate || file.receivedOn || file.received_on || "",
+    paymentMode,
+    transactionReference,
+  };
+}
+
+function feeReceivedTransactionCell(row = {}) {
+  const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
+  if (row.linked?.id) return `<div class="fee-received-transaction-state is-linked"><span class="billed-linked-badge">Transaction Linked</span>${row.transactionReference ? `<small>Ref: ${escapeHtml(row.transactionReference)}</small>` : ""}${canManageReceipt ? `<button type="button" class="fee-received-transaction-button" data-go-fee-transaction="${escapeHtml(row.linked.id)}">${billedActionIcon("transaction")}<span>View Transaction</span></button>` : ""}</div>`;
+  return `<div class="fee-received-transaction-state is-unlinked"><span class="fee-received-receipt-only">Receipt Only</span><small>Not linked to Transactions</small>${canManageReceipt ? `<button type="button" class="fee-received-transaction-button secondary" data-go-transactions="${escapeHtml(row.file.id || "")}">${billedActionIcon("transaction")}<span>Go to Transactions</span></button>` : ""}</div>`;
+}
+
+function feeReceivedReceiptActions(row = {}) {
+  const { file, receipt, linked } = row;
+  const canEdit = Boolean(rolePerm().edit);
+  const canDelete = Boolean(rolePerm().delete);
+  const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
+  const fileId = escapeHtml(file.id || "");
+  const actionKey = escapeHtml(receipt?.id || file.id || "");
+  const menuItems = [];
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (linked?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linked.id)}"` }));
+  if (!linked && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Go to Transactions", icon: "transaction", attrs: `data-go-transactions="${fileId}"` }));
+  if (receipt?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(receipt.id)}"` }));
+  else if (canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-mark-not-received="${fileId}"` }));
+  if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete-billed="${fileId}"`, danger: true, divider: true }));
+  const primary = receipt?.id
+    ? `<button type="button" class="billed-primary-action received" data-view-fee-receipt="${escapeHtml(receipt.id)}">${billedActionIcon("received")}<span>View Receipt</span></button>`
+    : `<button type="button" class="billed-primary-action received" data-billed-receipt-details="${fileId}">${billedActionIcon("received")}<span>Receipt Details</span></button>`;
+  return `<div class="billed-actions fee-received-actions" data-billed-actions="${actionKey}">${primary}${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${actionKey}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${actionKey}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}</div>`;
+}
+
+function feeReceivedExpandedDetails(row = {}) {
+  const billNo = row.file.billNo || row.file.bill_number || row.file.invoiceNumber || row.file.invoiceNo || "Not recorded";
+  const receivedBy = row.receipt?.receivedBy || row.receipt?.received_by || row.file.feeReceivedBy || row.file.receivedBy || "Not recorded";
+  const remarks = row.receipt?.remarks || row.receipt?.receiptRemarks || row.file.feeReceivedRemarks || row.file.receiptRemarks || row.file.remarks || "No remarks";
+  return `<div class="fee-received-expanded-grid"><div><span>Bill No.</span><strong>${escapeHtml(String(billNo))}</strong></div><div><span>Bill Date</span><strong>${escapeHtml(displayDate(row.file.billDate || row.file.bill_date || row.file.billedDate) || "Not recorded")}</strong></div><div><span>Discount</span><strong>${escapeHtml(rupee(row.discountAmount))}</strong></div><div><span>Received By</span><strong>${escapeHtml(receivedBy)}</strong></div><div><span>Transaction Reference</span><strong>${escapeHtml(row.transactionReference || "Not linked")}</strong></div><div class="fee-received-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(remarks)}</strong></div></div>`;
+}
+
+function feeReceivedDesktopRow(row = {}, index = 0) {
+  return `<tr class="fee-received-modern-row"><td class="fee-received-sn">${index + 1}</td><td class="fee-received-client"><div class="fee-received-client-line"><button type="button" class="billed-expand-toggle" data-fee-received-row-toggle aria-label="Expand receipt details for ${escapeHtml(row.file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(row.file)}</div></div></td><td class="fee-received-service"><strong>${escapeHtml(row.file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(row.file) || "NA")}</span></td><td class="fee-received-billing-details"><span>Billed</span><strong>${escapeHtml(rupee(row.billedAmount))}</strong><small>${escapeHtml(displayDate(row.file.billDate || row.file.bill_date || row.file.billedDate) || "No bill date")}</small></td><td class="fee-received-receipt-details"><span>Received</span><strong>${escapeHtml(rupee(row.receivedAmount))}</strong><small>${escapeHtml(displayDate(row.receiptDate) || "-")} · ${escapeHtml(row.paymentMode)}</small></td><td class="fee-received-balance"><span>Balance</span><strong>${escapeHtml(rupee(row.balanceAmount))}</strong></td><td class="fee-received-transaction-column">${feeReceivedTransactionCell(row)}</td><td class="fee-received-actions-column"><div class="action-row">${feeReceivedReceiptActions(row)}</div></td></tr><tr class="fee-received-details-row" hidden><td colspan="8">${feeReceivedExpandedDetails(row)}</td></tr>`;
+}
+
+function feeReceivedMobileCard(row = {}, index = 0) {
+  return `<article class="fee-received-mobile-card${index % 2 ? " is-alt" : ""}"><div class="fee-received-mobile-head"><button type="button" class="billed-expand-toggle" data-fee-received-row-toggle aria-label="Expand receipt details for ${escapeHtml(row.file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(row.file.name || "-")}</h3><p>${escapeHtml(row.file.serviceType || "-")} · FY ${escapeHtml(fileFy(row.file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(row.file) || "No PAN/Reg No.")}</span></div></div><div class="fee-received-mobile-summary"><div><span>Billed</span><strong>${escapeHtml(rupee(row.billedAmount))}</strong></div><div><span>Received</span><strong>${escapeHtml(rupee(row.receivedAmount))}</strong></div><div><span>Balance</span><strong>${escapeHtml(rupee(row.balanceAmount))}</strong></div><div><span>Receipt</span><strong>${escapeHtml(displayDate(row.receiptDate) || "-")} · ${escapeHtml(row.paymentMode)}</strong></div></div>${feeReceivedTransactionCell(row)}<div class="fee-received-mobile-actions">${feeReceivedReceiptActions(row)}</div><div class="fee-received-mobile-details" hidden>${feeReceivedExpandedDetails(row)}</div></article>`;
+}
+
 function renderFeeReceivedFileTable(files) {
   const sortedFiles = sortFilesByFeeReceivedNewestFirst(files);
   const rows = sortedFiles.flatMap((file) => {
@@ -7939,21 +8004,13 @@ function renderFeeReceivedFileTable(files) {
     if (aTime !== bTime) return bTime - aTime;
     return String(b.receipt?.id || b.file.id || "").localeCompare(String(a.receipt?.id || a.file.id || ""));
   });
+  const displayRows = rows.map(({ file, receipt }) => feeReceivedDisplayRow(file, receipt));
   const displayTotalsByFile = new Map();
-  rows.forEach(({ file, receipt }) => {
-    const current = displayTotalsByFile.get(file.id) || {
-      billed: Number(dashboardFileAmount(file, "billed") || 0),
-      received: 0,
-      discount: 0,
-    };
-    if (receipt) {
-      current.received += Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0);
-      current.discount += Number(receipt.discountAmount || receipt.discount_amount || receipt.discount || 0);
-    } else {
-      current.received = Number(dashboardFileAmount(file, "received") || 0);
-      current.discount = Number(file.discountAmount || file.discount_amount || file.discount || 0);
-    }
-    displayTotalsByFile.set(file.id, current);
+  displayRows.forEach((row) => {
+    const current = displayTotalsByFile.get(row.file.id) || { billed: row.billedAmount, received: 0, discount: 0 };
+    current.received += row.receivedAmount;
+    current.discount += row.discountAmount;
+    displayTotalsByFile.set(row.file.id, current);
   });
   const totals = [...displayTotalsByFile.values()].reduce((result, item) => {
     result.billed += item.billed;
@@ -7961,59 +8018,8 @@ function renderFeeReceivedFileTable(files) {
     result.balance += Math.max(item.billed - item.received - item.discount, 0);
     return result;
   }, { billed: 0, received: 0, balance: 0 });
-  return `
-    <div class="table-wrap file-table-wrap">
-      <table class="file-table file-table-compact fee-received-table">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Receipt Amount</th><th class="amount-column">Balance</th><th>Receipt Date</th><th>Payment Mode</th><th>Transaction</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${rows.map(({ file, receipt }, index) => {
-            const linked = receipt ? linkedCollectionForFeeReceipt(receipt) : linkedFeeReceiptCollection(file);
-            const active = receipt ? isValidFeeReceiptRecord(receipt) : Boolean(file.feeReceived);
-            const amount = receipt
-              ? Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0)
-              : dashboardFileAmount(file, "received");
-            const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
-            const canReverse = Boolean(active && !linked && !receiptWasPushed(receipt) && canManageReceipt);
-            const transactionAction = linked
-              ? `<span class="badge filed">Pushed</span>${canManageReceipt ? `<button class="mini-button" data-go-fee-transaction="${escapeHtml(linked.id)}">Go Transaction</button>` : ""}`
-              : receiptWasPushed(receipt)
-                ? `<span class="badge returned">Reversed</span>`
-                : `<span class="badge pending">Receipt only</span>${canReverse
-                  ? (receipt?.id
-                    ? `<button class="mini-button danger" data-fee-receipt-not-received="${escapeHtml(receipt.id)}">Not Received</button>`
-                    : `<button class="mini-button danger" data-mark-not-received="${escapeHtml(file.id)}">Not Received</button>`)
-                  : ""}`;
-            return `<tr>
-              <td>${index + 1}</td>
-              <td><span class="client-name">${escapeHtml(file.name || "")}</span><span class="subtext">${escapeHtml(file.pan || "")}${file.careOf ? ` | C/o: ${escapeHtml(file.careOf)}` : ""}</span></td>
-              <td>${escapeHtml(file.serviceType || "")}</td>
-              <td>${escapeHtml(fileFy(file) || "-")}</td>
-              <td>${fmt(file.billDate || file.bill_date || file.billedDate)}</td>
-              <td>${escapeHtml(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-")}</td>
-              <td class="amount-cell amount-column">${rupee(dashboardFileAmount(file, "billed"))}</td>
-              <td class="amount-cell amount-column">${rupee(amount)}</td>
-              <td class="amount-cell amount-column">${rupee(filePendingAmount(file))}</td>
-              <td>${fmt(receipt ? feeReceiptRecordDate(receipt) : (file.feeReceivedDate || file.receivedOn || file.received_on))}</td>
-              <td>${escapeHtml(receipt?.paymentMode || receipt?.payment_mode || file.paymentMode || file.receiptMode || "-")}</td>
-              <td><div class="action-row fee-transaction-actions">${transactionAction}</div></td>
-              <td><div class="action-row">
-                ${receipt?.id ? `<button class="mini-button" data-view-fee-receipt="${escapeHtml(receipt.id)}">View</button>` : ""}
-              </div></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-        <tfoot>
-          <tr class="fee-received-total-row">
-            <td colspan="6">Active Receipt Totals</td>
-            <td class="amount-cell amount-column">${rupee(totals.billed)}</td>
-            <td class="amount-cell amount-column">${rupee(totals.received)}</td>
-            <td class="amount-cell amount-column">${rupee(totals.balance)}</td>
-            <td colspan="4"></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  `;
+  if (!displayRows.length) return empty("No active fee receipts match these filters.");
+  return `<div class="table-wrap fee-received-modern-wrap"><table class="file-table fee-received-modern-table"><thead><tr><th class="fee-received-sn">SN</th><th class="fee-received-client">Client</th><th>Service</th><th>Billing Details</th><th>Receipt Details</th><th>Balance</th><th>Transaction</th><th class="fee-received-actions-column">Actions</th></tr></thead><tbody>${displayRows.map(feeReceivedDesktopRow).join("")}</tbody><tfoot><tr><td colspan="3">Active Receipt Totals</td><td class="amount-cell">${rupee(totals.billed)}</td><td class="amount-cell">${rupee(totals.received)}</td><td class="amount-cell">${rupee(totals.balance)}</td><td colspan="2"></td></tr></tfoot></table><div class="fee-received-mobile-list">${displayRows.map(feeReceivedMobileCard).join("")}<div class="fee-received-mobile-totals"><span>Totals</span><strong>Billed ${rupee(totals.billed)} · Received ${rupee(totals.received)} · Balance ${rupee(totals.balance)}</strong></div></div></div>`;
 }
 
 function feeReceiptIdForFile(file = {}) {
@@ -9209,6 +9215,22 @@ function bindFileActions() {
       event.preventDefault();
       event.stopPropagation();
       openBilledActionMenu(toggle);
+    };
+  });
+  document.querySelectorAll("[data-fee-received-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".fee-received-modern-row");
+      const mobileCard = button.closest(".fee-received-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("fee-received-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".fee-received-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
     };
   });
   document.querySelectorAll("[data-completed-row-toggle]").forEach((button) => {

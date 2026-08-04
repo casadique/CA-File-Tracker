@@ -14,6 +14,7 @@
     "test:active-files": "node tools/test-active-files-modernization.js",
     "test:completed-files": "node tools/test-completed-files-modernization.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
+    "test:fee-received": "node tools/test-fee-received-modernization.js",
     "test:fee-pending-pdf": "node tools/test-fee-pending-pdf.js",
     "test:filters": "node tools/test-financial-file-filters.js",
     "test:notifications": "node tools/test-notification-retention.js",

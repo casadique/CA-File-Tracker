@@ -7968,6 +7968,384 @@ textarea {
   box-shadow: inset 0 0 0 2px #60a5fa;
 }
 
+/* Modern Fee Received results */
+.fee-received-modern-wrap {
+  position: relative;
+  overflow: auto;
+  border: 1px solid #cbd9ec;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(30, 64, 175, 0.08);
+}
+
+.fee-received-modern-table {
+  min-width: 1180px;
+  border: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.fee-received-modern-table th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 12px 10px;
+  border-bottom: 1px solid #b9c9df;
+  background: #e8eef7;
+  color: #263a59;
+  font-size: 11px;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.fee-received-modern-table td {
+  padding: 11px 10px;
+  border-right: 1px solid #e1e8f2;
+  border-bottom: 1px solid #dce5f1;
+  vertical-align: middle;
+}
+
+.fee-received-modern-table tbody .fee-received-modern-row:nth-of-type(4n + 3) td {
+  background: #f8fafc;
+}
+
+.fee-received-modern-table tbody .fee-received-modern-row:hover td {
+  background: #eff6ff;
+}
+
+.fee-received-modern-table .fee-received-sn {
+  width: 48px;
+  min-width: 48px;
+  text-align: center;
+}
+
+.fee-received-modern-table .fee-received-client {
+  position: sticky;
+  left: 48px;
+  z-index: 2;
+  width: 235px;
+  min-width: 235px;
+  background: #fff;
+  box-shadow: 1px 0 #cbd9ec;
+}
+
+.fee-received-modern-table thead .fee-received-client {
+  z-index: 6;
+  background: #e8eef7;
+}
+
+.fee-received-client-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.fee-received-client-line .client-main {
+  font-weight: 750;
+  color: #0f2447;
+}
+
+.fee-received-client-line .client-sub,
+.fee-received-service span,
+.fee-received-billing-details span,
+.fee-received-receipt-details span,
+.fee-received-balance span {
+  display: block;
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.fee-received-service {
+  width: 165px;
+  min-width: 165px;
+}
+
+.fee-received-service strong,
+.fee-received-billing-details strong,
+.fee-received-receipt-details strong,
+.fee-received-balance strong {
+  display: block;
+  color: #14213d;
+}
+
+.fee-received-billing-details,
+.fee-received-receipt-details {
+  width: 145px;
+  min-width: 145px;
+  text-align: right;
+}
+
+.fee-received-billing-details small,
+.fee-received-receipt-details small {
+  display: block;
+  margin-top: 4px;
+  color: #52637d;
+  white-space: nowrap;
+}
+
+.fee-received-balance {
+  width: 105px;
+  min-width: 105px;
+  text-align: right;
+}
+
+.fee-received-transaction-column {
+  width: 190px;
+  min-width: 190px;
+}
+
+.fee-received-actions-column {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  width: 176px;
+  min-width: 176px;
+  background: #fff;
+  box-shadow: -1px 0 #cbd9ec;
+}
+
+.fee-received-modern-table thead .fee-received-actions-column {
+  z-index: 6;
+  background: #e8eef7;
+}
+
+.fee-received-transaction-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.fee-received-transaction-state small {
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.fee-received-receipt-only {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.fee-received-transaction-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.fee-received-transaction-button:hover,
+.fee-received-transaction-button:focus-visible {
+  border-color: #2563eb;
+  background: #dbeafe;
+  outline: 2px solid rgba(37, 99, 235, 0.2);
+  outline-offset: 2px;
+}
+
+.fee-received-transaction-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.fee-received-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.fee-received-details-row td {
+  padding: 0 !important;
+  background: #f0f7ff !important;
+}
+
+.fee-received-expanded-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 12px;
+  padding: 14px 18px 14px 66px;
+}
+
+.fee-received-expanded-grid > div {
+  min-width: 0;
+}
+
+.fee-received-expanded-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.fee-received-expanded-grid strong {
+  color: #1e293b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.fee-received-expanded-remarks {
+  grid-column: 1 / -1;
+}
+
+.fee-received-modern-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  border-bottom: 0;
+  background: #eaf2ff;
+  color: #17356d;
+  font-weight: 800;
+}
+
+.fee-received-modern-table tfoot .amount-cell {
+  text-align: right;
+}
+
+.fee-received-mobile-list {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .fee-received-modern-wrap {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .fee-received-modern-table {
+    display: none;
+  }
+
+  .fee-received-mobile-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .fee-received-mobile-card {
+    padding: 14px;
+    border: 1px solid #cbd9ec;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 7px 20px rgba(30, 64, 175, 0.08);
+  }
+
+  .fee-received-mobile-card.is-alt {
+    background: #f8fafc;
+  }
+
+  .fee-received-mobile-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .fee-received-mobile-head h3 {
+    margin: 0;
+    color: #10244a;
+    font-size: 15px;
+  }
+
+  .fee-received-mobile-head p,
+  .fee-received-mobile-head span {
+    margin: 3px 0 0;
+    color: #536783;
+    font-size: 11px;
+  }
+
+  .fee-received-mobile-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 13px 0;
+  }
+
+  .fee-received-mobile-summary > div {
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid #dbe5f1;
+    border-radius: 10px;
+    background: rgba(248, 250, 252, 0.84);
+  }
+
+  .fee-received-mobile-summary span {
+    display: block;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .fee-received-mobile-summary strong {
+    color: #14213d;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .fee-received-mobile-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 13px;
+    padding-top: 12px;
+    border-top: 1px solid #dbe5f1;
+  }
+
+  .fee-received-mobile-details {
+    margin-top: 12px;
+    border-top: 1px solid #dbe5f1;
+  }
+
+  .fee-received-mobile-details .fee-received-expanded-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 0 0;
+  }
+
+  .fee-received-mobile-totals {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 13px 14px;
+    border: 1px solid #bfdbfe;
+    border-radius: 12px;
+    background: #eaf2ff;
+    color: #17356d;
+  }
+
+  .fee-received-mobile-totals span {
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+}
+
+@media (max-width: 430px) {
+  .fee-received-mobile-summary,
+  .fee-received-mobile-details .fee-received-expanded-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fee-received-expanded-remarks {
+    grid-column: auto;
+  }
+}
+
 /* Modern main File List workspace */
 .master-file-table-wrap {
   overflow: auto;
