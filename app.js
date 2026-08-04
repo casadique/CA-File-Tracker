@@ -17503,85 +17503,262 @@ async function exportDailyReport(format, date = dailyReportDate(), newWorkRows =
 
 async function downloadDailyReportPdf(date, sections, title) {
   await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 28;
-  let y = 34;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(20);
-  doc.setTextColor(15, 23, 42);
-  doc.text("MUHAMMAD & ASSOCIATES", pageWidth / 2, y, { align: "center" });
-  y += 24;
-  doc.setFontSize(13);
-  doc.setTextColor(30, 64, 175);
-  doc.text(title, pageWidth / 2, y, { align: "center" });
-  y += 24;
-  sections.forEach((section, index) => {
-    if (index > 0 && y > 480) {
-      doc.addPage();
-      y = 34;
-    }
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text(section.title || "", margin, y);
-    y += 8;
-    const rows = section.rows || [];
-    const headers = rows.length ? Object.keys(rows[0]) : ["Message"];
-    const body = rows.length
-      ? rows.map((row) => headers.map((header) => String(row[header] ?? "")))
-      : [[section.empty || "No records found."]];
-    const columnStyles = section.columnStyles || dailyAutoFitPdfColumnStyles(headers, pageWidth - (margin * 2));
-    doc.autoTable({
-      startY: y + 6,
-      head: [headers],
-      body,
-      margin: { left: margin, right: margin },
-      tableWidth: pageWidth - (margin * 2),
-      theme: "grid",
-      styles: {
-        font: "helvetica",
-        fontSize: 7.2,
-        cellPadding: 3.2,
-        overflow: "linebreak",
-        valign: "top",
-        lineColor: [203, 213, 225],
-        lineWidth: 0.45,
-        textColor: [15, 23, 42],
-      },
-      headStyles: {
-        fillColor: [219, 234, 254],
-        textColor: [30, 64, 175],
-        fontStyle: "bold",
-        halign: "left",
-      },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles,
-      didParseCell: (data) => {
-        const header = headers[data.column.index];
-        if (section.rightAlign?.includes(header)) data.cell.styles.halign = "right";
-        if (["SN", "Visit Date", "Visit Time", "Actions"].includes(header)) data.cell.styles.halign = header === "SN" ? "center" : "left";
-      },
-    });
-    y = doc.lastAutoTable.finalY + 14;
-    if (section.total) {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text(section.total, margin, y);
-      y += 18;
-    }
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const context = {
+    assets,
+    date,
+    title,
+    generatedAt: fileExportDateTime(),
+    generatedBy: loggedInUser()?.name || state.currentUser || "Not Recorded",
+    pageWidth,
+    pageHeight,
+    summary: dailyReportPdfSummary(sections),
+    headerPages: new Set(),
+  };
+  drawDailyReportPdfFirstHeader(doc, context);
+  let y = 218;
+  sections.forEach((section) => {
+    y = drawDailyReportPdfSection(doc, context, section, y);
   });
-  const pageCount = doc.internal.getNumberOfPages();
-  for (let page = 1; page <= pageCount; page += 1) {
-    doc.setPage(page);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`Page ${page} of ${pageCount}`, pageWidth - margin, doc.internal.pageSize.getHeight() - 16, { align: "right" });
-  }
+  drawBilledPdfFooters(doc);
   doc.save(`daily-report-${date}.pdf`);
+}
+
+function dailyReportPdfNumber(value) {
+  const matches = String(value ?? "").replace(/,/g, "").match(/-?\d+(?:\.\d+)?/g);
+  const parsed = Number(matches?.[matches.length - 1] || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function dailyReportPdfSection(sections = [], title = "") {
+  return sections.find((section) => section.title === title) || { title, rows: [] };
+}
+
+function dailyReportPdfSummary(sections = []) {
+  const balance = dailyReportPdfSection(sections, "Balance Summary");
+  const completed = dailyReportPdfSection(sections, "Completed Files");
+  const newWork = dailyReportPdfSection(sections, "New Work Came");
+  const visitors = dailyReportPdfSection(sections, "Visitors List");
+  const expenses = dailyReportPdfSection(sections, "Expense Report");
+  const collections = dailyReportPdfSection(sections, "Collections");
+  const balanceTotal = balance.rows.find((row) => row.Account === "Total Balance")?.["Closing Balance"] || 0;
+  const expenseTotal = expenses.rows.reduce((sum, row) => sum + dailyReportPdfNumber(row.Amount), 0);
+  const collectionTotal = collections.rows.reduce((sum, row) => sum + dailyReportPdfNumber(row.Amount), 0);
+  return {
+    totalBalance: dailyReportPdfNumber(balanceTotal),
+    completedFiles: completed.rows.length,
+    newWorkFiles: newWork.rows.length,
+    visitors: visitors.rows.length,
+    expenses: expenseTotal,
+    collections: collectionTotal,
+    netCashFlow: collectionTotal - expenseTotal,
+  };
+}
+
+function dailyReportPdfCardItems(summary = {}) {
+  const netPositive = summary.netCashFlow >= 0;
+  return [
+    ["New Work Received", String(summary.newWorkFiles), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+    ["Completed Files", String(summary.completedFiles), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Visitors", String(summary.visitors), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Collections", billedPdfMoney(summary.collections), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Expenses", billedPdfMoney(summary.expenses), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["Net Daily Flow", billedPdfMoney(summary.netCashFlow), netPositive ? BILLED_PDF_COLORS.blue : BILLED_PDF_COLORS.red, netPositive ? BILLED_PDF_COLORS.lightBlue : BILLED_PDF_COLORS.lightRed],
+  ];
+}
+
+function drawDailyReportPdfFirstHeader(doc, context) {
+  const { assets, date, generatedAt, generatedBy, pageWidth, summary } = context;
+  try { doc.addImage(assets.logo, "PNG", 30, 20, 34, 34); } catch { /* Firm name remains visible. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(13.5);
+  doc.text("Muhammad & Associates", 72, 31);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(7.8);
+  doc.text("Chartered Accountants", 72, 45);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(14);
+  doc.text("DAILY ACTIVITY REPORT", pageWidth / 2, 72, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.blue);
+  doc.setLineWidth(1.4);
+  doc.line(pageWidth / 2 - 70, 79, pageWidth / 2 + 70, 79);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(30, 88, pageWidth - 60, 31, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.7);
+  doc.text(`Report Date: ${displayDate(date)}  |  Generated: ${generatedAt}`, 38, 101);
+  doc.text(`Generated by: ${generatedBy}  |  Closing Balance: ${billedPdfMoney(summary.totalBalance)}`, 38, 112);
+  drawBilledPdfCards(doc, dailyReportPdfCardItems(summary), 30, 127, pageWidth - 60, 3);
+  context.headerPages.add(1);
+}
+
+function drawDailyReportPdfCompactHeader(doc, context) {
+  const page = doc.internal.getCurrentPageInfo().pageNumber;
+  if (context.headerPages.has(page)) return;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24);
+  doc.text("Daily Activity Report", context.pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(displayDate(context.date), context.pageWidth - 30, 24, { align: "right" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.line(30, 38, context.pageWidth - 30, 38);
+  context.headerPages.add(page);
+}
+
+function dailyReportPdfDefinition(section = {}) {
+  const definitions = {
+    "Balance Summary": {
+      columns: [
+        { header: "Account", dataKey: "account" },
+        { header: "Closing Balance", dataKey: "amount" },
+      ],
+      rows: section.rows.map((row) => ({ account: row.Account, amount: billedPdfMoney(dailyReportPdfNumber(row["Closing Balance"])) })),
+      widths: { account: { cellWidth: 335 }, amount: { cellWidth: 200, halign: "right" } },
+      amountKey: "amount",
+    },
+    "Completed Files": {
+      columns: [
+        { header: "SN", dataKey: "sn" }, { header: "Client", dataKey: "client" },
+        { header: "Service / C/o", dataKey: "service" }, { header: "Work Details", dataKey: "staff" },
+      ],
+      rows: section.rows.map((row) => ({ sn: row.SN, client: row.Name || "-", service: `${row["Type of Service"] || "-"}\nC/o: ${row["C/o"] || "Direct"}`, staff: `Done By: ${row["Work Done By"] || "Not Recorded"}\nChecked By: ${row["Checked By"] || "Not Recorded"}` })),
+      widths: { sn: { cellWidth: 25, halign: "center" }, client: { cellWidth: 145 }, service: { cellWidth: 185 }, staff: { cellWidth: 180 } },
+    },
+    "New Work Came": {
+      columns: [
+        { header: "SN", dataKey: "sn" }, { header: "Client", dataKey: "client" },
+        { header: "Service / C/o", dataKey: "service" }, { header: "Assigned To", dataKey: "staff" },
+      ],
+      rows: section.rows.map((row) => ({ sn: row.SN, client: row.Name || "-", service: `${row["Type of Service"] || "-"}\nC/o: ${row["C/o"] || "Direct"}`, staff: row["Assigned To"] || "Not Assigned" })),
+      widths: { sn: { cellWidth: 25, halign: "center" }, client: { cellWidth: 150 }, service: { cellWidth: 220 }, staff: { cellWidth: 140 } },
+    },
+    "Visitors List": {
+      columns: [
+        { header: "SN", dataKey: "sn" }, { header: "Visitor / Contact", dataKey: "visitor" },
+        { header: "Company / Purpose", dataKey: "purpose" }, { header: "Visit Details", dataKey: "visit" },
+      ],
+      rows: section.rows.map((row) => ({ sn: row.SN, visitor: `${row["Visitor Name"] || "-"}\n${row["Mobile No"] || "Not Recorded"}`, purpose: `${row.Company || "-"}\n${row.Purpose || "-"}`, visit: `Time: ${row.Time || "-"}\nMet: ${row.Met || "-"}` })),
+      widths: { sn: { cellWidth: 25, halign: "center" }, visitor: { cellWidth: 145 }, purpose: { cellWidth: 225 }, visit: { cellWidth: 140 } },
+    },
+    "Expense Report": {
+      columns: [
+        { header: "SN", dataKey: "sn" }, { header: "Expense Details", dataKey: "details" },
+        { header: "Payment Details", dataKey: "payment" }, { header: "Amount", dataKey: "amount" }, { header: "Paid By", dataKey: "staff" },
+      ],
+      rows: section.rows.map((row) => ({ sn: row.SN, details: `${row["Expense Item"] || "-"}\nPaid To: ${row["Paid To"] || "-"}\nDate: ${row.Date || "-"}`, payment: `${row["Payment Method"] || "-"}\n${row.Account || "Not Recorded"}\nVoucher: ${row["Voucher No."] || "-"}`, amount: billedPdfMoney(dailyReportPdfNumber(row.Amount)), staff: row["Paid By"] || "Not Recorded" })),
+      widths: { sn: { cellWidth: 25, halign: "center" }, details: { cellWidth: 185 }, payment: { cellWidth: 125 }, amount: { cellWidth: 95, halign: "right" }, staff: { cellWidth: 105 } },
+      amountKey: "amount",
+    },
+    Collections: {
+      columns: [
+        { header: "SN", dataKey: "sn" }, { header: "Received From", dataKey: "from" },
+        { header: "Collection Details", dataKey: "details" }, { header: "Amount", dataKey: "amount" }, { header: "Collected By", dataKey: "staff" },
+      ],
+      rows: section.rows.map((row) => ({ sn: row.SN, from: row["Received from"] || "-", details: `${row.Particulars || "-"}\n${row["Payment Method"] || "-"} - ${row.Account || "Not Recorded"}\nRef: ${row["Ref No"] || "-"}`, amount: billedPdfMoney(dailyReportPdfNumber(row.Amount)), staff: row["Collected By"] || "Not Recorded" })),
+      widths: { sn: { cellWidth: 25, halign: "center" }, from: { cellWidth: 115 }, details: { cellWidth: 200 }, amount: { cellWidth: 95, halign: "right" }, staff: { cellWidth: 100 } },
+      amountKey: "amount",
+    },
+  };
+  return definitions[section.title] || {
+    columns: [{ header: "Details", dataKey: "details" }],
+    rows: section.rows.map((row) => ({ details: Object.values(row).join(" | ") })),
+    widths: { details: { cellWidth: 535 } },
+  };
+}
+
+function dailyReportPdfTotalLabel(section = {}) {
+  const rows = section.rows || [];
+  if (section.title === "Balance Summary") {
+    const total = rows.find((row) => row.Account === "Total Balance")?.["Closing Balance"] || 0;
+    return `Total Balance: ${billedPdfMoney(dailyReportPdfNumber(total))}`;
+  }
+  if (section.title === "Completed Files") return `Total Completed Files: ${rows.length}`;
+  if (section.title === "New Work Came") return `Total New Work Received: ${rows.length}`;
+  if (section.title === "Visitors List") return `Total Visitors: ${rows.length}`;
+  if (section.title === "Expense Report") return `Total Expenses: ${billedPdfMoney(rows.reduce((sum, row) => sum + dailyReportPdfNumber(row.Amount), 0))}`;
+  if (section.title === "Collections") return `Total Collections: ${billedPdfMoney(rows.reduce((sum, row) => sum + dailyReportPdfNumber(row.Amount), 0))}`;
+  return section.total || `Total Records: ${rows.length}`;
+}
+
+function drawDailyReportPdfSection(doc, context, section, startY) {
+  let y = startY;
+  if (y + 78 > context.pageHeight - 34) {
+    doc.addPage();
+    drawDailyReportPdfCompactHeader(doc, context);
+    y = 54;
+  }
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(30, y, context.pageWidth - 60, 24, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(9.3);
+  const displayTitle = section.title === "New Work Came" ? "New Work Received" : String(section.title || "");
+  doc.text(displayTitle, 38, y + 16);
+  const rows = section.rows || [];
+  if (!rows.length) {
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(...BILLED_PDF_COLORS.border);
+    doc.roundedRect(30, y + 30, context.pageWidth - 60, 34, 3, 3, "FD");
+    doc.setTextColor(...BILLED_PDF_COLORS.muted);
+    doc.setFont("DejaVuSans", "normal");
+    doc.setFontSize(7.3);
+    doc.text(section.empty || "No records found for the selected date.", 40, y + 51);
+    doc.setTextColor(...BILLED_PDF_COLORS.navy);
+    doc.setFont("DejaVuSans", "bold");
+    doc.text(dailyReportPdfTotalLabel(section), context.pageWidth - 38, y + 51, { align: "right" });
+    return y + 78;
+  }
+  const definition = dailyReportPdfDefinition(section);
+  doc.autoTable({
+    startY: y + 30,
+    columns: definition.columns,
+    body: definition.rows,
+    theme: "grid",
+    showHead: "everyPage",
+    pageBreak: "auto",
+    rowPageBreak: "avoid",
+    margin: { left: 30, right: 30, top: 50, bottom: 58 },
+    tableWidth: context.pageWidth - 60,
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: 3.2, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.3, minCellHeight: 22 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 7.2, fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255], valign: "middle", lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.35, minCellHeight: 23 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: definition.widths,
+    willDrawPage: () => {
+      if (doc.internal.getCurrentPageInfo().pageNumber > 1) drawDailyReportPdfCompactHeader(doc, context);
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && definition.amountKey && data.column.dataKey === definition.amountKey) {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = section.title === "Expense Report" ? BILLED_PDF_COLORS.red : BILLED_PDF_COLORS.green;
+      }
+      if (data.section === "body" && section.title === "Balance Summary" && data.row.index === definition.rows.length - 1) {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightBlue;
+      }
+    },
+  });
+  y = doc.lastAutoTable.finalY + 5;
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(30, y, context.pageWidth - 60, 22, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(7.2);
+  doc.text(dailyReportPdfTotalLabel(section), context.pageWidth - 38, y + 15, { align: "right" });
+  return y + 34;
 }
 
 function dailyAutoFitPdfColumnStyles(headers, tableWidth) {

@@ -8,6 +8,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test:dashboard": "node tools/test-dashboard-counts.js",
+    "test:daily-report-pdf": "node tools/test-daily-report-pdf.js",
     "test:file-completion": "node tools/test-file-completion-save.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
     "test:fee-pending-pdf": "node tools/test-fee-pending-pdf.js",
