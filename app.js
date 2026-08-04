@@ -6444,15 +6444,25 @@ function renderFeePendingFileTable(files = []) {
   const rows = files.map((file, index) => feePendingDisplayRow(file, index));
   const headers = Object.keys(rows[0] || {});
   const totals = appendFeeReceiptTotals(rows, files).at(-1) || {};
+  const columnClass = (header) => {
+    if (header === "SN") return "fee-pending-sn-column";
+    if (header === "Client Name") return "fee-pending-client-column";
+    if (header === "Service Type") return "fee-pending-service-column";
+    if (header === "C/o") return "fee-pending-careof-column";
+    if (header === "FY") return "fee-pending-short-column";
+    if (header.includes("Date")) return "fee-pending-date-column";
+    if (isFeeAmountReportHeader(header)) return "amount-cell fee-pending-amount-column";
+    return "fee-pending-text-column";
+  };
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact fee-pending-report-table">
-        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}<th>Actions</th></tr></thead>
+        <thead><tr>${headers.map((header) => `<th class="${columnClass(header)}">${escapeHtml(header)}</th>`).join("")}<th class="fee-pending-actions-column">Actions</th></tr></thead>
         <tbody>${files.map((file, index) => {
           const row = rows[index];
-          return `<tr>${headers.map((header) => `<td class="${isFeeAmountReportHeader(header) ? "amount-cell" : ""}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td><div class="action-row">${fileRowActions(file)}</div></td></tr>`;
+          return `<tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"><div class="action-row">${fileRowActions(file)}</div></td></tr>`;
         }).join("")}</tbody>
-        <tfoot><tr>${headers.map((header) => `<td class="${isFeeAmountReportHeader(header) ? "amount-cell" : ""}">${escapeHtml(totals[header] ?? "")}</td>`).join("")}<td></td></tr></tfoot>
+        <tfoot><tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(totals[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"></td></tr></tfoot>
       </table>
     </div>`;
 }

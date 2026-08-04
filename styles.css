@@ -6116,45 +6116,72 @@ textarea {
 }
 
 .fee-pending-report-table {
-  min-width: 1180px;
-  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
 }
 
-.fee-pending-report-table th {
-  white-space: nowrap;
-}
-
+.fee-pending-report-table th,
 .fee-pending-report-table td {
+  width: 1%;
+  white-space: nowrap;
   vertical-align: top;
 }
 
-.fee-pending-report-table th:nth-child(2),
-.fee-pending-report-table td:nth-child(2) {
-  width: 160px;
-  min-width: 140px;
-  max-width: 160px;
-  white-space: normal;
-}
-
-.fee-pending-report-table th:nth-child(6),
-.fee-pending-report-table td:nth-child(6) {
-  width: 90px;
-  min-width: 80px;
-  max-width: 90px;
-  white-space: normal;
-}
-
-.fee-pending-report-table th:nth-child(17),
-.fee-pending-report-table td:nth-child(17) {
+.fee-pending-report-table .fee-pending-client-column {
+  width: auto;
   min-width: 150px;
+  max-width: 230px;
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.fee-pending-report-table .amount-cell {
-  min-width: 118px;
+.fee-pending-report-table .fee-pending-service-column {
+  width: auto;
+  min-width: 120px;
+  max-width: 190px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.fee-pending-report-table .fee-pending-careof-column {
+  width: auto;
+  min-width: 72px;
+  max-width: 125px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.fee-pending-report-table .fee-pending-sn-column,
+.fee-pending-report-table .fee-pending-short-column,
+.fee-pending-report-table .fee-pending-date-column {
+  text-align: center;
+}
+
+.fee-pending-report-table .fee-pending-sn-column {
+  width: 48px;
+  min-width: 48px;
+}
+
+.fee-pending-report-table .fee-pending-date-column {
+  min-width: 104px;
+}
+
+.fee-pending-report-table .fee-pending-amount-column {
+  min-width: 104px;
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.fee-pending-report-table .fee-pending-actions-column {
+  width: 1%;
+  min-width: 96px;
+  white-space: nowrap;
+}
+
+.fee-pending-report-table .fee-pending-actions-column .action-row {
+  flex-wrap: nowrap;
 }
 
 .fee-pending-report-table tfoot td {

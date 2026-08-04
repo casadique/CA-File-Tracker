@@ -112,6 +112,16 @@ async function main() {
   const receivedTableHeader = receivedTableBody.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] || "";
   assert.doesNotMatch(receivedTableHeader, /<th>Account<\/th>|<th>Status<\/th>/,
     "Fee Received display must not show Account or Status columns");
+  const appStyles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+  const pendingTableStyles = appStyles.match(
+    /\.fee-pending-report-table \{[\s\S]*?(?=\n\.fee-pending-report-table tfoot td)/,
+  )?.[0] || "";
+  assert.match(pendingTableStyles, /width:\s*max-content/,
+    "Fee Pending table must size columns from their content");
+  assert.match(pendingTableStyles, /table-layout:\s*auto/,
+    "Fee Pending table must use automatic column layout");
+  assert.doesNotMatch(pendingTableStyles, /min-width:\s*1180px|table-layout:\s*fixed/,
+    "Fee Pending table must not retain its old fixed-width layout");
   console.log("Fee receipt payment mode and account tests passed.");
 }
 
