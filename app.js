@@ -12,6 +12,8 @@ const ACTIVE_FILE_DATES_CLEAR_VERSION = "active-file-dates-cleared-2026-07-14";
 const MASTER_LIST_RESET_VERSION = "approved-master-users-2026-07-13";
 const MS_DAY = 86400000;
 const DESKTOP_NOTIFICATION_DEVICE_KEY = `${STORAGE_KEY}-desktop-notification-device`;
+const DESKTOP_LOCAL_BASELINE_KEY = `${STORAGE_KEY}-desktop-local-baseline`;
+const DESKTOP_LOCAL_SENT_KEY = `${STORAGE_KEY}-desktop-local-sent`;
 
 const defaultDailyQuotes = [
   { text: "Success comes from consistent small efforts.", author: "Robert Collier" },
@@ -1244,6 +1246,126 @@ function openDesktopNotificationTarget(notification = {}) {
   if (route.searchParams.has("chat")) openTeamChat();
 }
 
+function localDesktopStorageKey(key) {
+  const userKey = String(state.session?.authUserId || state.session?.userId || state.session?.userEmail || state.currentUser || "guest")
+    .toLowerCase()
+    .replace(/[^a-z0-9@._-]+/g, "-");
+  return `${key}-${userKey}`;
+}
+
+function readLocalDesktopSentIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(localDesktopStorageKey(DESKTOP_LOCAL_SENT_KEY)) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeLocalDesktopSentIds(ids) {
+  localStorage.setItem(localDesktopStorageKey(DESKTOP_LOCAL_SENT_KEY), JSON.stringify([...ids].slice(-400)));
+}
+
+function localDesktopAlertsEnabled() {
+  return desktopNotificationsSupported()
+    && Notification.permission === "granted"
+    && desktopNotificationConfig?.preferences?.desktop_enabled
+    && currentDeviceSubscribed;
+}
+
+function desktopNotificationRouteForItem(item = {}) {
+  if (item.chatId) return `/?page=dashboard&chat=${encodeURIComponent(item.chatId)}`;
+  if (item.category === "billing") return `/?page=fee-pending&file=${encodeURIComponent(item.fileId || "")}`;
+  if (item.category === "corrections") return `/?page=correction-required-files&file=${encodeURIComponent(item.fileId || "")}`;
+  if (item.type === "Awaiting Checking" || item.category === "checking") return `/?page=not-checked-files&file=${encodeURIComponent(item.fileId || "")}`;
+  if (item.category === "assignments") return `/?page=my-task&file=${encodeURIComponent(item.fileId || "")}`;
+  if (item.fileId) return `/?page=active-files&file=${encodeURIComponent(item.fileId)}`;
+  return "/?page=dashboard";
+}
+
+function desktopNotificationBelongsToCurrentUser(item = {}) {
+  const user = loggedInUser();
+  if (!user) return false;
+  if (item.targetUserId || item.targetUserEmail || item.targetUserName) {
+    return sameUserIdentity(user, item.targetUserId, item.targetUserEmail, item.targetUserName)
+      || sameStaffName(item.targetUserName, state.currentUser);
+  }
+  if (!item.fileId || !["assignments", "due"].includes(item.category)) return false;
+  const file = (state.files || []).find((row) => row.id === item.fileId);
+  return Boolean(file && currentFileBelongsToUser(file, user));
+}
+
+function showLocalDesktopNotification(item = {}) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
+  const title = cleanTextForNotification(item.title || item.type || "CA File Tracker", 80);
+  const body = cleanTextForNotification(item.text || "You have a new CA File Tracker update.", 180);
+  const route = desktopNotificationRouteForItem(item);
+  try {
+    const notification = new Notification(title, {
+      body,
+      icon: "/assets/ca-india-logo.png",
+      badge: "/assets/ca-india-logo.png",
+      tag: item.id || `${title}-${body}`,
+      renotify: false,
+      data: { id: item.id || "", route, relatedRecordId: item.fileId || "" },
+    });
+    notification.onclick = () => {
+      window.focus();
+      openDesktopNotificationTarget(notification.data || {});
+      notification.close();
+    };
+    return true;
+  } catch (error) {
+    console.warn("Local desktop notification failed", error);
+    return false;
+  }
+}
+
+function cleanTextForNotification(value, max = 180) {
+  return String(value || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function dispatchLocalDesktopNotifications() {
+  if (!state.session?.loggedIn || !localDesktopAlertsEnabled()) return;
+  const baselineKey = localDesktopStorageKey(DESKTOP_LOCAL_BASELINE_KEY);
+  const baseline = Number(localStorage.getItem(baselineKey) || 0);
+  if (!baseline) {
+    localStorage.setItem(baselineKey, String(Date.now()));
+    return;
+  }
+  const sent = readLocalDesktopSentIds();
+  const dueNow = allNotificationItems()
+    .filter((item) => !item.isRead && item.id && !sent.has(item.id))
+    .filter((item) => notificationItemTime(item) >= baseline)
+    .filter(desktopNotificationBelongsToCurrentUser)
+    .slice(0, 3);
+  if (!dueNow.length) return;
+  dueNow.forEach((item) => {
+    if (showLocalDesktopNotification(item)) sent.add(item.id);
+  });
+  writeLocalDesktopSentIds(sent);
+}
+
+async function sendLocalDesktopTestNotification() {
+  if (!desktopNotificationsSupported()) {
+    toast("Desktop notifications need HTTPS and a supported browser like Edge or Chrome.");
+    return false;
+  }
+  if (Notification.permission !== "granted") {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      toast(permission === "denied" ? "Notifications are blocked in browser site settings." : "Notification permission was not granted.");
+      return false;
+    }
+  }
+  return showLocalDesktopNotification({
+    id: `local-test-${Date.now()}`,
+    title: "CA File Tracker",
+    text: "Desktop notifications are working on this device.",
+    category: "system",
+    createdAt: Date.now(),
+  });
+}
+
 async function applyDesktopNotificationRouteFromLocation() {
   const params = new URLSearchParams(location.search);
   if (!params.has("page") && !params.has("chat") && !params.has("file")) return;
@@ -1570,6 +1692,7 @@ async function refreshCentralState(options = {}) {
     const userIsScrollingDashboard = activePage === "dashboard" && Date.now() - lastDashboardScrollAt < 700;
     applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard });
     updateTopActionBadges();
+    dispatchLocalDesktopNotifications();
     if (userIsScrollingDashboard && !chatOpen) scheduleDashboardRefreshRender();
     if (chatOpen) {
       refreshOpenChatFromState();
@@ -3387,8 +3510,12 @@ function allNotificationItems() {
   const files = visibleFiles();
   const items = [];
   const user = loggedInUser();
+  const persistedAssignmentFileIds = new Set();
   visibleFileNotifications(user).forEach((notice) => {
     const file = files.find((row) => row.id === notice.fileId) || {};
+    if (notificationCategory(notice.changeType || "File Update") === "assignments" && notice.fileId) {
+      persistedAssignmentFileIds.add(String(notice.fileId));
+    }
     items.push({
       id: `file-change-${notice.id}`,
       sourceKey: notice.dedupeKey || notificationDedupeKey(notice),
@@ -3401,6 +3528,9 @@ function allNotificationItems() {
       clientName: file.name || notice.fileName || "",
       fy: file.fy || file.financialYear || file.financial_year || "",
       actor: notice.changedBy || "Team",
+      targetUserId: notice.targetUserId || notice.target_user_id || "",
+      targetUserEmail: notice.targetUserEmail || notice.target_user_email || "",
+      targetUserName: notice.targetUserName || notice.target_user_name || "",
       date: notice.date || "",
       time: notice.time || "",
       createdAt: notice.createdAt || Date.parse(notice.created_at || "") || 0,
@@ -3437,14 +3567,15 @@ function allNotificationItems() {
   }
   files.forEach((file) => {
     const days = daysUntil(file.dueDate);
-    if ((sameStaffName(file.assignedStaff, state.currentUser) || sameStaffName(file.assignedStaff, user?.name) || sameStaffName(file.assignedStaffEmail, user?.email) || sameStaffName(file.assignedStaffId, user?.id)) && file.assignedStaff !== "Not Assigned") {
+    const hasPersistedAssignmentNotice = persistedAssignmentFileIds.has(String(file.id));
+    if (!hasPersistedAssignmentNotice && (sameStaffName(file.assignedStaff, state.currentUser) || sameStaffName(file.assignedStaff, user?.name) || sameStaffName(file.assignedStaffEmail, user?.email) || sameStaffName(file.assignedStaffId, user?.id)) && file.assignedStaff !== "Not Assigned") {
       items.push({ id: `${file.id}-assigned-${file.assignedStaff}`, type: "Assigned file", category: "assignments", tone: "progress", title: file.name, text: `This file is assigned to you. Due date: ${fmt(file.dueDate)}.`, fileId: file.id, actor: file.assignedStaff || "", date: file.dueDate, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || file.dueDate || "") || 0 });
     }
     if ((sameStaffName(file.reAssignedStaff, state.currentUser) || sameStaffName(file.reAssignedStaff, user?.name) || sameStaffName(file.reAssignedStaffEmail, user?.email) || sameStaffName(file.reAssignedStaffId, user?.id)) && file.reAssignedDate) {
       items.push({ id: `${file.id}-reassigned-${file.reAssignedDate}`, type: "Re-assigned file", category: "assignments", tone: "approval", title: file.name, text: `This file was re-assigned to you on ${fmt(file.reAssignedDate)}.`, fileId: file.id, actor: file.reAssignedStaff || "", date: file.reAssignedDate, createdAt: Date.parse(file.reAssignedDate || "") || 0 });
     }
     if (isOverdue(file)) items.push({ id: `${file.id}-overdue`, type: "Overdue", category: "files", tone: "overdue", title: file.name, text: `${Math.abs(days)} day(s) overdue. Assigned to ${file.assignedStaff}.`, fileId: file.id, actor: file.assignedStaff || "", date: file.dueDate, createdAt: Date.parse(file.dueDate || "") || 0 });
-    else if (!file.filed && days <= 3) items.push({ id: `${file.id}-due`, type: "Nearing due", category: "files", tone: "pending", title: file.name, text: `Due in ${days} day(s). Priority: ${file.priority}.`, fileId: file.id, date: file.dueDate, createdAt: Date.parse(file.dueDate || "") || 0 });
+    else if (!hasPersistedAssignmentNotice && !file.filed && days <= 3) items.push({ id: `${file.id}-due`, type: "Nearing due", category: "files", tone: "pending", title: file.name, text: `Due in ${days} day(s). Priority: ${file.priority}.`, fileId: file.id, date: file.dueDate, createdAt: Date.parse(file.dueDate || "") || 0 });
     if (pendingApproval(file)) items.push({ id: `${file.id}-approval`, type: "Approval pending", category: "files", tone: "approval", title: file.name, text: "Shared with client/partner but not approved yet.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
     if (reportNotFiled(file)) items.push({ id: `${file.id}-workdone`, type: "Work done pending", category: "files", tone: "report", title: file.name, text: "Work is done, completion is still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
     if (completedNotBilled(file)) items.push({ id: `${file.id}-billing`, type: "Billing pending", category: "billing", tone: "filed", title: file.name, text: "Filing completed, billing still pending.", fileId: file.id, createdAt: Date.parse(file.updatedAt || file.lastUpdatedDate || "") || 0 });
@@ -3961,7 +4092,10 @@ async function handleLogin() {
     autoRecoverAdminDataIfEmpty();
   }
   registerDesktopNotificationWorker().catch((error) => console.warn("Service worker registration failed", error));
-  loadDesktopNotificationConfig().then(applyDesktopNotificationRouteFromLocation).catch(() => {});
+  loadDesktopNotificationConfig().then(() => {
+    applyDesktopNotificationRouteFromLocation();
+    dispatchLocalDesktopNotifications();
+  }).catch(() => {});
 }
 
 function bindTopActions() {
@@ -4192,6 +4326,7 @@ function renderAll() {
   }
   renderActivePage();
   enforceDateYearCap();
+  dispatchLocalDesktopNotifications();
 }
 
 function renderActivePage() {
@@ -6836,7 +6971,9 @@ function feePendingDisplayRow(file = {}, index = 0) {
   const hiddenColumns = new Set([
     "Contact No.",
     "Checked Date",
+    "Bill Date",
     "Bill No.",
+    "Received Date",
     "Assigned Staff / Done By",
     "Remarks",
   ]);
@@ -9615,6 +9752,7 @@ function renderAfterFileMutation() {
   updateTopActionBadges();
   renderActivePage();
   enforceDateYearCap();
+  dispatchLocalDesktopNotifications();
 }
 
 function renderStaffPage() {
@@ -16537,10 +16675,15 @@ function bindDesktopNotificationSettings(panel) {
   panel.querySelector("#testDesktopNotifications")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
+    let localShown = false;
     try {
+      localShown = await sendLocalDesktopTestNotification();
       const result = await apiJson("/api/notifications/test", { method: "POST" });
-      toast(result.sent ? "Test notification sent." : "No active desktop device was available.");
-    } catch (error) { toast(error.message || "Unable to send the test notification."); }
+      if (result.sent) toast(localShown ? "Desktop test shown and server test sent." : "Server test notification sent.");
+      else toast(localShown ? "Desktop test shown. Server push has no active device." : "No active desktop device was available.");
+    } catch (error) {
+      toast(localShown ? "Desktop test shown. Server push test could not be completed." : (error.message || "Unable to send the test notification."));
+    }
     finally { button.disabled = false; }
   });
   panel.querySelector("#saveDesktopNotificationPreferences")?.addEventListener("click", async (event) => {
@@ -17625,7 +17768,10 @@ async function bootApp() {
     const loaded = await loadStateFromApi();
     if (loaded) {
       registerDesktopNotificationWorker().catch((error) => console.warn("Service worker registration failed", error));
-      loadDesktopNotificationConfig().then(applyDesktopNotificationRouteFromLocation).catch(() => {});
+      loadDesktopNotificationConfig().then(() => {
+        applyDesktopNotificationRouteFromLocation();
+        dispatchLocalDesktopNotifications();
+      }).catch(() => {});
       return;
     }
   }
