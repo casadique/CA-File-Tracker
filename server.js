@@ -27,16 +27,23 @@ app.use(cors({
   credentials: true,
 }));
 app.use(compression());
-app.use(rateLimit({
+const apiRateLimiter = rateLimit({
   windowMs: env.rateLimitWindowMs,
-  max: env.rateLimitMax,
+  max: Math.max(env.rateLimitMax, 3000),
   standardHeaders: true,
   legacyHeaders: false,
-}));
+});
+const loginRateLimiter = rateLimit({
+  windowMs: env.rateLimitWindowMs,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
-app.use("/api", apiRoutes);
+app.use("/api/auth/login", loginRateLimiter);
+app.use("/api", apiRateLimiter, apiRoutes);
 app.use(["/src", "/database", "/tools", "/Backups", "/data"], (_req, res) => {
   res.status(404).send("Not found");
 });
@@ -46,7 +53,7 @@ app.use((req, res, next) => {
   } else if (req.path === "/" || req.path.endsWith(".html")) {
     res.set("Cache-Control", "no-store");
   } else if (req.path.endsWith(".js") || req.path.endsWith(".css")) {
-    res.set("Cache-Control", "no-cache, must-revalidate");
+    res.set("Cache-Control", req.query.v ? "public, max-age=31536000, immutable" : "no-cache, must-revalidate");
   }
   next();
 });

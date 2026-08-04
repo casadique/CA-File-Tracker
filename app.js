@@ -439,13 +439,13 @@ setInterval(() => {
   } else if (state.session?.loggedIn) {
     syncSharedState(localStorage.getItem(STORAGE_KEY), true);
   }
-}, 3000);
+}, 5000);
 
 setInterval(() => {
-  if (state.session?.loggedIn && isSupabaseMode()) {
-    syncChatMessagesFast({ force: document.querySelector("#teamChatPanel")?.classList.contains("open") });
+  if (state.session?.loggedIn && isSupabaseMode() && chatPanelIsOpen()) {
+    syncChatMessagesFast({ force: true });
   }
-}, 1800);
+}, 5000);
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -1727,7 +1727,7 @@ async function syncChatMessagesFast(options = {}) {
   if (!state.session?.loggedIn || !isSupabaseMode()) return false;
   if (!options.force && document.hidden) return false;
   if (chatFastSyncInFlight) return false;
-  if (!options.force && Date.now() - lastChatFastSyncAt < 1600) return false;
+  if (!options.force && Date.now() - lastChatFastSyncAt < 4500) return false;
   lastChatFastSyncAt = Date.now();
   chatFastSyncInFlight = true;
   try {
@@ -1773,7 +1773,7 @@ async function checkCentralStateVersion() {
   if (centralImportInFlight) return false;
   if (document.hidden) return false;
   if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
-  if (Date.now() - lastCentralVersionCheckAt < 5000) return false;
+  if (Date.now() - lastCentralVersionCheckAt < 15000) return false;
   lastCentralVersionCheckAt = Date.now();
   try {
     const payload = await apiJson("/api/state/version");
@@ -14219,7 +14219,7 @@ function renderExpensesPage() {
         ${expenseTabButton("collections", "Collections", tab, "arrow-down")}
         ${expenseTabButton("expenses", "Expenses", tab, "arrow-up")}
         ${expenseTabButton("transfers", "Account Transfers", tab, "wallet")}
-        ${expenseTabButton("balance", "Cash Reconciliation", tab, "wallet")}
+        ${expenseTabButton("balance", "Reconciliations", tab, "wallet")}
       </div>
       ${tab === "collections" ? renderCashCollectionsTab() : tab === "balance" ? renderCashBalanceTab() : tab === "transfers" ? renderAccountTransfersTab() : renderExpenseEntryTab()}
     </div>
@@ -14348,20 +14348,39 @@ function renderExpenseEntryTab() {
 
 function renderOpeningBalancePanel() {
   const rows = [...(state.openingBalances || [])].sort((a, b) => a.date.localeCompare(b.date));
+  const entryRows = financeAccounts.map((account) => {
+    const latest = [...rows]
+      .filter((item) => transactionAccountKey(item) === account.value)
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0];
+    return {
+      ...account,
+      date: latest?.date || todayDate(),
+      amount: latest ? Number(latest.amount || latest.opening_balance || 0) : "",
+    };
+  });
+  const entryTotal = entryRows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   return `
     <div class="expense-tools-card opening-balance-card admin-opening-balance">
       <div class="expense-card-head">
         <span>Admin Only</span>
         <h3>Set Opening Account Balance</h3>
-        <p>Enter a separate opening balance for Cash in Hand, Federal Bank or TMB</p>
+        <p>Enter the effective date and opening amount for each account.</p>
       </div>
       <form id="openingBalanceForm" class="opening-balance-form">
-        ${expenseInput("openingDate", "Opening Balance As On", todayDate(), "date", "", "compact-field")}
-        ${financeAccountSelect("openingAccount", "Account", "cash")}
-        ${expenseInput("openingAmount", "Opening Balance Amount", "", "number", "0.01", "compact-field amount-field")}
-        <div class="field opening-balance-actions"><label>Action</label><button class="primary-button" type="submit">Save Opening Balance</button><button class="secondary-button" id="resetOpeningBalanceForm" type="button">Reset</button></div>
+        <div class="table-wrap opening-balance-entry-wrap">
+          <table class="opening-balance-entry-table">
+            <thead><tr><th>Date</th><th>Account</th><th>Amount</th></tr></thead>
+            <tbody>${entryRows.map((item) => `<tr>
+              <td><input type="date" data-opening-date="${item.value}" value="${escapeHtml(item.date)}" max="9999-12-31" aria-label="${escapeHtml(item.label)} opening balance date"></td>
+              <td><span class="opening-account-label account-${item.value}">${escapeHtml(item.label === "Cash in Hand" ? "Cash" : item.label)}</span></td>
+              <td><input class="opening-amount-input" type="number" step="0.01" data-opening-amount="${item.value}" value="${escapeHtml(item.amount)}" placeholder="0.00" aria-label="${escapeHtml(item.label)} opening amount"></td>
+            </tr>`).join("")}</tbody>
+            <tfoot><tr><th colspan="2">Total</th><th id="openingBalancesTotal">${money(entryTotal)}</th></tr></tfoot>
+          </table>
+        </div>
+        <div class="opening-balance-save-row"><button class="primary-button" type="submit">Save Balances</button></div>
       </form>
-      ${rows.length ? `<div class="table-wrap opening-balance-list"><table class="file-table expense-table transaction-table"><thead><tr><th>Effective Date</th><th>Account</th><th class="amount-col">Opening Amount</th><th>Entered By</th><th>Entered On</th><th>Updated On</th><th>Actions</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "")}</td><td>${escapeHtml(formatDateTime(item.createdAt || item.created_at || ""))}</td><td>${escapeHtml(formatDateTime(item.updatedAt || item.updated_at || ""))}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${rows.length ? `<details class="opening-balance-history"><summary>View balance history</summary><div class="table-wrap opening-balance-list"><table class="file-table expense-table transaction-table"><thead><tr><th>Effective Date</th><th>Account</th><th class="amount-col">Opening Amount</th><th>Entered By</th><th>Entered On</th><th>Updated On</th><th>Actions</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "")}</td><td>${escapeHtml(formatDateTime(item.createdAt || item.created_at || ""))}</td><td>${escapeHtml(formatDateTime(item.updatedAt || item.updated_at || ""))}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div></details>` : ""}
     </div>
   `;
 }
@@ -14463,7 +14482,7 @@ function renderTransactionSidePanel(tab) {
       </div>
       <button class="transaction-quick-action" type="button" data-expense-tab="collections">${transactionIcon("arrow-down")} Add Collection</button>
       <button class="transaction-quick-action" type="button" data-expense-tab="expenses">${transactionIcon("arrow-up")} Add Expense</button>
-      <button class="transaction-quick-action" type="button" data-expense-tab="balance">${transactionIcon("wallet")} Cash Reconciliation</button>
+      <button class="transaction-quick-action" type="button" data-expense-tab="balance">${transactionIcon("wallet")} Reconciliations</button>
       <button class="transaction-quick-action" type="button" id="transactionImportShortcut">${transactionIcon("file")} Import Data</button>
       <button class="transaction-quick-action" type="button" id="transactionExportShortcut">${transactionIcon("save")} Export Data</button>
     </section>
@@ -14741,9 +14760,9 @@ function bindExpensePage() {
   const expenseForm = document.querySelector("#expenseForm");
   if (expenseForm) expenseForm.onsubmit = saveExpenseEntry;
   const openingForm = document.querySelector("#openingBalanceForm");
-  if (openingForm) openingForm.onsubmit = saveOpeningBalance;
-  document.querySelector("#resetOpeningBalanceForm")?.addEventListener("click", () => {
-    document.querySelector("#openingBalanceForm")?.reset();
+  if (openingForm) openingForm.onsubmit = saveOpeningBalances;
+  document.querySelectorAll("[data-opening-amount]").forEach((input) => {
+    input.addEventListener("input", updateOpeningBalancesTotal);
   });
   const cashForm = document.querySelector("#cashCollectionForm");
   if (cashForm) cashForm.onsubmit = saveCashCollectionEntry;
@@ -14884,52 +14903,71 @@ async function saveExpenseEntry(event) {
   renderAll();
 }
 
-async function saveOpeningBalance(event) {
+function updateOpeningBalancesTotal() {
+  const total = [...document.querySelectorAll("[data-opening-amount]")]
+    .reduce((sum, input) => sum + Number(input.value || 0), 0);
+  const output = document.querySelector("#openingBalancesTotal");
+  if (output) output.textContent = money(total);
+}
+
+async function saveOpeningBalances(event) {
   event.preventDefault();
   if (state.currentRole !== "Admin") return toast("Only Admin can add opening balances.");
-  const amount = Number(document.querySelector("#openingAmount")?.value || 0);
-  const date = document.querySelector("#openingDate")?.value || todayDate();
-  const accountKey = document.querySelector("#openingAccount")?.value || "cash";
-  if (!date) return toast("Select opening balance date.");
-  if (Number.isNaN(amount)) return toast("Enter opening balance amount.");
-  const existing = (state.openingBalances || []).find((item) => item.date === date && transactionAccountKey(item) === accountKey);
-  if (existing && !confirm("Opening balance already exists for this date. Update it?")) return;
   const now = new Date().toISOString();
-  const record = {
-    ...(existing || {}),
-    id: existing?.id || crypto.randomUUID(),
-    particulars: `Opening Balance - ${financeAccountLabel(accountKey)}`,
-    date,
-    balance_date: date,
-    amount,
-    opening_balance: amount,
-    accountKey,
-    account_key: accountKey,
-    accountName: financeAccountLabel(accountKey),
-    account_name: financeAccountLabel(accountKey),
-    enteredBy: existing?.enteredBy || state.currentUser || "",
-    entered_by_user_name: existing?.entered_by_user_name || state.currentUser || "",
-    createdAt: existing?.createdAt || now,
-    created_at: existing?.created_at || now,
-    updatedAt: now,
-    updated_at: now,
-  };
+  const records = financeAccounts.map((account) => {
+    const date = document.querySelector(`[data-opening-date="${account.value}"]`)?.value || "";
+    const amountInput = document.querySelector(`[data-opening-amount="${account.value}"]`);
+    const amount = Number(amountInput?.value || 0);
+    const existing = (state.openingBalances || []).find((item) => item.date === date && transactionAccountKey(item) === account.value);
+    return {
+      ...(existing || {}),
+      id: existing?.id || crypto.randomUUID(),
+      particulars: `Opening Balance - ${financeAccountLabel(account.value)}`,
+      date,
+      balance_date: date,
+      amount,
+      opening_balance: amount,
+      accountKey: account.value,
+      account_key: account.value,
+      accountName: financeAccountLabel(account.value),
+      account_name: financeAccountLabel(account.value),
+      enteredBy: existing?.enteredBy || state.currentUser || "",
+      entered_by_user_name: existing?.entered_by_user_name || state.currentUser || "",
+      createdAt: existing?.createdAt || now,
+      created_at: existing?.created_at || now,
+      updatedAt: now,
+      updated_at: now,
+    };
+  });
+  if (records.some((record) => !record.date)) return toast("Select an opening balance date for every account.");
+  if (records.some((record) => Number.isNaN(record.amount))) return toast("Enter a valid opening amount for every account.");
+  const submitButton = event.submitter || document.querySelector("#openingBalanceForm button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Saving Balances...";
+  }
   if (isSupabaseMode()) {
     try {
-      await saveOpeningBalanceToApi(record);
-      toast(existing ? "Opening balance updated and synced" : "Opening balance saved and synced");
+      for (const record of records) await saveOpeningBalanceToApi(record);
+      toast("Opening account balances saved and synced");
       renderAll();
       return;
     } catch (error) {
       console.error("Opening balance save failed", { message: error.message });
-      return toast(`Opening balance save failed: ${error.message || "Please retry."}`);
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = "Save Balances";
+      }
+      return toast(`Opening balances could not be saved: ${error.message || "Please retry."}`);
     }
   }
-  state.openingBalances = existing
-    ? (state.openingBalances || []).map((item) => item.id === existing.id ? record : item)
-    : [record, ...(state.openingBalances || [])];
+  records.forEach((record) => {
+    const index = (state.openingBalances || []).findIndex((item) => item.id === record.id);
+    if (index >= 0) state.openingBalances[index] = record;
+    else state.openingBalances = [record, ...(state.openingBalances || [])];
+  });
   saveState();
-  toast(existing ? "Opening balance updated" : "Opening balance added");
+  toast("Opening account balances saved");
   renderAll();
 }
 

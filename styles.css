@@ -6996,6 +6996,167 @@ textarea {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 
+/* Finance navigation and opening balances */
+.expense-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  padding: 4px;
+  overflow-x: auto;
+  border: 2px solid #bfdbfe;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.expense-tabs .expense-tab-button,
+.expense-tabs .expense-tab-button.tab-collections,
+.expense-tabs .expense-tab-button.tab-expenses,
+.expense-tabs .expense-tab-button.tab-transfers,
+.expense-tabs .expense-tab-button.tab-balance {
+  min-width: 170px;
+  border: 0;
+  border-right: 1px solid #bfdbfe;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.expense-tabs .expense-tab-button:first-child { border-radius: 10px 0 0 10px; }
+.expense-tabs .expense-tab-button:last-child {
+  border-right: 0;
+  border-radius: 0 10px 10px 0;
+}
+
+.expense-tabs .expense-tab-button:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.expense-tabs .expense-tab-button.active-tab {
+  background: linear-gradient(135deg, #dbeafe, #ecfeff);
+  color: #1d4ed8;
+  box-shadow: inset 0 0 0 2px #60a5fa;
+}
+
+.expense-tabs .expense-tab-button.active-tab::after {
+  right: 14px;
+  bottom: 3px;
+  left: 14px;
+  height: 3px;
+}
+
+.admin-opening-balance .opening-balance-form {
+  display: block;
+  margin-top: 14px;
+}
+
+.opening-balance-entry-wrap {
+  max-width: 760px;
+  overflow: hidden;
+  border: 2px solid #93c5fd;
+  border-radius: 14px;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+}
+
+.opening-balance-entry-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.opening-balance-entry-table th,
+.opening-balance-entry-table td {
+  padding: 10px 12px;
+  border-right: 1px solid #bfdbfe;
+  border-bottom: 1px solid #bfdbfe;
+  text-align: left;
+}
+
+.opening-balance-entry-table th:last-child,
+.opening-balance-entry-table td:last-child { border-right: 0; }
+
+.opening-balance-entry-table thead th {
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.opening-balance-entry-table tbody tr:nth-child(even) { background: #f8fbff; }
+
+.opening-balance-entry-table input {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid #93c5fd;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.opening-balance-entry-table input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  outline: none;
+}
+
+.opening-account-label {
+  display: inline-flex;
+  min-width: 130px;
+  padding: 7px 10px;
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+.opening-balance-entry-table tfoot th {
+  border-bottom: 0;
+  background: #eff6ff;
+  color: #172554;
+  font-size: 15px;
+}
+
+.opening-balance-entry-table tfoot th:last-child {
+  color: #047857;
+  text-align: right;
+}
+
+.opening-balance-save-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.opening-balance-save-row .primary-button {
+  min-width: 180px;
+  border: 2px solid #1d4ed8;
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.18);
+}
+
+.opening-balance-history {
+  margin-top: 14px;
+  color: #334155;
+}
+
+.opening-balance-history summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+@media (max-width: 760px) {
+  .expense-tabs { grid-template-columns: repeat(4, minmax(170px, 1fr)); }
+  .opening-balance-entry-wrap { overflow-x: auto; }
+  .opening-balance-entry-table { min-width: 620px; }
+}
+
 .staff-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(170px, 1fr));
@@ -12248,4 +12409,44 @@ textarea,
   .client-master-edit-row .mini-button {
     justify-self: start;
   }
+}
+
+/* Finance navigation must stay as one four-item segmented row. */
+.expense-tabs {
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  padding: 4px;
+  overflow-x: auto;
+  border: 2px solid #bfdbfe;
+  background: #ffffff;
+}
+
+.expense-tabs .expense-tab-button,
+.expense-tabs .expense-tab-button.tab-collections,
+.expense-tabs .expense-tab-button.tab-expenses,
+.expense-tabs .expense-tab-button.tab-transfers,
+.expense-tabs .expense-tab-button.tab-balance {
+  border: 0;
+  border-right: 1px solid #bfdbfe;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.expense-tabs .expense-tab-button:first-child { border-radius: 10px 0 0 10px; }
+.expense-tabs .expense-tab-button:last-child {
+  border-right: 0;
+  border-radius: 0 10px 10px 0;
+}
+
+.expense-tabs .expense-tab-button:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.expense-tabs .expense-tab-button.active-tab {
+  background: linear-gradient(135deg, #dbeafe, #ecfeff);
+  color: #1d4ed8;
+  box-shadow: inset 0 0 0 2px #60a5fa;
 }
