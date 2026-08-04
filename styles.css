@@ -7044,7 +7044,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .balance-opening-summary-grid.summary-only {
@@ -7058,6 +7058,12 @@ textarea {
   margin: 0;
   padding: 16px;
   border-radius: 14px;
+}
+
+.balance-opening-summary-grid .cash-reconciliation-summary {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .balance-opening-summary-grid .opening-balance-entry-wrap {
@@ -7096,7 +7102,9 @@ textarea {
 }
 
 .balance-opening-summary-grid .reconciliation-summary-grid {
+  flex: 1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(96px, 1fr));
   gap: 10px;
 }
 

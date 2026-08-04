@@ -14263,12 +14263,6 @@ function renderExpensesPage() {
   const balances = financeBalancesForRange();
   root.innerHTML = `
     <div class="expense-shell">
-      <div class="transactions-page-head">
-        <div>
-          <h3>Transactions</h3>
-          <p>Manage collections, expenses and cash reconciliation</p>
-        </div>
-      </div>
       <div class="expense-overview-grid">
         ${expenseOverviewCard("Cash in Hand", balances.cash.closing, "balance", "Reconciled cash account", "wallet")}
         ${expenseOverviewCard("Federal Bank", balances.federal_bank.closing, "collection", "Federal Bank balance", "arrow-down")}
