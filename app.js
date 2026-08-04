@@ -6514,11 +6514,13 @@ function renderReAssignedFileTable(files) {
 
 function renderFeeReceivedFileTable(files) {
   const sortedFiles = sortFilesByFeeReceivedNewestFirst(files);
-  const totals = feeReceiptTotals(sortedFiles);
   const rows = sortedFiles.flatMap((file) => {
-    const receipts = allFeeReceiptRecordsForFile(file);
+    const receipts = feeReceiptRecordsForFile(file).filter((receipt) => (
+      !receiptWasPushed(receipt) || Boolean(linkedCollectionForFeeReceipt(receipt))
+    ));
     if (receipts.length) return receipts.map((receipt) => ({ file, receipt }));
-    return [{ file, receipt: null }];
+    const hasReceiptHistory = allFeeReceiptRecordsForFile(file).length > 0;
+    return file.feeReceived && !hasReceiptHistory ? [{ file, receipt: null }] : [];
   }).sort((a, b) => {
     const aDate = feeReceiptRecordDate(a.receipt || {}) || a.file.feeReceivedDate || a.file.receivedOn || "";
     const bDate = feeReceiptRecordDate(b.receipt || {}) || b.file.feeReceivedDate || b.file.receivedOn || "";
@@ -6528,6 +6530,28 @@ function renderFeeReceivedFileTable(files) {
     if (aTime !== bTime) return bTime - aTime;
     return String(b.receipt?.id || b.file.id || "").localeCompare(String(a.receipt?.id || a.file.id || ""));
   });
+  const displayTotalsByFile = new Map();
+  rows.forEach(({ file, receipt }) => {
+    const current = displayTotalsByFile.get(file.id) || {
+      billed: Number(dashboardFileAmount(file, "billed") || 0),
+      received: 0,
+      discount: 0,
+    };
+    if (receipt) {
+      current.received += Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0);
+      current.discount += Number(receipt.discountAmount || receipt.discount_amount || receipt.discount || 0);
+    } else {
+      current.received = Number(dashboardFileAmount(file, "received") || 0);
+      current.discount = Number(file.discountAmount || file.discount_amount || file.discount || 0);
+    }
+    displayTotalsByFile.set(file.id, current);
+  });
+  const totals = [...displayTotalsByFile.values()].reduce((result, item) => {
+    result.billed += item.billed;
+    result.received += item.received;
+    result.balance += Math.max(item.billed - item.received - item.discount, 0);
+    return result;
+  }, { billed: 0, received: 0, balance: 0 });
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact fee-received-table">

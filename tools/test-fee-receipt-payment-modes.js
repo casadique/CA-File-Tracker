@@ -152,6 +152,12 @@ async function main() {
   const receivedTableHeader = receivedTableBody.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] || "";
   assert.doesNotMatch(receivedTableHeader, /<th>Account<\/th>|<th>Status<\/th>/,
     "Fee Received display must not show Account or Status columns");
+  assert.match(receivedTableBody, /feeReceiptRecordsForFile\(file\)\.filter/,
+    "Fee Received display must use active receipt records only");
+  assert.match(receivedTableBody, /!receiptWasPushed\(receipt\) \|\| Boolean\(linkedCollectionForFeeReceipt\(receipt\)\)/,
+    "Fee Received display must exclude receipts whose linked transaction was reversed");
+  assert.match(receivedTableBody, /file\.feeReceived && !hasReceiptHistory/,
+    "Legacy Fee Received rows may be shown only when no receipt history exists");
   const appStyles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
   const pendingTableStyles = appStyles.match(
     /\.fee-pending-report-table \{[\s\S]*?(?=\n\.fee-pending-report-table tfoot td)/,
