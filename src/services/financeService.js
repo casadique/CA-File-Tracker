@@ -196,7 +196,13 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
     let transactionId = existingReceipt?.transactionId || existingReceipt?.transaction_id || "";
     let pushStatus = existingReceipt?.pushStatus || existingReceipt?.push_status || "not_requested";
     let collection = null;
-    const receiptPaymentMethod = normalizePaymentMethod(receiptPayload.paymentMethod || receiptPayload.payment_mode || "Cash");
+    const receiptPaymentMethod = normalizePaymentMethod(
+      receiptPayload.paymentMethod
+      || receiptPayload.paymentMode
+      || receiptPayload.payment_method
+      || receiptPayload.mode
+      || "Cash",
+    );
     const receiptAccountKey = transactionAccount(receiptPayload, receiptPaymentMethod);
 
     if (shouldPush) {
