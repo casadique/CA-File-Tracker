@@ -171,18 +171,32 @@ async function main() {
   const billedActionsBody = browserAppSource.match(
     /function billedFileActions[\s\S]*?(?=\nlet activeBilledActionToggle)/,
   )?.[0] || "";
-  for (const label of ["Mark Received", "Received", "View Transaction", "Mark Non-Billable", "Mark Not Received", "Delete"]) {
+  for (const label of ["Mark Received", "Received", "Go to Transactions", "View Transaction", "Mark Non-Billable", "Mark Not Received", "Delete"]) {
     assert.match(billedActionsBody, new RegExp(label), `Billed actions must include ${label}`);
   }
   assert.match(billedActionsBody, /rolePerm\(\)\.delete/,
     "Billed Delete must follow role permissions");
   assert.match(browserAppSource, /function bindBilledActionMenus/,
     "Billed action menus must have dedicated interaction bindings");
+  assert.match(browserAppSource, /document\.body\.appendChild\(menu\)/,
+    "Billed action dropdown must portal to the document body");
+  assert.match(browserAppSource, /event\.target\.closest\("\[data-billed-menu-toggle\]"\)/,
+    "Billed action trigger must use delegated click handling across table rerenders");
+  assert.match(browserAppSource, /toggle && event\.key === "ArrowDown"/,
+    "Billed action trigger must support keyboard menu navigation without overriding native Enter and Space clicks");
+  assert.match(browserAppSource, /document\.addEventListener\("scroll", scheduleBilledActionMenuPosition, true\)/,
+    "Billed action dropdown must reposition for nested table and page scrolling");
+  assert.match(browserAppSource, /window\.addEventListener\("resize", scheduleBilledActionMenuPosition\)/,
+    "Billed action dropdown must reposition when the viewport changes");
+  assert.match(browserAppSource, /data-go-transactions/,
+    "Fee Pending actions must navigate to the existing Transactions screen");
   const fileTableBody = browserAppSource.match(/function renderFileTable[\s\S]*?(?=\nfunction renderNotCheckedFileTable)/)?.[0] || "";
   assert.match(fileTableBody, /const receiptInfo = isBilledView \? "" : receiptSummary\(file\)/,
     "Billed Files Final Status must show only the status badge, without receipt amount details");
   assert.match(appStyles, /\.billed-action-menu\s*\{[\s\S]*?position:\s*fixed/,
     "Billed dropdown must render above the table without clipping");
+  assert.match(appStyles, /\.billed-menu-toggle\s*\{[\s\S]*?width:\s*40px[\s\S]*?min-height:\s*40px[\s\S]*?cursor:\s*pointer/,
+    "Billed action trigger must provide a pointer-enabled 40 by 40 pixel target");
   assert.match(appStyles, /@media \(max-width: 680px\)[\s\S]*?\.billed-action-menu/,
     "Billed actions must provide a mobile bottom-sheet layout");
   console.log("Fee receipt payment mode and account tests passed.");

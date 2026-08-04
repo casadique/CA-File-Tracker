@@ -7290,13 +7290,16 @@ function billedFileActions(file = {}) {
   if (canManageBilling && summary.outstandingAmount > 0) {
     menuItems.push(billedActionMenuItem({ label: "Mark Received", icon: "received", attrs: `data-mark-received="${fileId}"` }));
   }
+  if (canManageReceipt && summary.outstandingAmount > 0) {
+    menuItems.push(billedActionMenuItem({ label: "Go to Transactions", icon: "transaction", attrs: `data-go-transactions="${fileId}"` }));
+  }
+  if (canManageReceipt && linkedCollection?.id) {
+    menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linkedCollection.id)}"` }));
+  }
   if (canManageReceipt && activeReceipt?.id) {
     menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(activeReceipt.id)}"` }));
   } else if (canManageReceipt && hasReceivedAmount && !linkedCollection) {
     menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-mark-not-received="${fileId}"` }));
-  }
-  if (canManageReceipt && linkedCollection?.id) {
-    menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linkedCollection.id)}"` }));
   }
   if (canDelete) {
     menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete-billed="${fileId}"`, danger: true, divider: true }));
@@ -7317,65 +7320,104 @@ function billedFileActions(file = {}) {
 
   return `<div class="billed-actions" data-billed-actions="${fileId}">
     ${primaryAction}
-    ${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="More actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button>
+    ${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button>
     <div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}
   </div>`;
 }
 
 let activeBilledActionToggle = null;
+let activeBilledActionMenu = null;
+let activeBilledActionOwner = null;
 let billedActionMenuDocumentBound = false;
+let billedActionPositionFrame = 0;
 
 function closeBilledActionMenus({ restoreFocus = false } = {}) {
-  document.querySelectorAll(".billed-action-menu.open").forEach((menu) => {
+  const toggle = activeBilledActionToggle;
+  const menu = activeBilledActionMenu;
+  if (billedActionPositionFrame) cancelAnimationFrame(billedActionPositionFrame);
+  billedActionPositionFrame = 0;
+  if (menu) {
     menu.classList.remove("open", "open-up");
     menu.style.removeProperty("top");
     menu.style.removeProperty("left");
-  });
-  document.querySelectorAll("[data-billed-menu-toggle][aria-expanded='true']").forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
-  if (restoreFocus && activeBilledActionToggle?.isConnected) activeBilledActionToggle.focus();
+    if (activeBilledActionOwner?.isConnected) activeBilledActionOwner.appendChild(menu);
+    else menu.remove();
+  }
+  toggle?.setAttribute("aria-expanded", "false");
+  if (restoreFocus && toggle?.isConnected) toggle.focus();
   activeBilledActionToggle = null;
+  activeBilledActionMenu = null;
+  activeBilledActionOwner = null;
+}
+
+function positionBilledActionMenu() {
+  const toggle = activeBilledActionToggle;
+  const menu = activeBilledActionMenu;
+  if (!toggle?.isConnected || !menu?.isConnected) return closeBilledActionMenus();
+  if (window.matchMedia("(max-width: 680px)").matches) {
+    menu.classList.remove("open-up");
+    menu.style.removeProperty("top");
+    menu.style.removeProperty("left");
+    return;
+  }
+  const anchor = toggle.getBoundingClientRect();
+  const menuBox = menu.getBoundingClientRect();
+  const openUp = window.innerHeight - anchor.bottom < menuBox.height + 12 && anchor.top > menuBox.height + 12;
+  menu.classList.toggle("open-up", openUp);
+  menu.style.top = `${Math.max(8, openUp ? anchor.top - menuBox.height - 6 : anchor.bottom + 6)}px`;
+  menu.style.left = `${Math.max(8, Math.min(anchor.right - menuBox.width, window.innerWidth - menuBox.width - 8))}px`;
+}
+
+function scheduleBilledActionMenuPosition() {
+  if (!activeBilledActionMenu || billedActionPositionFrame) return;
+  billedActionPositionFrame = requestAnimationFrame(() => {
+    billedActionPositionFrame = 0;
+    positionBilledActionMenu();
+  });
 }
 
 function openBilledActionMenu(toggle, { focusFirst = false } = {}) {
-  const menu = document.querySelector(`[data-billed-action-menu="${CSS.escape(toggle.dataset.billedMenuToggle || "")}"]`);
+  const owner = toggle.closest(".billed-actions");
+  const menu = owner?.querySelector("[data-billed-action-menu]");
   if (!menu) return;
-  const wasOpen = menu.classList.contains("open");
+  if (activeBilledActionToggle === toggle && activeBilledActionMenu === menu) {
+    closeBilledActionMenus();
+    return;
+  }
   closeBilledActionMenus();
-  if (wasOpen) return;
   activeBilledActionToggle = toggle;
+  activeBilledActionMenu = menu;
+  activeBilledActionOwner = owner;
+  document.body.appendChild(menu);
   menu.classList.add("open");
   toggle.setAttribute("aria-expanded", "true");
-  if (!window.matchMedia("(max-width: 680px)").matches) {
-    const anchor = toggle.getBoundingClientRect();
-    const menuBox = menu.getBoundingClientRect();
-    const openUp = window.innerHeight - anchor.bottom < menuBox.height + 12 && anchor.top > menuBox.height + 12;
-    menu.classList.toggle("open-up", openUp);
-    menu.style.top = `${Math.max(8, openUp ? anchor.top - menuBox.height - 6 : anchor.bottom + 6)}px`;
-    menu.style.left = `${Math.max(8, Math.min(anchor.right - menuBox.width, window.innerWidth - menuBox.width - 8))}px`;
-  }
+  positionBilledActionMenu();
   if (focusFirst) menu.querySelector(".billed-action-menu-item")?.focus();
 }
 
 function bindBilledActionMenus() {
-  document.querySelectorAll("[data-billed-menu-toggle]").forEach((toggle) => {
-    toggle.onclick = (event) => {
-      event.stopPropagation();
-      openBilledActionMenu(toggle);
-    };
-    toggle.onkeydown = (event) => {
-      if (!["Enter", " ", "ArrowDown"].includes(event.key)) return;
-      event.preventDefault();
-      openBilledActionMenu(toggle, { focusFirst: true });
-    };
-  });
-  document.querySelectorAll(".billed-action-menu-item").forEach((item) => item.addEventListener("click", () => closeBilledActionMenus()));
   if (billedActionMenuDocumentBound) return;
   billedActionMenuDocumentBound = true;
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".billed-actions")) closeBilledActionMenus();
+    const toggle = event.target.closest("[data-billed-menu-toggle]");
+    if (!toggle) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openBilledActionMenu(toggle);
+  }, true);
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".billed-action-menu-item")) return closeBilledActionMenus();
+    if (!event.target.closest(".billed-action-menu")) closeBilledActionMenus();
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") return closeBilledActionMenus({ restoreFocus: true });
+    const toggle = event.target.closest("[data-billed-menu-toggle]");
+    if (toggle && event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      openBilledActionMenu(toggle, { focusFirst: true });
+      return;
+    }
     const item = event.target.closest(".billed-action-menu-item");
     if (!item || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const menu = item.closest(".billed-action-menu");
@@ -7386,6 +7428,8 @@ function bindBilledActionMenus() {
     const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
     items[next].focus();
   });
+  document.addEventListener("scroll", scheduleBilledActionMenuPosition, true);
+  window.addEventListener("resize", scheduleBilledActionMenuPosition);
 }
 
 function feeReceiptById(receiptId) {
@@ -7835,6 +7879,12 @@ function bindFileActions() {
         toast(error.message || "Unable to reverse this fee receipt.");
         btn.disabled = false;
       }
+    };
+  });
+  document.querySelectorAll("[data-go-transactions]").forEach((btn) => {
+    btn.onclick = () => {
+      if (!canUseExpenseModule()) return toast("Only Admin or Manager can access Transactions.");
+      openFilesFromDashboard("collections");
     };
   });
   document.querySelectorAll("[data-go-fee-transaction]").forEach((btn) => {

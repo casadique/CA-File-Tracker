@@ -6194,7 +6194,7 @@ textarea {
 /* Billed Files: compact, context-sensitive actions. */
 .billed-files-table .billed-actions-column {
   width: 1%;
-  min-width: 188px;
+  min-width: 194px;
   white-space: nowrap;
   overflow: visible;
 }
@@ -6205,10 +6205,12 @@ textarea {
 
 .billed-actions {
   position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
+  pointer-events: auto;
 }
 
 .billed-primary-action,
@@ -6270,13 +6272,24 @@ textarea {
 
 .billed-menu-toggle {
   display: inline-grid;
-  width: 34px;
-  min-width: 34px;
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
   padding: 0;
   place-items: center;
   border: 1px solid #bfdbfe;
   background: #ffffff;
   color: #17345d;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 3;
+  touch-action: manipulation;
+}
+
+.billed-menu-toggle:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 2px;
 }
 
 .billed-menu-toggle[aria-expanded="true"] {
@@ -6293,7 +6306,7 @@ textarea {
 
 .billed-action-menu {
   position: fixed;
-  z-index: 1200;
+  z-index: 10000;
   display: none;
   width: 218px;
   padding: 6px;
@@ -6328,6 +6341,13 @@ textarea {
   font-size: 12px;
   font-weight: 750;
   text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.billed-action-menu-item:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .billed-action-menu-item:hover,
