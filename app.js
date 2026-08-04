@@ -6365,12 +6365,147 @@ function activeFileExportRow(file) {
   };
 }
 
+let billedTableSort = { key: "", direction: "asc" };
+
+function billedSortHeading(label, key) {
+  const active = billedTableSort.key === key;
+  const icon = active ? (billedTableSort.direction === "asc" ? "↑" : "↓") : "↕";
+  return `<button type="button" class="billed-sort-button${active ? " active" : ""}" data-billed-sort="${key}" aria-label="Sort by ${escapeHtml(label)}">${escapeHtml(label)}<span aria-hidden="true">${icon}</span></button>`;
+}
+
+function billedPaymentDetails(file = {}) {
+  const summary = feeReceiptSummaryForFile(file);
+  const latestReceipt = summary.receipts[0] || null;
+  const linkedCollection = linkedFeeReceiptCollection(file) || (latestReceipt ? linkedCollectionForFeeReceipt(latestReceipt) : null);
+  const hasReceiptHistory = hasFeeReceiptHistory(file);
+  const nonBillable = String(file.billingType || file.billing_type || "").toLowerCase().replace(/[\s_-]+/g, " ") === "non billable";
+  let status = "Payment Pending";
+  let statusClass = "pending";
+  if (nonBillable) {
+    status = "Non-Billable";
+    statusClass = "non-billable";
+  } else if (summary.billedAmount > 0 && summary.outstandingAmount <= 0) {
+    status = "Received";
+    statusClass = "received";
+  } else if (summary.totalReceived > 0 || summary.totalDiscount > 0) {
+    status = "Partially Received";
+    statusClass = "partial";
+  } else if (hasReceiptHistory && !summary.receipts.length) {
+    status = "Not Received";
+    statusClass = "not-received";
+  }
+  const paymentMode = latestReceipt?.paymentMode || latestReceipt?.payment_mode
+    || linkedCollection?.paymentMethod || linkedCollection?.payment_method || linkedCollection?.mode
+    || file.paymentMode || file.payment_mode || file.receiptMode || "";
+  const accountKey = transactionAccountKey(latestReceipt || linkedCollection || file, "");
+  const account = accountKey === "cash" ? "Cash" : (accountKey ? financeAccountLabel(accountKey) : "");
+  const modeAndAccount = paymentMode && account && normalizeTransactionPaymentMethod(paymentMode) !== account
+    ? `${paymentMode} · ${account}`
+    : (account || paymentMode || "-");
+  const paymentOverdue = summary.outstandingAmount > 0 && Boolean(file.dueDate) && daysUntil(file.dueDate) < 0;
+  return { summary, latestReceipt, linkedCollection, status, statusClass, paymentMode, account, modeAndAccount, paymentOverdue };
+}
+
+function billedSortValue(file, key) {
+  const payment = billedPaymentDetails(file);
+  if (key === "client") return String(file.name || "").toLowerCase();
+  if (key === "service") return String(file.serviceType || "").toLowerCase();
+  if (key === "timeline") return fileActualCompletionDate(file) || workCompletedDate(file) || "";
+  if (key === "billing") return file.billDate || file.bill_date || file.billedDate || "";
+  if (key === "payment") return Number(payment.summary.totalReceived || 0);
+  if (key === "staff") return String(file.completedBy || file.workDoneBy || file.assignedStaff || "").toLowerCase();
+  return "";
+}
+
+function sortedBilledTableFiles(files = []) {
+  if (!billedTableSort.key) return [...files];
+  const direction = billedTableSort.direction === "desc" ? -1 : 1;
+  return [...files].sort((a, b) => {
+    const left = billedSortValue(a, billedTableSort.key);
+    const right = billedSortValue(b, billedTableSort.key);
+    if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
+    return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" }) * direction;
+  });
+}
+
+function billedWorkflowHistory(file = {}) {
+  const stagesForDisplay = ["Received", "Allotted", "WIP", "Work Done", "Shared", "Report Prepared", "Approved", "Completed", "Billed"];
+  const normalized = normalizeStages(file);
+  const completed = new Set(Object.entries(normalized).filter(([, value]) => Boolean(value)).map(([key]) => key));
+  if (file.workAllotmentDate) completed.add("Allotted");
+  if (file.fileReceivedDate) completed.add("Received");
+  if (file.billed) completed.add("Billed");
+  const labels = stagesForDisplay.filter((stage) => completed.has(stage));
+  return labels.length ? labels.join(" → ") : statusOf(file).label;
+}
+
+function billedExpandedDetails(file = {}, payment = billedPaymentDetails(file)) {
+  const receipts = payment.summary.receipts.slice(0, 4);
+  const billNo = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || file.billReference || "-";
+  const billDate = file.billDate || file.bill_date || file.billedDate || "";
+  const history = receipts.length
+    ? receipts.map((receipt) => {
+      const amount = Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0);
+      const mode = receipt.paymentMode || receipt.payment_mode || "-";
+      const accountKey = transactionAccountKey(receipt, "");
+      const account = accountKey ? financeAccountLabel(accountKey) : "";
+      return `<li><strong>${rupee(amount)}</strong><span>${displayDate(feeReceiptRecordDate(receipt)) || "-"} · ${escapeHtml(mode)}${account ? ` · ${escapeHtml(account)}` : ""}</span></li>`;
+    }).join("")
+    : `<li><span>No active receipt history</span></li>`;
+  return `<div class="billed-expanded-grid">
+    <section><h4>Work dates</h4><dl><div><dt>Received</dt><dd>${displayDate(file.fileReceivedDate) || "-"}</dd></div><div><dt>Work allotted</dt><dd>${displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-"}</dd></div><div><dt>Due date</dt><dd class="${payment.paymentOverdue ? "overdue-text" : ""}">${displayDate(file.dueDate) || "-"}</dd></div><div><dt>Priority</dt><dd>${escapeHtml(file.priority || "Medium")}</dd></div></dl></section>
+    <section><h4>Workflow history</h4><p>${escapeHtml(billedWorkflowHistory(file))}</p><h4>Remarks</h4><p>${escapeHtml(file.remarks || file.billingRemarks || file.feeRemarks || "No remarks")}</p></section>
+    <section><h4>Billing history</h4><p>Bill ${escapeHtml(billNo)} · ${displayDate(billDate) || "-"}<br><strong>${rupee(payment.summary.billedAmount)}</strong> billed · <strong>${rupee(payment.summary.totalReceived)}</strong> received</p><h4>Receipt history</h4><ul class="billed-receipt-history">${history}</ul></section>
+  </div>`;
+}
+
+function billedDesktopRow(file, index) {
+  const payment = billedPaymentDetails(file);
+  const completedDate = fileActualCompletionDate(file) || workCompletedDate(file);
+  const billNo = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || file.billReference || "-";
+  const billDate = file.billDate || file.bill_date || file.billedDate || "";
+  return `<tr class="billed-file-row${index % 2 ? " is-alt" : ""}">
+    <td class="billed-sn-cell">${fileSerialNumber(file, index)}</td>
+    <td class="billed-client-cell"><div class="billed-client-line"><button type="button" class="billed-expand-toggle" data-billed-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><span class="client-name">${escapeHtml(file.name || "-")}</span></div><span class="subtext">${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></td>
+    <td class="billed-service-cell"><strong>${escapeHtml(file.serviceType || "-")}</strong><span class="subtext">FY ${escapeHtml(fileFy(file) || "NA")}</span></td>
+    <td class="billed-timeline-cell"><span><b>Received</b>${displayDate(file.fileReceivedDate) || "-"}</span><span><b>Allotted</b>${displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-"}</span><span><b>Completed</b>${displayDate(completedDate) || "-"}</span></td>
+    <td class="billed-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
+    <td class="billed-billing-cell"><span>Bill No. ${escapeHtml(billNo)}</span><span class="billed-amount">${rupee(payment.summary.billedAmount)}</span><span class="subtext">${displayDate(billDate) || "-"}</span></td>
+    <td class="billed-payment-cell"><div class="billed-payment-badges"><span class="billed-payment-badge ${payment.statusClass}"><i></i>${escapeHtml(payment.status)}</span>${payment.linkedCollection ? `<span class="billed-linked-badge">Transaction Linked</span>` : ""}</div><span class="billed-payment-amount">${rupee(payment.summary.totalReceived)}</span><span class="subtext">${displayDate(payment.summary.latestReceiptDate) || "-"} · ${escapeHtml(payment.modeAndAccount)}</span>${payment.paymentOverdue ? `<span class="billed-overdue-label">Payment overdue · ${displayDate(file.dueDate)}</span>` : ""}</td>
+    <td class="billed-staff-cell">${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}</td>
+    <td class="billed-actions-column"><div class="action-row">${billedFileActions(file)}</div></td>
+  </tr><tr class="billed-details-row" hidden><td colspan="9">${billedExpandedDetails(file, payment)}</td></tr>`;
+}
+
+function billedMobileCard(file, index) {
+  const payment = billedPaymentDetails(file);
+  return `<article class="billed-mobile-card${index % 2 ? " is-alt" : ""}">
+    <div class="billed-mobile-head"><button type="button" class="billed-expand-toggle" data-billed-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
+    <div class="billed-mobile-summary"><div><span>Billed</span><strong>${rupee(payment.summary.billedAmount)}</strong></div><div><span>Received</span><strong>${rupee(payment.summary.totalReceived)}</strong></div><div><span>Mode / Account</span><strong>${escapeHtml(payment.modeAndAccount)}</strong></div><div><span>Status</span><strong><span class="billed-payment-badge ${payment.statusClass}"><i></i>${escapeHtml(payment.status)}</span></strong></div></div>
+    ${payment.linkedCollection ? `<span class="billed-linked-badge">Transaction Linked</span>` : ""}
+    <div class="billed-mobile-actions">${billedFileActions(file)}</div>
+    <div class="billed-mobile-details" hidden>${billedExpandedDetails(file, payment)}</div>
+  </article>`;
+}
+
+function renderBilledFileTable(files = []) {
+  const rows = sortedBilledTableFiles(files);
+  return `<div class="table-wrap billed-table-wrap">
+    <table class="file-table billed-files-table">
+      <thead><tr><th class="billed-sn-cell">SN</th><th class="billed-client-cell">${billedSortHeading("Client", "client")}</th><th>${billedSortHeading("Service", "service")}</th><th>${billedSortHeading("Work Timeline", "timeline")}</th><th>C/o</th><th>${billedSortHeading("Billing Details", "billing")}</th><th>${billedSortHeading("Payment", "payment")}</th><th>${billedSortHeading("Assigned Staff", "staff")}</th><th class="billed-actions-column">Actions</th></tr></thead>
+      <tbody>${rows.map(billedDesktopRow).join("")}</tbody>
+    </table>
+    <div class="billed-mobile-list">${rows.map(billedMobileCard).join("")}</div>
+  </div>`;
+}
+
 function renderFileTable(files) {
   if (!files.length) return empty("No files match these filters.");
   if (state.filters.listView === "reAssigned") return renderReAssignedFileTable(files);
   if (state.filters.listView === "feeReceived") return renderFeeReceivedFileTable(files);
   if (state.filters.listView === "feePending") return renderFeePendingFileTable(files);
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
+  if (state.filters.listView === "billed") return renderBilledFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
   const isBilledView = state.filters.listView === "billed";
@@ -7775,6 +7910,31 @@ async function deleteBilledFileSafely(fileId, button = null) {
 }
 
 function bindFileActions() {
+  document.querySelectorAll("[data-billed-sort]").forEach((button) => {
+    button.onclick = () => {
+      const key = button.dataset.billedSort;
+      billedTableSort = billedTableSort.key === key
+        ? { key, direction: billedTableSort.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: "asc" };
+      renderAll();
+    };
+  });
+  document.querySelectorAll("[data-billed-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".billed-file-row");
+      const mobileCard = button.closest(".billed-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("billed-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".billed-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
   document.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => openFileDrawer(btn.dataset.edit)));
   document.querySelectorAll("[data-check-file]").forEach((btn) => {
     btn.onclick = () => checkCompletedFile(btn.dataset.checkFile);

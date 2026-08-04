@@ -190,6 +190,23 @@ async function main() {
     "Billed action dropdown must reposition when the viewport changes");
   assert.match(browserAppSource, /data-go-transactions/,
     "Fee Pending actions must navigate to the existing Transactions screen");
+  const billedLayoutBody = browserAppSource.match(
+    /let billedTableSort[\s\S]*?(?=\nfunction renderFileTable)/,
+  )?.[0] || "";
+  for (const heading of ["Client", "Service", "Work Timeline", "C/o", "Billing Details", "Payment", "Assigned Staff", "Actions"]) {
+    assert.match(billedLayoutBody, new RegExp(heading), `Billed Files layout must include ${heading}`);
+  }
+  for (const paymentStatus of ["Payment Pending", "Partially Received", "Received", "Not Received", "Non-Billable", "Transaction Linked"]) {
+    assert.match(billedLayoutBody, new RegExp(paymentStatus), `Billed Files layout must include ${paymentStatus} styling`);
+  }
+  assert.match(billedLayoutBody, /fileActualCompletionDate\(file\)/,
+    "Billed Files timeline must use the completed date instead of the due date");
+  assert.match(billedLayoutBody, /data-billed-row-toggle/,
+    "Billed Files client must provide expandable row details");
+  assert.match(billedLayoutBody, /billedMobileCard/,
+    "Billed Files must render a dedicated mobile card layout");
+  assert.match(billedLayoutBody, /billedFileActions\(file\)/,
+    "Billed Files desktop and mobile layouts must preserve the functional action controls");
   const fileTableBody = browserAppSource.match(/function renderFileTable[\s\S]*?(?=\nfunction renderNotCheckedFileTable)/)?.[0] || "";
   assert.match(fileTableBody, /const receiptInfo = isBilledView \? "" : receiptSummary\(file\)/,
     "Billed Files Final Status must show only the status badge, without receipt amount details");
@@ -199,6 +216,14 @@ async function main() {
     "Billed action trigger must provide a pointer-enabled 40 by 40 pixel target");
   assert.match(appStyles, /@media \(max-width: 680px\)[\s\S]*?\.billed-action-menu/,
     "Billed actions must provide a mobile bottom-sheet layout");
+  assert.match(appStyles, /\.billed-files-table th\s*\{[\s\S]*?position:\s*sticky[\s\S]*?background:\s*#e8eef7/i,
+    "Billed Files must have a sticky pale blue header");
+  assert.match(appStyles, /\.billed-files-table th\.billed-client-cell,[\s\S]*?position:\s*sticky[\s\S]*?left:\s*52px/,
+    "Billed Files client column must remain sticky on horizontal scroll");
+  assert.match(appStyles, /\.billed-files-table \.billed-actions-column\s*\{[\s\S]*?position:\s*sticky[\s\S]*?right:\s*0/,
+    "Billed Files actions must remain sticky on the right");
+  assert.match(appStyles, /@media \(max-width: 680px\)[\s\S]*?\.billed-files-table\s*\{\s*display:\s*none[\s\S]*?\.billed-mobile-list\s*\{\s*display:\s*grid/,
+    "Billed Files must switch from the table to cards on mobile");
   console.log("Fee receipt payment mode and account tests passed.");
 }
 
