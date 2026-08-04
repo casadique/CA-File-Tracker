@@ -350,6 +350,7 @@ let desktopNotificationAdminStatus = null;
 let currentDeviceSubscribed = false;
 let filterTimer = null;
 let billedFilterRequestId = 0;
+let configuredFilterRequestId = 0;
 let billedPdfAssetsPromise = null;
 let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
@@ -3133,8 +3134,11 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
+    const configuredBillingView = ["nonBilled", "feePending", "feeReceived"].includes(f.listView);
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
-    const haystack = `${file.name} ${registrationSearchValue} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
+    const haystack = configuredBillingView && f.search
+      ? configuredFinancialSearchHaystack(file)
+      : `${file.name} ${registrationSearchValue} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
     if (f.listView === "active" && !isDashboardActiveFile(file)) return false;
     if (f.listView === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
@@ -3153,20 +3157,20 @@ function filteredFiles() {
     if (f.careOfFilter && !String(file.careOf || "").toLowerCase().includes(f.careOfFilter.toLowerCase())) return false;
     if (f.staff && !fileBelongsToUser(file, findUserByStaffIdentity(f.staff))) return false;
     if (f.service && file.serviceType !== f.service) return false;
-    if (f.workflow && stages[stageIndex(file)] !== f.workflow) return false;
-    if (f.due && file.dueDate !== f.due) return false;
-    if (f.priority && file.priority !== f.priority) return false;
-    if (f.status && statusOf(file).label !== f.status) return false;
+    if (!configuredBillingView && f.workflow && stages[stageIndex(file)] !== f.workflow) return false;
+    if (!configuredBillingView && f.due && file.dueDate !== f.due) return false;
+    if (f.priority && (!configuredBillingView || f.listView === "nonBilled") && file.priority !== f.priority) return false;
+    if (!configuredBillingView && f.status && statusOf(file).label !== f.status) return false;
     if (f.listView === "completed" && f.billing && completedFileBillingCategory(file) !== f.billing) return false;
-    if (f.listView !== "completed" && f.billing === "Billed" && !isBilledFile(file)) return false;
-    if (f.listView !== "completed" && f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
-    if (f.overdue === "Yes" && !isOverdue(file)) return false;
-    if (f.pendingApproval === "Yes" && !pendingApproval(file)) return false;
+    if (!configuredBillingView && f.listView !== "completed" && f.billing === "Billed" && !isBilledFile(file)) return false;
+    if (!configuredBillingView && f.listView !== "completed" && f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
+    if (!configuredBillingView && f.overdue === "Yes" && !isOverdue(file)) return false;
+    if (!configuredBillingView && f.pendingApproval === "Yes" && !pendingApproval(file)) return false;
     const fileFilterDate = usesCompletionSort(f.listView, f.dashboardKind)
       ? fileActualCompletionDate(file)
       : (file.fileReceivedDate || file.workAllotmentDate || file.lastUpdatedDate || file.dueDate || "");
-    if (f.fileFrom && fileFilterDate < f.fileFrom) return false;
-    if (f.fileTo && fileFilterDate > f.fileTo) return false;
+    if (!configuredBillingView && f.fileFrom && fileFilterDate < f.fileFrom) return false;
+    if (!configuredBillingView && f.fileTo && fileFilterDate > f.fileTo) return false;
     if (f.dashboardKind === "pending" && isCheckedCompleted(file)) return false;
     if (f.dashboardKind === "shared" && !file.shared) return false;
     if (f.dashboardKind === "reportsPrepared" && !file.reportPrepared) return false;
@@ -3174,6 +3178,7 @@ function filteredFiles() {
     if (f.dashboardKind === "correctionRequired" && !file.stages?.["Correction Required"]) return false;
     if (f.dashboardKind === "wipGroup" && !isDashboardWipFile(file)) return false;
     if (f.dashboardKind === "reAllotted" && !(file.reAssignedStaff && file.reAssignedStaff !== "Not Assigned")) return false;
+    if (configuredBillingView && !configuredFinancialFileMatches(file, f.listView, f)) return false;
     return true;
   });
 }
@@ -3255,7 +3260,9 @@ function isBilledFile(file) {
 }
 
 function isNonBilledFile(file) {
-  return Boolean(file?.billingType === "Non-Billable" && !file?.billed);
+  if (!file || file.billed) return false;
+  const billingType = String(file.billingType || file.billing_type || "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return billingType === "non billable" || isBillingReadyFile(file);
 }
 
 function completedFileBillingCategory(file = {}) {
@@ -4316,9 +4323,11 @@ function renderNav() {
     btn.onclick = () => {
       const page = btn.dataset.page;
       if (fileViews[page]) {
+        persistConfiguredFinancialFilterValues(state.filters.listView);
         activePage = "files";
         resetFilters();
         state.filters.listView = fileViews[page];
+        restoreConfiguredFinancialFilterValues(state.filters.listView);
         saveState();
       } else if (page === "my-task") {
         activePage = "files";
@@ -5549,15 +5558,395 @@ function billedFilesActionToolbar() {
   </div>`;
 }
 
+function configuredFinancialFilterOptions(values = []) {
+  return values.map((value) => typeof value === "string" ? { value, label: value } : value);
+}
+
+function configuredFinancialFilterConfigs() {
+  const common = {
+    search: { key: "search", label: "Global Search", type: "search", placeholder: "Search client, PAN, contact, service, staff, bill no. or remarks", className: "billed-global-search" },
+    client: { key: "client", label: "Client Name", type: "text", placeholder: "Search client" },
+    careOf: { key: "careOfFilter", label: "C/o", type: "select", emptyLabel: "All C/o", options: () => careOfDropdownOptions() },
+    service: { key: "service", label: "Service Type", type: "select", emptyLabel: "All services", options: () => serviceFilterOptions() },
+    staff: { key: "staff", label: "Assigned Staff", type: "select", emptyLabel: "All staff", options: () => assignableStaffNames() },
+    fy: { key: "financialFy", label: "FY", type: "select", emptyLabel: "All FY", options: () => [...new Set(visibleFiles().map(fileFy).filter(Boolean))].sort().reverse() },
+    pan: { key: "pan", label: "PAN/Reg No.", type: "text", placeholder: "PAN or registration no." },
+    hasRemarks: { key: "hasRemarks", label: "Has Remarks", type: "select", emptyLabel: "All records", options: ["Yes", "No"] },
+  };
+  const nonBilledSort = [
+    "Completion Date - Newest First", "Completion Date - Oldest First", "Checked Date - Newest First",
+    "Client Name - A to Z", "Service Type", "Assigned Staff", "Oldest Unbilled First",
+  ];
+  const feePendingSort = [
+    "Bill Date - Newest First", "Bill Date - Oldest First", "Outstanding - Highest First",
+    "Outstanding - Lowest First", "Oldest Pending First", "Completion Date - Newest First",
+    "Client Name - A to Z", "Assigned Staff", "C/o",
+  ];
+  const feeReceivedSort = [
+    "Receipt Date - Newest First", "Receipt Date - Oldest First", "Received Amount - Highest First",
+    "Received Amount - Lowest First", "Bill Date - Newest First", "Client Name - A to Z",
+    "Payment Account", "Received By",
+  ];
+  return {
+    nonBilled: {
+      title: "Search & Filter Non-Billed Files",
+      mobileTitle: "Filter Non-Billed Files",
+      mainPrimary: [common.search, common.client, common.careOf, common.service, common.staff,
+        { key: "nonBilledState", label: "Billing State", type: "select", emptyLabel: "All Non-Billed", options: [
+          { value: "billable", label: "Billable - Not Yet Billed" },
+          { value: "nonBillable", label: "Non-Billable" },
+          { value: "decisionPending", label: "Billing Decision Pending" },
+        ] }],
+      mainSecondary: [
+        { label: "Completion Date Range", type: "range", controls: [
+          { key: "nonBilledCompletionFrom", label: "Completion Date From", type: "date" },
+          { key: "nonBilledCompletionTo", label: "Completion Date To", type: "date" },
+        ] },
+        { label: "Checked Date Range", type: "range", controls: [
+          { key: "nonBilledCheckedFrom", label: "Checked Date From", type: "date" },
+          { key: "nonBilledCheckedTo", label: "Checked Date To", type: "date" },
+        ] },
+        common.fy,
+        { key: "nonBilledSort", label: "Sort By", type: "select", options: nonBilledSort, defaultValue: nonBilledSort[0] },
+      ],
+      advanced: [common.pan,
+        { key: "nonBilledCheckedBy", label: "Checked By", type: "text", placeholder: "Checker name" },
+        common.hasRemarks,
+        { key: "nonBilledMissingBillAmount", label: "Missing Bill Amount", type: "select", emptyLabel: "All records", options: ["Yes", "No"] },
+        { key: "priority", label: "File Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+      ],
+    },
+    feePending: {
+      title: "Search & Filter Fee Pending",
+      mobileTitle: "Filter Fee Pending Files",
+      mainPrimary: [common.search, common.client, common.careOf, common.service, common.staff,
+        { key: "feePendingStatus", label: "Payment Status", type: "select", emptyLabel: "All Pending", options: ["Not Received", "Partially Received"] }],
+      mainSecondary: [
+        { label: "Bill Date Range", type: "range", controls: [
+          { key: "feePendingBillFrom", label: "Bill Date From", type: "date" },
+          { key: "feePendingBillTo", label: "Bill Date To", type: "date" },
+        ] },
+        { key: "feePendingAging", label: "Aging", type: "select", emptyLabel: "All Aging", options: ["0-15 Days", "16-30 Days", "31-60 Days", "61-90 Days", "Above 90 Days", "Bill Date Not Recorded"] },
+        { key: "feePendingOutstandingQuick", label: "Outstanding Amount", type: "select", emptyLabel: "All amounts", options: [
+          { value: "upTo1000", label: "Up to ₹1,000" }, { value: "1001to5000", label: "₹1,001-₹5,000" },
+          { value: "5001to10000", label: "₹5,001-₹10,000" }, { value: "above10000", label: "Above ₹10,000" },
+        ] },
+        common.fy,
+        { key: "feePendingSort", label: "Sort By", type: "select", options: feePendingSort, defaultValue: feePendingSort[0] },
+      ],
+      advanced: [common.pan,
+        { key: "feePendingBillNumber", label: "Bill Number", type: "text", placeholder: "Search bill no." },
+        configuredFinancialRange("Gross Bill Amount Range", "feePendingGrossMin", "feePendingGrossMax", "Minimum gross", "Maximum gross"),
+        configuredFinancialRange("Approved Discount Range", "feePendingDiscountMin", "feePendingDiscountMax", "Minimum discount", "Maximum discount"),
+        configuredFinancialRange("Net Bill Amount Range", "feePendingNetMin", "feePendingNetMax", "Minimum net", "Maximum net"),
+        configuredFinancialRange("Received Amount Range", "feePendingReceivedMin", "feePendingReceivedMax", "Minimum received", "Maximum received"),
+        configuredFinancialRange("Outstanding Amount Range", "feePendingOutstandingMin", "feePendingOutstandingMax", "Minimum outstanding", "Maximum outstanding"),
+        { key: "feePendingContact", label: "Contact Number", type: "select", emptyLabel: "Available or missing", options: ["Available", "Missing"] },
+        common.hasRemarks,
+        { key: "feePendingPartialOnly", label: "Partially Received Only", type: "select", emptyLabel: "All pending", options: ["Yes"] },
+        { key: "feePendingTransactionLink", label: "Transaction Link", type: "select", emptyLabel: "All links", options: ["Linked", "Not Linked"] },
+        { key: "feePendingDoneBy", label: "Done By", type: "text", placeholder: "Search done by" },
+      ],
+    },
+    feeReceived: {
+      title: "Search & Filter Fee Received",
+      mobileTitle: "Filter Fee Received Files",
+      mainPrimary: [common.search, common.client, common.careOf, common.service,
+        { key: "feeReceivedAccount", label: "Payment Account", type: "select", emptyLabel: "All Accounts", options: ["Cash", "Federal Bank", "TMB", "Other", "Not Recorded"] },
+        common.staff],
+      mainSecondary: [
+        { label: "Receipt Date Range", type: "range", controls: [
+          { key: "feeReceivedReceiptFrom", label: "Receipt Date From", type: "date" },
+          { key: "feeReceivedReceiptTo", label: "Receipt Date To", type: "date" },
+        ] },
+        { key: "feeReceivedStatus", label: "Receipt Status", type: "select", emptyLabel: "All Received", options: ["Fully Received", "Partially Received", "Discounted and Settled"] },
+        { key: "feeReceivedTransactionStatus", label: "Transaction Status", type: "select", emptyLabel: "All", options: ["Pushed to Transactions", "Not Pushed to Transactions", "Transaction Reversed"] },
+        configuredFinancialRange("Received Amount", "feeReceivedAmountMin", "feeReceivedAmountMax", "Minimum received", "Maximum received"),
+        { key: "feeReceivedSort", label: "Sort By", type: "select", options: feeReceivedSort, defaultValue: feeReceivedSort[0] },
+      ],
+      advanced: [common.pan,
+        { key: "feeReceivedBillNumber", label: "Bill Number", type: "text", placeholder: "Search bill no." },
+        { label: "Bill Date Range", type: "range", controls: [
+          { key: "feeReceivedBillFrom", label: "Bill Date From", type: "date" },
+          { key: "feeReceivedBillTo", label: "Bill Date To", type: "date" },
+        ] },
+        configuredFinancialRange("Gross Bill Amount Range", "feeReceivedGrossMin", "feeReceivedGrossMax", "Minimum gross", "Maximum gross"),
+        configuredFinancialRange("Discount Amount Range", "feeReceivedDiscountMin", "feeReceivedDiscountMax", "Minimum discount", "Maximum discount"),
+        configuredFinancialRange("Net Bill Amount Range", "feeReceivedNetMin", "feeReceivedNetMax", "Minimum net", "Maximum net"),
+        { key: "feeReceivedPaymentMode", label: "Payment Mode", type: "select", emptyLabel: "All modes", options: ["Cash", "Bank Transfer", "UPI", "Cheque", "Card", "Other", "Not Recorded"] },
+        { key: "feeReceivedTransactionReference", label: "Transaction Reference", type: "text", placeholder: "Reference no." },
+        { key: "feeReceivedBy", label: "Received By", type: "text", placeholder: "Search receiver" },
+        common.hasRemarks,
+      ],
+    },
+  };
+}
+
+function configuredFinancialRange(label, minimumKey, maximumKey, minimumPlaceholder, maximumPlaceholder) {
+  return { label, type: "range", controls: [
+    { key: minimumKey, label: `${label} Minimum`, type: "number", placeholder: minimumPlaceholder, min: "0" },
+    { key: maximumKey, label: `${label} Maximum`, type: "number", placeholder: maximumPlaceholder, min: "0" },
+  ] };
+}
+
+function configuredFinancialFilterConfig(listView = state.filters.listView) {
+  return configuredFinancialFilterConfigs()[listView] || null;
+}
+
+function configuredFinancialFilterDefinitions(config) {
+  return [...config.mainPrimary, ...config.mainSecondary, ...config.advanced].flatMap((field) => field.type === "range" ? field.controls : [field]);
+}
+
+function initializeConfiguredFinancialFilters(config) {
+  configuredFinancialFilterDefinitions(config).forEach((field) => {
+    if (state.filters[field.key] === undefined || state.filters[field.key] === null || (field.defaultValue && !state.filters[field.key])) {
+      state.filters[field.key] = field.defaultValue || "";
+    }
+  });
+}
+
+function configuredFinancialOptionObjects(field) {
+  const values = typeof field.options === "function" ? field.options() : (field.options || []);
+  return configuredFinancialFilterOptions(values.filter(Boolean));
+}
+
+function configuredFinancialField(field) {
+  if (field.type === "range") {
+    return `<fieldset class="configured-filter-range"><legend>${escapeHtml(field.label)}</legend><div>${field.controls.map((control) => configuredFinancialControl(control, true)).join("")}</div></fieldset>`;
+  }
+  return `<div class="field ${field.className || ""}">${configuredFinancialControl(field)}</div>`;
+}
+
+function configuredFinancialControl(field, compact = false) {
+  const value = String(state.filters[field.key] || "");
+  const id = `configured-filter-${state.filters.listView}-${field.key}`;
+  const label = compact ? "" : `<label for="${id}">${escapeHtml(field.label)}</label>`;
+  if (field.type === "select") {
+    return `${label}<select id="${id}" data-configured-filter="${field.key}" aria-label="${escapeHtml(field.label)}">
+      ${field.defaultValue ? "" : `<option value="">${escapeHtml(field.emptyLabel || "All")}</option>`}
+      ${configuredFinancialOptionObjects(field).map((option) => `<option value="${escapeHtml(option.value)}" ${value === String(option.value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+    </select>`;
+  }
+  const type = field.type === "search" ? "search" : (field.type || "text");
+  const input = `<input id="${id}" type="${type}" data-configured-filter="${field.key}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || "")}" ${field.min !== undefined ? `min="${field.min}"` : ""} aria-label="${escapeHtml(field.label)}">`;
+  if (field.type === "search") return `${label}<div class="billed-search-input">${navIcon("search")}${input}</div>`;
+  return `${label}${input}`;
+}
+
+function configuredFinancialFilterSessionValue(listView, name) {
+  try { return sessionStorage.getItem(`${STORAGE_KEY}-${listView}-configured-filters-${name}`) === "1"; } catch { return false; }
+}
+
+function setConfiguredFinancialFilterSessionValue(listView, name, enabled) {
+  try { sessionStorage.setItem(`${STORAGE_KEY}-${listView}-configured-filters-${name}`, enabled ? "1" : "0"); } catch { /* Optional session preference. */ }
+}
+
+function persistConfiguredFinancialFilterValues(listView) {
+  const config = configuredFinancialFilterConfig(listView);
+  if (!config) return;
+  const snapshot = Object.fromEntries(configuredFinancialFilterDefinitions(config).map((field) => [field.key, state.filters[field.key] ?? field.defaultValue ?? ""]));
+  try { sessionStorage.setItem(`${STORAGE_KEY}-${listView}-configured-filter-values`, JSON.stringify(snapshot)); } catch { /* Optional session preference. */ }
+}
+
+function restoreConfiguredFinancialFilterValues(listView) {
+  const config = configuredFinancialFilterConfig(listView);
+  if (!config) return;
+  let snapshot = null;
+  try { snapshot = JSON.parse(sessionStorage.getItem(`${STORAGE_KEY}-${listView}-configured-filter-values`) || "null"); } catch { snapshot = null; }
+  configuredFinancialFilterDefinitions(config).forEach((field) => {
+    state.filters[field.key] = snapshot && Object.hasOwn(snapshot, field.key) ? snapshot[field.key] : (field.defaultValue || "");
+  });
+}
+
+function configuredFinancialActiveFilters(config) {
+  return configuredFinancialFilterDefinitions(config).filter((field) => {
+    const value = String(state.filters[field.key] || "");
+    return value !== String(field.defaultValue || "");
+  }).map((field) => ({ ...field, value: String(state.filters[field.key] || "") }));
+}
+
+function configuredFinancialFilterValueLabel(field, value) {
+  const option = configuredFinancialOptionObjects(field).find((item) => String(item.value) === String(value));
+  if (option) return option.label;
+  if (field.type === "date") return displayDate(value);
+  if (field.type === "number" && value !== "") return rupee(Number(value));
+  return value;
+}
+
+function configuredFinancialActiveFilterChips(config) {
+  const active = configuredFinancialActiveFilters(config);
+  if (!active.length) return "";
+  return `<div class="billed-active-filter-row"><span class="billed-active-filter-label">Active Filters:</span>
+    <div class="billed-filter-chips">${active.map((field) => `<span class="billed-filter-chip">${escapeHtml(field.label)}: ${escapeHtml(configuredFinancialFilterValueLabel(field, field.value))}<button type="button" data-remove-configured-filter="${field.key}" aria-label="Remove ${escapeHtml(field.label)} filter">&times;</button></span>`).join("")}</div>
+    ${active.length > 1 ? `<button type="button" class="billed-chip-clear" data-clear-configured-filters>Clear All</button>` : ""}</div>`;
+}
+
+function renderConfiguredFinancialFilterPanel(files, config) {
+  initializeConfiguredFinancialFilters(config);
+  const listView = state.filters.listView;
+  const collapsed = configuredFinancialFilterSessionValue(listView, "collapsed");
+  const moreOpen = configuredFinancialFilterSessionValue(listView, "more");
+  const activeCount = configuredFinancialActiveFilters(config).length;
+  return `<section class="billed-filter-card configured-filter-card ${collapsed ? "is-collapsed" : ""}" id="configuredFilterCard" data-filter-view="${listView}">
+    <div class="billed-filter-header"><div class="billed-filter-title-group"><h3>${escapeHtml(config.title)}</h3><span class="billed-active-count ${activeCount ? "" : "hidden"}" id="configuredActiveFilterCount">${activeCount} Active</span></div>
+      <div class="billed-filter-header-actions"><span class="billed-filter-loading" id="configuredFilterLoading" role="status" aria-live="polite"><i></i> Updating</span><span class="billed-results-badge" id="fileCount">${billedFilesShownLabel(files.length)}</span>
+        <button type="button" class="billed-header-clear" id="configuredHeaderClear" ${activeCount ? "" : "disabled"}>Clear All</button>
+        <button type="button" class="billed-mobile-filter-toggle" id="configuredMobileFiltersToggle" aria-expanded="false">Filters${activeCount ? ` (${activeCount})` : ""}</button>
+        <button type="button" class="billed-collapse-toggle" id="configuredCollapseToggle" aria-label="${collapsed ? "Expand" : "Collapse"} ${escapeHtml(config.title)}" aria-expanded="${collapsed ? "false" : "true"}">${navIcon("chevron")}</button></div></div>
+    <div class="billed-filter-body" id="configuredFilterBody" aria-hidden="${collapsed ? "true" : "false"}">
+      <div class="billed-mobile-sheet-head"><strong>${escapeHtml(config.mobileTitle)}</strong><button type="button" id="configuredMobileFiltersClose" aria-label="Close filters">&times;</button></div>
+      <div class="billed-filter-grid billed-filter-grid-primary">${config.mainPrimary.map(configuredFinancialField).join("")}</div>
+      <div class="billed-filter-grid billed-filter-grid-secondary configured-filter-secondary">${config.mainSecondary.map(configuredFinancialField).join("")}<div class="field billed-more-field"><label>Additional</label><button type="button" class="billed-more-toggle" id="configuredMoreToggle" aria-expanded="${moreOpen ? "true" : "false"}">${moreOpen ? "Fewer Filters" : "More Filters"}<span>${navIcon("chevron")}</span></button></div></div>
+      <div class="billed-more-filters configured-more-filters ${moreOpen ? "is-open" : ""}" id="configuredMoreFilters" aria-hidden="${moreOpen ? "false" : "true"}">${config.advanced.map(configuredFinancialField).join("")}</div>
+      <div id="configuredActiveFilters">${configuredFinancialActiveFilterChips(config)}</div>
+    </div><button type="button" class="billed-mobile-filter-backdrop" id="configuredMobileFilterBackdrop" aria-label="Close filters"></button>
+  </section>`;
+}
+
+function configuredFinancialFacts(file = {}) {
+  const summary = feeReceiptSummaryForFile(file);
+  const pdfRecord = billedPdfRecord(file);
+  const receipts = feeReceiptRecordsForFile(file);
+  const allReceipts = allFeeReceiptRecordsForFile(file);
+  const linkedCollections = receipts.map((receipt) => linkedCollectionForFeeReceipt(receipt)).filter(Boolean);
+  const receiptModes = receipts.map((receipt) => billedPdfReceiptMode(receipt, file));
+  const paymentModes = receipts.map((receipt) => String(receipt.paymentMode || receipt.payment_mode || receipt.mode || "").trim()).filter(Boolean);
+  const transactionReferences = [...receipts, ...linkedCollections].map((row) => row.referenceNumber || row.reference_number || row.transactionReference || row.transaction_reference || row.refNo || row.ref_no || "").filter(Boolean);
+  const receivedBy = receipts.map((receipt) => receipt.receivedBy || receipt.received_by || "").filter(Boolean);
+  const billDate = normalizeImportDate(file.billDate || file.bill_date || file.billedDate || "");
+  return {
+    summary, pdfRecord, receipts, allReceipts, linkedCollections, receiptModes, paymentModes, transactionReferences,
+    receivedBy: receivedBy.length ? receivedBy : [file.feeReceivedBy || file.receivedBy || file.received_by || ""].filter(Boolean),
+    billDate,
+    receiptDate: normalizeImportDate(summary.latestReceiptDate || file.feeReceivedDate || file.receivedOn || file.received_on || ""),
+    checkedDate: normalizeImportDate(file.checkedDate || file.checked_date || file.checkedAt || file.checked_at || ""),
+    completionDate: fileActualCompletionDate(file),
+    billNumber: String(file.billNumber || file.billNo || file.bill_no || file.invoiceNumber || file.invoice_no || ""),
+    contact: String(file.mobileNumber || file.mobile || file.contactNumber || file.contact || file.phone || ""),
+    remarks: String(file.remarks || file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || ""),
+  };
+}
+
+function configuredFinancialSearchHaystack(file = {}) {
+  const facts = configuredFinancialFacts(file);
+  return [file.name, fileRegistrationNumber(file), file.pan, facts.contact, file.serviceType, file.careOf, file.assignedStaff,
+    file.reAssignedStaff, facts.billNumber, facts.remarks, ...facts.receivedBy, ...facts.transactionReferences,
+    ...facts.paymentModes, ...facts.receiptModes].filter(Boolean).join(" ").toLowerCase();
+}
+
+function configuredFinancialNumberInRange(value, minimum, maximum) {
+  const number = Number(value || 0);
+  if (String(minimum || "") !== "" && number < Number(minimum)) return false;
+  if (String(maximum || "") !== "" && number > Number(maximum)) return false;
+  return true;
+}
+
+function configuredFinancialDateInRange(value, from, to) {
+  if (from && (!value || value < from)) return false;
+  if (to && (!value || value > to)) return false;
+  return true;
+}
+
+function configuredFinancialFileMatches(file, listView, filters) {
+  const facts = configuredFinancialFacts(file);
+  const financial = facts.pdfRecord;
+  if (filters.financialFy && fileFy(file) !== filters.financialFy) return false;
+  if (filters.hasRemarks === "Yes" && !facts.remarks.trim()) return false;
+  if (filters.hasRemarks === "No" && facts.remarks.trim()) return false;
+  if (listView === "nonBilled") {
+    const billingType = String(file.billingType || file.billing_type || "").toLowerCase();
+    if (filters.nonBilledState === "nonBillable" && !billingType.includes("non")) return false;
+    if (filters.nonBilledState === "billable" && (!billingType.includes("billable") || billingType.includes("non"))) return false;
+    if (filters.nonBilledState === "decisionPending" && (billingType.includes("billable") || billingType.includes("non"))) return false;
+    if (!configuredFinancialDateInRange(facts.completionDate, filters.nonBilledCompletionFrom, filters.nonBilledCompletionTo)) return false;
+    if (!configuredFinancialDateInRange(facts.checkedDate, filters.nonBilledCheckedFrom, filters.nonBilledCheckedTo)) return false;
+    if (filters.nonBilledCheckedBy && !String(file.checkedBy || file.checked_by || "").toLowerCase().includes(filters.nonBilledCheckedBy.toLowerCase())) return false;
+    if (filters.nonBilledMissingBillAmount === "Yes" && financial.grossBilledAmount > 0) return false;
+    if (filters.nonBilledMissingBillAmount === "No" && financial.grossBilledAmount <= 0) return false;
+    return true;
+  }
+  if (listView === "feePending") {
+    if (filters.feePendingStatus && financial.paymentStatus !== filters.feePendingStatus) return false;
+    if (!configuredFinancialDateInRange(facts.billDate, filters.feePendingBillFrom, filters.feePendingBillTo)) return false;
+    if (filters.feePendingAging) {
+      if (filters.feePendingAging === "Bill Date Not Recorded" && facts.billDate) return false;
+      if (filters.feePendingAging !== "Bill Date Not Recorded") {
+        if (!facts.billDate) return false;
+        const age = Math.max(0, Math.floor((Date.parse(indiaTodayDate()) - Date.parse(facts.billDate)) / MS_DAY));
+        const matchesAge = filters.feePendingAging === "0-15 Days" ? age <= 15
+          : filters.feePendingAging === "16-30 Days" ? age >= 16 && age <= 30
+            : filters.feePendingAging === "31-60 Days" ? age >= 31 && age <= 60
+              : filters.feePendingAging === "61-90 Days" ? age >= 61 && age <= 90 : age > 90;
+        if (!matchesAge) return false;
+      }
+    }
+    const outstanding = financial.balanceAmount;
+    if (filters.feePendingOutstandingQuick === "upTo1000" && outstanding > 1000) return false;
+    if (filters.feePendingOutstandingQuick === "1001to5000" && (outstanding < 1001 || outstanding > 5000)) return false;
+    if (filters.feePendingOutstandingQuick === "5001to10000" && (outstanding < 5001 || outstanding > 10000)) return false;
+    if (filters.feePendingOutstandingQuick === "above10000" && outstanding <= 10000) return false;
+    if (filters.feePendingBillNumber && !facts.billNumber.toLowerCase().includes(filters.feePendingBillNumber.toLowerCase())) return false;
+    if (!configuredFinancialNumberInRange(financial.grossBilledAmount, filters.feePendingGrossMin, filters.feePendingGrossMax)) return false;
+    if (!configuredFinancialNumberInRange(financial.discountAmount, filters.feePendingDiscountMin, filters.feePendingDiscountMax)) return false;
+    if (!configuredFinancialNumberInRange(financial.netBillAmount, filters.feePendingNetMin, filters.feePendingNetMax)) return false;
+    if (!configuredFinancialNumberInRange(financial.receivedAmount, filters.feePendingReceivedMin, filters.feePendingReceivedMax)) return false;
+    if (!configuredFinancialNumberInRange(outstanding, filters.feePendingOutstandingMin, filters.feePendingOutstandingMax)) return false;
+    if (filters.feePendingContact === "Available" && !facts.contact) return false;
+    if (filters.feePendingContact === "Missing" && facts.contact) return false;
+    if (filters.feePendingPartialOnly === "Yes" && financial.paymentStatus !== "Partially Received") return false;
+    const transactionLinked = facts.linkedCollections.length > 0;
+    if (filters.feePendingTransactionLink === "Linked" && !transactionLinked) return false;
+    if (filters.feePendingTransactionLink === "Not Linked" && transactionLinked) return false;
+    if (filters.feePendingDoneBy && !String(file.doneBy || file.completedBy || file.checkedBy || "").toLowerCase().includes(filters.feePendingDoneBy.toLowerCase())) return false;
+    return financial.balanceAmount > 0;
+  }
+  if (listView === "feeReceived") {
+    if (!configuredFinancialDateInRange(facts.receiptDate, filters.feeReceivedReceiptFrom, filters.feeReceivedReceiptTo)) return false;
+    if (!configuredFinancialDateInRange(facts.billDate, filters.feeReceivedBillFrom, filters.feeReceivedBillTo)) return false;
+    if (filters.feeReceivedStatus === "Fully Received" && financial.paymentStatus !== "Received") return false;
+    if (filters.feeReceivedStatus === "Partially Received" && financial.paymentStatus !== "Partially Received") return false;
+    if (filters.feeReceivedStatus === "Discounted and Settled" && !(financial.discountAmount > 0 && financial.balanceAmount <= 0)) return false;
+    if (filters.feeReceivedAccount) {
+      const accounts = facts.receiptModes.length ? facts.receiptModes : [financial.receivedAmount > 0 ? "Not Recorded" : ""];
+      const known = ["Cash", "Federal Bank", "TMB", "Not Recorded"];
+      const matches = filters.feeReceivedAccount === "Other" ? accounts.some((account) => account && !known.includes(account)) : accounts.includes(filters.feeReceivedAccount);
+      if (!matches) return false;
+    }
+    const pushed = facts.receipts.some((receipt) => receiptWasPushed(receipt) && Boolean(linkedCollectionForFeeReceipt(receipt)));
+    const notPushed = facts.receipts.some((receipt) => !receiptWasPushed(receipt) || !linkedCollectionForFeeReceipt(receipt));
+    const reversed = facts.allReceipts.some((receipt) => receipt.isReversed === true || receipt.is_reversed === true || String(receipt.status || "").toLowerCase() === "reversed")
+      || facts.linkedCollections.some((row) => row.isReversed === true || row.is_reversed === true || String(row.status || "").toLowerCase() === "reversed");
+    if (filters.feeReceivedTransactionStatus === "Pushed to Transactions" && !pushed) return false;
+    if (filters.feeReceivedTransactionStatus === "Not Pushed to Transactions" && !notPushed) return false;
+    if (filters.feeReceivedTransactionStatus === "Transaction Reversed" && !reversed) return false;
+    if (!configuredFinancialNumberInRange(financial.receivedAmount, filters.feeReceivedAmountMin, filters.feeReceivedAmountMax)) return false;
+    if (!configuredFinancialNumberInRange(financial.grossBilledAmount, filters.feeReceivedGrossMin, filters.feeReceivedGrossMax)) return false;
+    if (!configuredFinancialNumberInRange(financial.discountAmount, filters.feeReceivedDiscountMin, filters.feeReceivedDiscountMax)) return false;
+    if (!configuredFinancialNumberInRange(financial.netBillAmount, filters.feeReceivedNetMin, filters.feeReceivedNetMax)) return false;
+    if (filters.feeReceivedBillNumber && !facts.billNumber.toLowerCase().includes(filters.feeReceivedBillNumber.toLowerCase())) return false;
+    if (filters.feeReceivedPaymentMode) {
+      const modes = facts.paymentModes.length ? facts.paymentModes : [financial.receivedAmount > 0 ? "Not Recorded" : ""];
+      const normalized = modes.map((mode) => mode === "Not Recorded" ? mode : normalizeTransactionPaymentMethod(mode));
+      if (!normalized.includes(filters.feeReceivedPaymentMode)) return false;
+    }
+    if (filters.feeReceivedTransactionReference && !facts.transactionReferences.join(" ").toLowerCase().includes(filters.feeReceivedTransactionReference.toLowerCase())) return false;
+    if (filters.feeReceivedBy && !facts.receivedBy.join(" ").toLowerCase().includes(filters.feeReceivedBy.toLowerCase())) return false;
+  }
+  return true;
+}
+
 function renderFilesPage() {
   if (isStaffLogin()) return renderStaffFilesPage();
   if (state.filters.listView === "removed") return renderRemovedFilesPage();
   if (!state.filters.receivedSort) state.filters.receivedSort = "Newest First";
+  const configuredFilterConfig = configuredFinancialFilterConfig();
+  if (configuredFilterConfig) initializeConfiguredFinancialFilters(configuredFilterConfig);
   const files = sortFilesForDisplay(filteredFiles());
   const isBilledView = state.filters.listView === "billed";
+  const isConfiguredFilterView = Boolean(configuredFilterConfig);
   document.querySelector("#files").innerHTML = `
     <div class="panel">
-      ${isBilledView ? renderBilledFilesFilterPanel(files) : `<div class="filter-hero">
+      ${isBilledView ? renderBilledFilesFilterPanel(files) : isConfiguredFilterView ? renderConfiguredFinancialFilterPanel(files, configuredFilterConfig) : `<div class="filter-hero">
         <div>
           <h3>Search & Filter Files</h3>
         </div>
@@ -5584,7 +5973,7 @@ function renderFilesPage() {
         ${isStaffLogin() ? inputFilter("fileFrom", "From", "", "date") : ""}
         ${isStaffLogin() ? inputFilter("fileTo", "To", "", "date") : ""}
       </div>`}
-      ${isBilledView ? billedFilesActionToolbar() : `<div class="action-row" style="margin-bottom:14px">
+      ${isBilledView || isConfiguredFilterView ? billedFilesActionToolbar() : `<div class="action-row" style="margin-bottom:14px">
         <button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button>
         ${isStaffLogin() ? `<button class="secondary-button" id="clearStaffDates">Clear Dates</button>` : ""}
         ${rolePerm().export ? `<button class="secondary-button file-action-button file-action-excel" id="exportFiltered">${navIcon("spreadsheet")}Export Filtered Excel</button>` : ""}
@@ -5594,8 +5983,9 @@ function renderFilesPage() {
     </div>
   `;
   if (isBilledView) bindBilledFilesFilters();
+  else if (isConfiguredFilterView) bindConfiguredFinancialFilters(configuredFilterConfig);
   else bindFilters();
-  if (!isBilledView) {
+  if (!isBilledView && !isConfiguredFilterView) {
     document.querySelector("#clearFilters").onclick = () => {
       resetFiltersKeepingCurrentFileModule();
       saveState();
@@ -5618,7 +6008,8 @@ function renderFilesPage() {
       if (state.filters.listView || state.filters.dashboardKind) {
         const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
-        await downloadXlsxRows(`${fileListPdfFileName(fileListSectionTitle())}-${todayDate()}`, rows);
+        const exactDatedName = ["nonBilled", "feePending", "feeReceived"].includes(state.filters.listView);
+        await downloadXlsxRows(exactDatedName ? fileListPdfFileName(fileListSectionTitle()) : `${fileListPdfFileName(fileListSectionTitle())}-${todayDate()}`, rows);
         return toast("Excel file downloaded");
       }
       return exportExcel("filtered-files", sourceFiles);
@@ -5763,6 +6154,8 @@ async function takeBackRemovedFile(fileId, button) {
 
 function renderStaffFilesPage() {
   const listView = state.filters.listView || "";
+  const configuredFilterConfig = configuredFinancialFilterConfig(listView);
+  if (configuredFilterConfig) return renderConfiguredStaffFinancialFilesPage(listView, configuredFilterConfig);
   const files = staffPageFiles(listView);
   const showDateFilter = ["completed", "notChecked"].includes(listView);
   const showActiveStaffFilters = ["", "active"].includes(listView);
@@ -5826,6 +6219,22 @@ function renderStaffFilesPage() {
   document.querySelector("#staffExportExcel").onclick = () => exportStaffPageExcel(listView, files);
   document.querySelector("#staffExportPdf").onclick = () => exportStaffPagePdf(listView, files);
   document.querySelector("#staffPrintReport").onclick = () => printStaffPageReport(listView, files);
+  bindFileActions();
+}
+
+function renderConfiguredStaffFinancialFilesPage(listView, config) {
+  initializeConfiguredFinancialFilters(config);
+  const files = sortFilesForDisplay(filteredFiles());
+  document.querySelector("#files").innerHTML = `<div class="panel">
+    ${renderConfiguredFinancialFilterPanel(files, config)}
+    ${billedFilesActionToolbar()}
+    <div id="fileResults">${renderStaffFileTable(files, listView)}</div>
+  </div>`;
+  bindConfiguredFinancialFilters(config);
+  const exportExcelButton = document.querySelector("#exportFiltered");
+  if (exportExcelButton) exportExcelButton.onclick = () => exportStaffPageExcel(listView, sortFilesForDisplay(filteredFiles()));
+  const exportPdfButton = document.querySelector("#exportFilteredPdf");
+  if (exportPdfButton) exportPdfButton.onclick = () => exportStaffPagePdf(listView, sortFilesForDisplay(filteredFiles()));
   bindFileActions();
 }
 
@@ -6184,8 +6593,46 @@ function financeNewestFirst(a = {}, b = {}) {
   return String(b.id || "").localeCompare(String(a.id || ""));
 }
 
+function sortConfiguredFinancialFiles(files, listView) {
+  const sortLabel = state.filters[`${listView}Sort`] || "";
+  const rows = [...files];
+  const factsByFile = new Map(rows.map((file) => [file, configuredFinancialFacts(file)]));
+  const dateCompare = (left, right, direction = "desc") => {
+    const a = fileDateSortValue(left);
+    const b = fileDateSortValue(right);
+    if (a === b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return direction === "asc" ? a - b : b - a;
+  };
+  const textCompare = (left, right) => String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base" });
+  return rows.sort((a, b) => {
+    const left = factsByFile.get(a);
+    const right = factsByFile.get(b);
+    let result = 0;
+    if (sortLabel === "Completion Date - Newest First") result = dateCompare(left.completionDate, right.completionDate);
+    else if (sortLabel === "Completion Date - Oldest First" || sortLabel === "Oldest Unbilled First") result = dateCompare(left.completionDate, right.completionDate, "asc");
+    else if (sortLabel === "Checked Date - Newest First") result = dateCompare(left.checkedDate, right.checkedDate);
+    else if (sortLabel === "Bill Date - Newest First") result = dateCompare(left.billDate, right.billDate);
+    else if (sortLabel === "Bill Date - Oldest First" || sortLabel === "Oldest Pending First") result = dateCompare(left.billDate, right.billDate, "asc");
+    else if (sortLabel === "Receipt Date - Newest First") result = dateCompare(left.receiptDate, right.receiptDate);
+    else if (sortLabel === "Receipt Date - Oldest First") result = dateCompare(left.receiptDate, right.receiptDate, "asc");
+    else if (sortLabel === "Outstanding - Highest First") result = right.pdfRecord.balanceAmount - left.pdfRecord.balanceAmount;
+    else if (sortLabel === "Outstanding - Lowest First") result = left.pdfRecord.balanceAmount - right.pdfRecord.balanceAmount;
+    else if (sortLabel === "Received Amount - Highest First") result = right.pdfRecord.receivedAmount - left.pdfRecord.receivedAmount;
+    else if (sortLabel === "Received Amount - Lowest First") result = left.pdfRecord.receivedAmount - right.pdfRecord.receivedAmount;
+    else if (sortLabel === "Client Name - A to Z") result = textCompare(a.name, b.name);
+    else if (sortLabel === "Service Type") result = textCompare(a.serviceType, b.serviceType);
+    else if (sortLabel === "Assigned Staff") result = textCompare(a.assignedStaff, b.assignedStaff);
+    else if (sortLabel === "C/o") result = textCompare(a.careOf, b.careOf);
+    else if (sortLabel === "Payment Account") result = textCompare(left.receiptModes[0] || "Not Recorded", right.receiptModes[0] || "Not Recorded");
+    else if (sortLabel === "Received By") result = textCompare(left.receivedBy[0], right.receivedBy[0]);
+    return result || stableFileIdSortDesc(a, b);
+  });
+}
+
 function sortFilesForDisplay(files) {
-  if (state.filters.listView === "feeReceived") return sortFilesByFeeReceivedNewestFirst(files);
+  if (["nonBilled", "feePending", "feeReceived"].includes(state.filters.listView)) return sortConfiguredFinancialFiles(files, state.filters.listView);
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -6511,6 +6958,146 @@ function bindBilledFilesFilters() {
   }
 }
 
+function setConfiguredFinancialFilterLoading(loading) {
+  const indicator = document.querySelector("#configuredFilterLoading");
+  if (indicator) indicator.classList.toggle("is-active", loading);
+}
+
+function resetConfiguredFinancialFilters(config) {
+  configuredFilterRequestId += 1;
+  clearTimeout(filterTimer);
+  configuredFinancialFilterDefinitions(config).forEach((field) => {
+    state.filters[field.key] = field.defaultValue || "";
+    document.querySelectorAll(`[data-configured-filter='${field.key}']`).forEach((control) => { control.value = field.defaultValue || ""; });
+  });
+  saveViewState();
+  refreshConfiguredFinancialResults(config);
+}
+
+function removeConfiguredFinancialFilter(config, key) {
+  const field = configuredFinancialFilterDefinitions(config).find((item) => item.key === key);
+  if (!field) return;
+  configuredFilterRequestId += 1;
+  clearTimeout(filterTimer);
+  state.filters[key] = field.defaultValue || "";
+  document.querySelectorAll(`[data-configured-filter='${key}']`).forEach((control) => { control.value = field.defaultValue || ""; });
+  saveViewState();
+  refreshConfiguredFinancialResults(config);
+}
+
+function bindConfiguredFinancialFilterChips(config) {
+  document.querySelectorAll("[data-remove-configured-filter]").forEach((button) => {
+    button.onclick = () => removeConfiguredFinancialFilter(config, button.dataset.removeConfiguredFilter);
+  });
+  document.querySelectorAll("[data-clear-configured-filters]").forEach((button) => {
+    button.onclick = () => resetConfiguredFinancialFilters(config);
+  });
+}
+
+function updateConfiguredFinancialFilterChrome(files, config) {
+  const activeCount = configuredFinancialActiveFilters(config).length;
+  const count = document.querySelector("#fileCount");
+  if (count) count.textContent = billedFilesShownLabel(files.length);
+  const activeBadge = document.querySelector("#configuredActiveFilterCount");
+  if (activeBadge) {
+    activeBadge.textContent = `${activeCount} Active`;
+    activeBadge.classList.toggle("hidden", !activeCount);
+  }
+  const headerClear = document.querySelector("#configuredHeaderClear");
+  if (headerClear) headerClear.disabled = !activeCount;
+  const mobileToggle = document.querySelector("#configuredMobileFiltersToggle");
+  if (mobileToggle) mobileToggle.textContent = `Filters${activeCount ? ` (${activeCount})` : ""}`;
+  const chips = document.querySelector("#configuredActiveFilters");
+  if (chips) {
+    chips.innerHTML = configuredFinancialActiveFilterChips(config);
+    bindConfiguredFinancialFilterChips(config);
+  }
+}
+
+function refreshConfiguredFinancialResults(config) {
+  const files = sortFilesForDisplay(filteredFiles());
+  updateConfiguredFinancialFilterChrome(files, config);
+  setConfiguredFinancialFilterLoading(false);
+  const results = document.querySelector("#fileResults");
+  if (results) {
+    results.innerHTML = isStaffLogin() ? renderStaffFileTable(files, state.filters.listView) : renderFileTable(files);
+    bindFileActions();
+  }
+}
+
+function scheduleConfiguredFinancialFilterRefresh(config, delay = 0) {
+  const requestId = ++configuredFilterRequestId;
+  clearTimeout(filterTimer);
+  setConfiguredFinancialFilterLoading(delay > 0);
+  filterTimer = setTimeout(() => {
+    if (requestId !== configuredFilterRequestId) return;
+    refreshConfiguredFinancialResults(config);
+  }, delay);
+}
+
+function bindConfiguredFinancialFilters(config) {
+  document.querySelectorAll("#configuredFilterCard [data-configured-filter]").forEach((control) => {
+    const key = control.dataset.configuredFilter;
+    const update = (delay) => {
+      state.filters[key] = control.value;
+      saveViewState();
+      scheduleConfiguredFinancialFilterRefresh(config, delay);
+    };
+    if (control.type === "search") {
+      control.oninput = () => update(350);
+      control.onchange = () => update(0);
+    } else if (control.tagName === "SELECT" || control.type === "date") {
+      control.onchange = () => update(0);
+    } else {
+      control.oninput = () => update(180);
+      control.onchange = () => update(0);
+    }
+  });
+  const clearButton = document.querySelector("#clearFilters");
+  if (clearButton) clearButton.onclick = () => resetConfiguredFinancialFilters(config);
+  const headerClear = document.querySelector("#configuredHeaderClear");
+  if (headerClear) headerClear.onclick = () => resetConfiguredFinancialFilters(config);
+  bindConfiguredFinancialFilterChips(config);
+
+  const card = document.querySelector("#configuredFilterCard");
+  const body = document.querySelector("#configuredFilterBody");
+  const listView = state.filters.listView;
+  const collapseButton = document.querySelector("#configuredCollapseToggle");
+  if (collapseButton) {
+    collapseButton.onclick = () => {
+      const collapsed = !card.classList.contains("is-collapsed");
+      card.classList.toggle("is-collapsed", collapsed);
+      collapseButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      collapseButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${config.title}`);
+      body?.setAttribute("aria-hidden", collapsed ? "true" : "false");
+      setConfiguredFinancialFilterSessionValue(listView, "collapsed", collapsed);
+    };
+  }
+  const moreButton = document.querySelector("#configuredMoreToggle");
+  const moreFilters = document.querySelector("#configuredMoreFilters");
+  if (moreButton && moreFilters) {
+    moreButton.onclick = () => {
+      const open = !moreFilters.classList.contains("is-open");
+      moreFilters.classList.toggle("is-open", open);
+      moreButton.setAttribute("aria-expanded", open ? "true" : "false");
+      moreButton.childNodes[0].nodeValue = open ? "Fewer Filters " : "More Filters ";
+      moreFilters.setAttribute("aria-hidden", open ? "false" : "true");
+      setConfiguredFinancialFilterSessionValue(listView, "more", open);
+    };
+  }
+  const mobileButton = document.querySelector("#configuredMobileFiltersToggle");
+  if (mobileButton) {
+    const setMobileOpen = (open) => {
+      card.classList.toggle("mobile-open", open);
+      mobileButton.setAttribute("aria-expanded", open ? "true" : "false");
+      body?.setAttribute("aria-hidden", open ? "false" : (card.classList.contains("is-collapsed") ? "true" : "false"));
+    };
+    mobileButton.onclick = () => setMobileOpen(!card.classList.contains("mobile-open"));
+    document.querySelector("#configuredMobileFiltersClose")?.addEventListener("click", () => setMobileOpen(false));
+    document.querySelector("#configuredMobileFilterBackdrop")?.addEventListener("click", () => setMobileOpen(false));
+  }
+}
+
 function refreshFileResults() {
   const files = sortFilesForDisplay(filteredFiles());
   const count = document.querySelector("#fileCount");
@@ -6602,6 +7189,9 @@ function staffExportTitle(listView) {
 }
 
 function staffExportName(listView) {
+  if (["nonBilled", "feePending", "feeReceived"].includes(listView)) {
+    return fileListPdfFileName(fileListSectionTitle());
+  }
   if (listView === "completed" && state.filters.fileFrom && state.filters.fileTo) {
     return `completed-files-${state.filters.fileFrom}-to-${state.filters.fileTo}`;
   }
