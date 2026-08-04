@@ -6983,6 +6983,19 @@ textarea {
   justify-content: flex-end;
 }
 
+.staff-details-actions .secondary-button {
+  border: 2px solid #3b82f6;
+  background: #f8fbff;
+  color: #1d4ed8;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.staff-details-actions .secondary-button:hover {
+  border-color: #1d4ed8;
+  background: #eaf2ff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
 .staff-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(170px, 1fr));

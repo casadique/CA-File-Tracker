@@ -2042,6 +2042,11 @@ function staffDetailChangeTime(row = {}) {
   return Number(row.updatedAt || row.createdAt || 0) || Date.parse(row.updated_at || row.created_at || row.dateOfJoining || "") || 0;
 }
 
+function staffDisplayName(value = "") {
+  const withoutOfficePrefix = String(value || "").trim().replace(/^(?:M\s*&\s*A|M\.?\s*A\.?)\s+/i, "");
+  return properCaseName(withoutOfficePrefix);
+}
+
 function normalizeStaffDetails(rows = [], users = state.users || []) {
   const seen = new Map();
   rows.forEach((row) => {
@@ -2051,7 +2056,7 @@ function normalizeStaffDetails(rows = [], users = state.users || []) {
       id: row.id || `staff-${crypto.randomUUID()}`,
       linkedUserId: row.linkedUserId || row.linked_user_id || "",
       staffCode: String(row.staffCode || row.staff_code || row.employeeId || row.employee_id || "").trim(),
-      staffName: properCaseName(row.staffName || row.staff_name || row.name || linkedUser?.name || ""),
+      staffName: staffDisplayName(row.staffName || row.staff_name || row.name || linkedUser?.name || ""),
       dateOfJoining: normalizeImportDate(row.dateOfJoining || row.date_of_joining || row.doj) || "",
       dateOfBirth: normalizeImportDate(row.dateOfBirth || row.date_of_birth || row.dob) || "",
       email: normalizeEmail(row.email || linkedUser?.email || ""),
@@ -4330,6 +4335,7 @@ function renderAll() {
 }
 
 function renderActivePage() {
+  if (activePage !== "staffDetails") staffDetailsFormOpen = false;
   const renderers = {
     dashboard: renderDashboard,
     files: renderFilesPage,
@@ -9884,7 +9890,7 @@ function renderStaffDetailsPage() {
           ${staffFilterSelect("staffBloodGroup", "Blood Group", staffBloodGroupOptions)}
           ${staffFilterMonth("staffBirthdayMonth", "Birthday Month")}
           ${staffFilterMonth("staffJoiningMonth", "Joining Month")}
-          <div class="field"><label>Sort By</label><select id="staffSort">${["Newest", "Staff Name", "DOJ", "DOB", "Position", "Department", "Status"].map((item) => `<option ${state.filters.staffSort === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+          <div class="field"><label>Sort By</label><select id="staffSort">${["Employee ID", "Staff Name", "DOJ", "DOB", "Position", "Department", "Status"].map((item) => `<option ${(state.filters.staffSort || "Employee ID") === item ? "selected" : ""}>${item}</option>`).join("")}</select></div>
         </div>
         <div class="action-row staff-details-filter-actions">
           <button class="secondary-button" id="clearStaffFilters">Clear Filters</button>
@@ -9912,13 +9918,18 @@ const staffEmploymentStatusOptions = ["Active", "Inactive", "Resigned", "Termina
 function normalizeStaffBloodGroup(value = "") {
   const compact = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
   if (!compact || compact === "UNKNOWN" || compact === "NOTKNOWN" || compact === "NA" || compact === "N/A") return "Not Known";
-  return staffBloodGroupOptions.find((item) => item.toUpperCase() === compact) || String(value || "").trim();
+  const normalizedCompact = compact
+    .replace(/POSITIVE$/, "+")
+    .replace(/NEGATIVE$/, "-")
+    .replace(/\+VE$/, "+")
+    .replace(/-VE$/, "-");
+  return staffBloodGroupOptions.find((item) => item.toUpperCase() === normalizedCompact) || String(value || "").trim();
 }
 
 function renderStaffDetailsForm() {
   if (!canManageStaffDetails()) return "";
   const editing = state.staffDetails.find((row) => row.id === state.filters.staffEditingId) || null;
-  const visible = state.filters.staffFormOpen === "Yes" || editing;
+  const visible = staffDetailsFormOpen || Boolean(editing);
   const mode = state.filters.staffFormMode || (editing?.linkedUserId ? "existing" : "manual");
   const selectedUser = state.users.find((user) => user.id === (editing?.linkedUserId || state.filters.staffSelectedUserId)) || null;
   const userSearch = normalizeImportMatchText(state.filters.staffUserSearch || "");
@@ -9935,7 +9946,7 @@ function renderStaffDetailsForm() {
       <input type="hidden" name="id" value="${v("id")}">
       ${mode === "existing" ? `<section class="staff-form-section staff-link-section"><div class="staff-form-section-head"><h4>Application User Link</h4><p>Selecting a user links this staff record only; it does not change login credentials or permissions.</p></div><div class="staff-form-section-grid"><div class="field staff-user-search"><label>Search Existing Users</label><input id="staffUserSearch" value="${escapeHtml(state.filters.staffUserSearch || "")}" placeholder="Search by name, email, user ID or role"></div><div class="field staff-user-picker"><label>Linked User</label><select name="linkedUserId" id="staffLinkedUser"><option value="">Select existing user</option>${selectableUsers.map((user) => `<option value="${escapeHtml(user.id)}" ${(selectedUser?.id || editing?.linkedUserId) === user.id ? "selected" : ""}>${escapeHtml(user.name)} - ${escapeHtml(user.email)} - ${escapeHtml(user.role)}</option>`).join("")}</select></div></div></section>` : `<input type="hidden" name="linkedUserId" value="${v("linkedUserId")}">`}
       ${staffFormSection("Employment Information", "Core employment and organisation details.", `
-        ${staffFormField("staffName", "Staff Name", "text", v("staffName", selectedUser?.name || ""), true)}
+        ${staffFormField("staffName", "Staff Name", "text", v("staffName", staffDisplayName(selectedUser?.name || "")), true)}
         ${staffFormField("staffCode", "Employee ID", "text", v("staffCode"), true)}
         ${staffSelectField("position", "Position", staffPositionOptions, raw("position"), "Select Position", true)}
         ${staffSelectField("department", "Department", staffDepartmentOptions, raw("department"), "Select Department", true)}
@@ -10030,8 +10041,9 @@ function filteredStaffDetails() {
     if (state.filters.staffJoiningMonth && String(staffDateParts(row.dateOfJoining)?.month || "").padStart(2, "0") !== state.filters.staffJoiningMonth) return false;
     return true;
   });
-  const sort = state.filters.staffSort || "Newest";
-  if (sort === "Staff Name") rows.sort((a, b) => a.staffName.localeCompare(b.staffName));
+  const sort = !state.filters.staffSort || state.filters.staffSort === "Newest" ? "Employee ID" : state.filters.staffSort;
+  if (sort === "Employee ID") rows.sort(compareStaffEmployeeId);
+  else if (sort === "Staff Name") rows.sort((a, b) => a.staffName.localeCompare(b.staffName));
   else if (sort === "DOJ") rows.sort((a, b) => String(a.dateOfJoining).localeCompare(String(b.dateOfJoining)));
   else if (sort === "DOB") rows.sort((a, b) => String(a.dateOfBirth).localeCompare(String(b.dateOfBirth)));
   else if (sort === "Position") rows.sort((a, b) => String(a.position).localeCompare(String(b.position)));
@@ -10041,9 +10053,18 @@ function filteredStaffDetails() {
   return rows;
 }
 
+function compareStaffEmployeeId(a = {}, b = {}) {
+  const left = String(a.staffCode || "").trim();
+  const right = String(b.staffCode || "").trim();
+  if (!left && right) return 1;
+  if (left && !right) return -1;
+  return left.localeCompare(right, "en", { numeric: true, sensitivity: "base" })
+    || String(a.staffName || "").localeCompare(String(b.staffName || ""), "en", { sensitivity: "base" });
+}
+
 function renderStaffDetailsTable(rows) {
   if (!rows.length) return empty("No staff records found.");
-  const headers = ["SN", "Staff Name", "Employee ID", "Position", "Department", "Employment Type", "Date of Joining", "Mobile Number", "Email ID", "Blood Group", "Status", "Actions"];
+  const headers = ["SN", "Staff Name", "EMP ID", "Position", "Department", "EMP TYPE", "DOJ", "DOB", "Contact", "Email ID", "BG", "Status", "Actions"];
   return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
     <td>${index + 1}</td>
     <td><div class="staff-name-cell">${staffAvatar(row)}<strong>${escapeHtml(row.staffName)}</strong></div></td>
@@ -10052,6 +10073,7 @@ function renderStaffDetailsTable(rows) {
     <td>${escapeHtml(row.department || "")}</td>
     <td>${escapeHtml(row.employmentType || "")}</td>
     <td>${displayDate(row.dateOfJoining)}</td>
+    <td>${displayDate(row.dateOfBirth)}</td>
     <td>${escapeHtml(row.mobile || "")}</td>
     <td>${escapeHtml(row.email || "")}</td>
     <td>${escapeHtml(row.bloodGroup || "Not Known")}</td>
@@ -10077,10 +10099,10 @@ function renderStaffProfile() {
   return `<div class="staff-profile">
     <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
     <div class="staff-profile-grid">
-      ${staffProfileBlock("Employment Information", [["Employee ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["Employment Type", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Status", row.employmentStatus]])}
-      ${staffProfileBlock("Personal Details", [["Date of Birth", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Gender", row.gender], ["Blood Group", row.bloodGroup || "Not Known"]])}
+      ${staffProfileBlock("Employment Information", [["EMP ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["EMP TYPE", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Status", row.employmentStatus]])}
+      ${staffProfileBlock("Personal Details", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Gender", row.gender], ["BG", row.bloodGroup || "Not Known"]])}
       ${staffProfileBlock("Qualifications", [["Qualifications", row.qualifications]])}
-      ${staffProfileBlock("Contact Information", [["Email", row.email], ["Mobile", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber, row.emergencyContactRelationship].filter(Boolean).join(" - ")]])}
+      ${staffProfileBlock("Contact Information", [["Email", row.email], ["Contact", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber, row.emergencyContactRelationship].filter(Boolean).join(" - ")]])}
       ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
       ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
     </div>
@@ -10093,7 +10115,7 @@ function staffProfileBlock(title, rows) {
 
 function bindStaffDetailsPage() {
   document.querySelector("#showStaffForm")?.addEventListener("click", () => {
-    state.filters.staffFormOpen = "Yes";
+    staffDetailsFormOpen = true;
     state.filters.staffEditingId = "";
     state.filters.staffFormMode = "existing";
     renderStaffDetailsPage();
@@ -10138,7 +10160,7 @@ function bindStaffDetailsPage() {
   }));
   document.querySelectorAll("[data-edit-staff]").forEach((btn) => btn.addEventListener("click", () => {
     state.filters.staffEditingId = btn.dataset.editStaff;
-    state.filters.staffFormOpen = "Yes";
+    staffDetailsFormOpen = true;
     renderStaffDetailsPage();
   }));
   document.querySelectorAll("[data-toggle-staff]").forEach((btn) => btn.addEventListener("click", () => toggleStaffStatus(btn.dataset.toggleStaff)));
@@ -10152,7 +10174,7 @@ function bindStaffDetailsPage() {
 }
 
 function closeStaffForm() {
-  state.filters.staffFormOpen = "";
+  staffDetailsFormOpen = false;
   state.filters.staffEditingId = "";
   state.filters.staffSelectedUserId = "";
   saveViewState();
@@ -10194,7 +10216,7 @@ function saveStaffDetailsForm(event) {
   if (!staffValueAllowed(position, staffPositionOptions, old.position)) errors.push("Select a valid Position.");
   if (!staffValueAllowed(employmentType, staffEmploymentTypeOptions, old.employmentType)) errors.push("Select a valid Employment Type.");
   if (!staffValueAllowed(gender, staffGenderOptions, old.gender)) errors.push("Select a valid Gender.");
-  if (!staffBloodGroupOptions.includes(bloodGroup)) errors.push("Select a valid Blood Group.");
+  if (!staffValueAllowed(bloodGroup, staffBloodGroupOptions, old.bloodGroup)) errors.push("Select a valid Blood Group.");
   if (!staffValueAllowed(department, staffDepartmentOptions, old.department)) errors.push("Select a valid Department.");
   if (!staffValueAllowed(employmentStatus, staffEmploymentStatusOptions, old.employmentStatus)) errors.push("Select a valid Employment Status.");
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Please enter a valid Email.");
@@ -10223,7 +10245,7 @@ function saveStaffDetailsForm(event) {
     id,
     linkedUserId,
     staffCode,
-    staffName: properCaseName(name),
+    staffName: staffDisplayName(name),
     dateOfJoining: doj,
     dateOfBirth: dob,
     email,
@@ -10270,7 +10292,7 @@ function saveStaffDetailsForm(event) {
     });
   }
   state.filters.staffProfileId = record.id;
-  state.filters.staffFormOpen = "";
+  staffDetailsFormOpen = false;
   state.filters.staffEditingId = "";
   saveState({ fullRemote: true });
   toast("Staff details saved");
@@ -10313,6 +10335,7 @@ function staffDetailsReportRows(rows = filteredStaffDetails()) {
   return rows.map((row) => ({
     "Staff Name": row.staffName,
     "Employee ID": row.staffCode,
+    "App User Email": state.users.find((user) => user.id === row.linkedUserId || user.authUserId === row.linkedUserId)?.email || "",
     Position: row.position,
     Department: row.department,
     "Employment Type": row.employmentType,
@@ -10333,13 +10356,14 @@ function staffDetailsReportRows(rows = filteredStaffDetails()) {
 }
 
 const staffWorkbookColumns = [
-  "Staff Name", "Employee ID", "Position", "Department", "Employment Type",
+  "Staff Name", "Employee ID", "App User Email", "Position", "Department", "Employment Type",
   "Date of Joining", "Employment Status", "Date of Birth", "Gender", "Blood Group",
   "Mobile Number", "Email ID", "Address", "Emergency Contact Person",
   "Emergency Contact Number", "Relationship", "Qualification", "Remarks",
 ];
 
 let staffImportSession = null;
+let staffDetailsFormOpen = false;
 
 function staffExcelDate(value) {
   const normalized = normalizeImportDate(value);
@@ -10351,18 +10375,18 @@ function staffExcelDate(value) {
 function styleStaffWorksheet(sheet, rowCount = 0) {
   const XLSX = window.XLSX;
   sheet["!cols"] = [
-    { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 21 }, { wch: 18 }, { wch: 15 },
+    { wch: 24 }, { wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 21 }, { wch: 18 }, { wch: 15 },
     { wch: 17 }, { wch: 15 }, { wch: 18 }, { wch: 13 }, { wch: 16 }, { wch: 27 },
     { wch: 30 }, { wch: 24 }, { wch: 24 }, { wch: 18 }, { wch: 24 }, { wch: 30 },
   ];
-  sheet["!autofilter"] = { ref: `A1:R${Math.max(1, rowCount + 1)}` };
+  sheet["!autofilter"] = { ref: `A1:S${Math.max(1, rowCount + 1)}` };
   sheet["!freeze"] = { xSplit: 0, ySplit: 1, topLeftCell: "A2", activePane: "bottomLeft", state: "frozen" };
   for (let row = 2; row <= rowCount + 1; row += 1) {
-    ["F", "H"].forEach((column) => {
+    ["G", "I"].forEach((column) => {
       const cell = sheet[`${column}${row}`];
       if (cell?.v instanceof Date || cell?.t === "d") cell.z = "dd-mm-yyyy";
     });
-    ["K", "O"].forEach((column) => {
+    ["L", "P"].forEach((column) => {
       const cell = sheet[`${column}${row}`];
       if (cell) {
         cell.t = "s";
@@ -10441,7 +10465,9 @@ function evaluateStaffImport(mode = staffImportSession?.mode || "skip") {
   const existingByCode = new Map((state.staffDetails || []).map((row) => [String(row.staffCode || "").trim().toLowerCase(), row]));
   const existingByEmail = new Map((state.staffDetails || []).filter((row) => row.email).map((row) => [normalizeEmail(row.email), row]));
   const existingByMobile = new Map((state.staffDetails || []).filter((row) => row.mobile).map((row) => [String(row.mobile).replace(/\D/g, ""), row]));
+  const appUsersByEmail = new Map((state.users || []).filter((user) => user.email).map((user) => [normalizeEmail(user.email), user]));
   const seenCodes = new Set();
+  const seenLinkedUserIds = new Set();
   const result = { rows: [], create: [], update: [], skipped: [], invalid: [] };
   staffImportSession.sourceRows.forEach((raw, index) => {
     const rowNumber = index + 2;
@@ -10461,37 +10487,60 @@ function evaluateStaffImport(mode = staffImportSession?.mode || "skip") {
     const statusRaw = staffImportText(staffImportCell(raw, "Employment Status"));
     const genderRaw = staffImportText(staffImportCell(raw, "Gender"));
     const bloodRaw = staffImportText(staffImportCell(raw, "Blood Group"));
-    const position = canonicalStaffOption(positionRaw, staffPositionOptions);
-    const department = canonicalStaffOption(departmentRaw, staffDepartmentOptions);
-    const employmentType = canonicalStaffOption(employmentTypeRaw, staffEmploymentTypeOptions);
-    const employmentStatus = canonicalStaffOption(statusRaw, staffEmploymentStatusOptions);
-    const gender = canonicalStaffOption(genderRaw, staffGenderOptions);
+    const appUserEmail = normalizeEmail(staffImportCell(raw, "App User Email"));
+    const canonicalPosition = canonicalStaffOption(positionRaw, staffPositionOptions);
+    const canonicalDepartment = canonicalStaffOption(departmentRaw, staffDepartmentOptions);
+    const canonicalEmploymentType = canonicalStaffOption(employmentTypeRaw, staffEmploymentTypeOptions);
+    const canonicalEmploymentStatus = canonicalStaffOption(statusRaw, staffEmploymentStatusOptions);
+    const canonicalGender = canonicalStaffOption(genderRaw, staffGenderOptions);
+    const normalizedBloodRaw = normalizeStaffBloodGroup(bloodRaw);
+    const canonicalBloodGroup = canonicalStaffOption(normalizedBloodRaw, staffBloodGroupOptions);
+    const position = canonicalPosition || positionRaw;
+    const department = canonicalDepartment || departmentRaw;
+    const employmentType = canonicalEmploymentType || employmentTypeRaw;
+    const employmentStatus = canonicalEmploymentStatus || statusRaw;
+    const gender = canonicalGender || genderRaw;
     const bloodGroup = bloodRaw
-      ? canonicalStaffOption(bloodRaw, staffBloodGroupOptions)
+      ? (canonicalBloodGroup || normalizedBloodRaw)
       : (existing ? "" : "Not Known");
     const dateOfJoining = staffImportDate(staffImportCell(raw, "Date of Joining"));
     const dateOfBirth = staffImportDate(staffImportCell(raw, "Date of Birth"));
-    const email = normalizeEmail(staffImportCell(raw, "Email ID"));
+    let email = normalizeEmail(staffImportCell(raw, "Email ID"));
     const mobile = staffImportText(staffImportCell(raw, "Mobile Number"));
     const mobileDigits = mobile.replace(/\D/g, "");
+    let linkedUserId = "";
 
     if (!existing && !staffName) errors.push("Staff Name is required");
-    if (!existing && !positionRaw) errors.push("Position is required");
-    if (positionRaw && !position) errors.push(`Invalid Position: ${positionRaw}`);
-    if (!existing && !departmentRaw) errors.push("Department is required");
-    if (departmentRaw && !department) errors.push(`Invalid Department: ${departmentRaw}`);
-    if (!existing && !employmentTypeRaw) errors.push("Employment Type is required");
-    if (employmentTypeRaw && !employmentType) errors.push(`Invalid Employment Type: ${employmentTypeRaw}`);
-    if (!existing && !dateOfJoining) errors.push("Valid Date of Joining is required");
-    if (!existing && !statusRaw) errors.push("Employment Status is required");
-    if (statusRaw && !employmentStatus) errors.push(`Invalid Employment Status: ${statusRaw}`);
-    if (genderRaw && !gender) errors.push(`Invalid Gender: ${genderRaw}`);
-    if (bloodRaw && !canonicalStaffOption(bloodRaw, staffBloodGroupOptions)) errors.push(`Invalid Blood Group: ${bloodRaw}`);
-    if (staffImportCell(raw, "Date of Birth") && !dateOfBirth) errors.push("Invalid Date of Birth");
-    if (email && !/^\S+@\S+\.\S+$/.test(email)) errors.push("Invalid Email ID");
-    if (mobile && (mobileDigits.length < 6 || mobileDigits.length > 15)) errors.push("Mobile Number must contain 6 to 15 digits");
+    if (positionRaw && !canonicalPosition) warnings.push(`Non-standard Position imported as entered: ${positionRaw}`);
+    if (departmentRaw && !canonicalDepartment) warnings.push(`Non-standard Department imported as entered: ${departmentRaw}`);
+    if (employmentTypeRaw && !canonicalEmploymentType) warnings.push(`Non-standard Employment Type imported as entered: ${employmentTypeRaw}`);
+    if (statusRaw && !canonicalEmploymentStatus) warnings.push(`Non-standard Employment Status imported as entered: ${statusRaw}`);
+    if (genderRaw && !canonicalGender) warnings.push(`Non-standard Gender imported as entered: ${genderRaw}`);
+    if (bloodRaw && !canonicalBloodGroup) warnings.push(`Non-standard Blood Group imported as entered: ${bloodRaw}`);
+    if (staffImportCell(raw, "Date of Joining") && !dateOfJoining) warnings.push("Invalid Date of Joining skipped");
+    if (staffImportCell(raw, "Date of Birth") && !dateOfBirth) warnings.push("Invalid Date of Birth skipped");
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+      warnings.push("Invalid Email ID skipped");
+      email = "";
+    }
+    if (mobile && (mobileDigits.length < 6 || mobileDigits.length > 15)) warnings.push("Non-standard Mobile Number imported as entered");
+    if (appUserEmail) {
+      const linkedUser = appUsersByEmail.get(appUserEmail);
+      const candidateLinkedUserId = linkedUser?.id || linkedUser?.authUserId || "";
+      const linkedToOtherStaff = candidateLinkedUserId && (state.staffDetails || []).find((row) => row.id !== existing?.id && row.linkedUserId === candidateLinkedUserId);
+      if (!linkedUser) warnings.push(`App User Email not found; staff row imported without login link: ${appUserEmail}`);
+      else if (linkedToOtherStaff) warnings.push(`App User Email is already linked to Employee ID ${linkedToOtherStaff.staffCode || "unknown"}; staff row imported without login link`);
+      else if (seenLinkedUserIds.has(candidateLinkedUserId)) warnings.push("App User Email is repeated in this workbook; staff row imported without login link");
+      else {
+        linkedUserId = candidateLinkedUserId;
+        seenLinkedUserIds.add(candidateLinkedUserId);
+      }
+    }
     const emailOwner = email ? existingByEmail.get(email) : null;
-    if (emailOwner && emailOwner.id !== existing?.id) errors.push("Email ID belongs to another employee");
+    if (emailOwner && emailOwner.id !== existing?.id) {
+      warnings.push("Email ID belongs to another employee and was skipped");
+      email = "";
+    }
     const mobileOwner = mobileDigits ? existingByMobile.get(mobileDigits) : null;
     if (mobileOwner && mobileOwner.id !== existing?.id) warnings.push(`Mobile Number also belongs to Employee ID ${mobileOwner.staffCode || "unknown"}`);
     if (staffName && dateOfBirth) {
@@ -10500,7 +10549,7 @@ function evaluateStaffImport(mode = staffImportSession?.mode || "skip") {
     }
 
     const values = {
-      staffName, staffCode, position, department, employmentType, dateOfJoining, employmentStatus,
+      staffName, staffCode, linkedUserId, position, department, employmentType, dateOfJoining, employmentStatus,
       dateOfBirth, gender, bloodGroup,
       mobile,
       email,
@@ -10538,9 +10587,9 @@ function renderStaffImportModal() {
   modal.className = "staff-import-backdrop";
   modal.innerHTML = `<section class="staff-import-modal" role="dialog" aria-modal="true" aria-labelledby="staffImportTitle">
     <header><div><p class="eyebrow">STAFF DETAILS</p><h3 id="staffImportTitle">Review Excel Import</h3><p>${escapeHtml(staffImportSession.fileName)}</p></div><button type="button" class="icon-button" id="closeStaffImport" aria-label="Close">×</button></header>
-    <div class="staff-import-mode field"><label for="staffImportMode">Import mode</label><select id="staffImportMode"><option value="skip" ${staffImportSession.mode === "skip" ? "selected" : ""}>Skip existing employees (default)</option><option value="update" ${staffImportSession.mode === "update" ? "selected" : ""}>Update existing employees</option><option value="new" ${staffImportSession.mode === "new" ? "selected" : ""}>Import only new employees</option></select><small>Existing employees are matched only by Employee ID. Blank cells never erase saved values during update.</small></div>
+    <div class="staff-import-mode field"><label for="staffImportMode">Import mode</label><select id="staffImportMode"><option value="skip" ${staffImportSession.mode === "skip" ? "selected" : ""}>Skip existing employees (default)</option><option value="update" ${staffImportSession.mode === "update" ? "selected" : ""}>Update existing employees</option><option value="new" ${staffImportSession.mode === "new" ? "selected" : ""}>Import only new employees</option></select><small>Existing employees are matched only by Employee ID. Blank cells never erase saved values during update. Non-standard values are imported as entered; only unusable rows are skipped.</small></div>
     <div class="staff-import-summary"><span><strong>${evaluated.rows.length}</strong> Total</span><span><strong>${evaluated.create.length}</strong> New</span><span><strong>${evaluated.update.length}</strong> Updates</span><span><strong>${evaluated.skipped.length}</strong> Duplicates / Skipped</span><span class="invalid"><strong>${evaluated.invalid.length}</strong> Failed</span></div>
-    <div class="table-wrap staff-import-preview"><table class="file-table"><thead><tr><th>Row</th><th>Employee ID</th><th>Staff Name</th><th>Action</th><th>Details</th></tr></thead><tbody>${evaluated.rows.slice(0, 200).map((item) => `<tr><td>${item.rowNumber}</td><td>${escapeHtml(item.values.staffCode)}</td><td>${escapeHtml(item.values.staffName || item.existing?.staffName || "")}</td><td><span class="staff-import-action action-${item.action}">${item.action}</span></td><td>${escapeHtml([...item.errors, ...item.warnings].join("; ") || "Ready")}</td></tr>`).join("")}</tbody></table></div>
+    <div class="table-wrap staff-import-preview"><table class="file-table"><thead><tr><th>Row</th><th>Employee ID</th><th>Staff Name</th><th>App User Email</th><th>Action</th><th>Details</th></tr></thead><tbody>${evaluated.rows.slice(0, 200).map((item) => `<tr><td>${item.rowNumber}</td><td>${escapeHtml(item.values.staffCode)}</td><td>${escapeHtml(item.values.staffName || item.existing?.staffName || "")}</td><td>${escapeHtml(staffImportText(staffImportCell(item.raw, "App User Email")) || "-")}</td><td><span class="staff-import-action action-${item.action}">${item.action}</span></td><td>${escapeHtml([...item.errors, ...item.warnings].join("; ") || "Ready")}</td></tr>`).join("")}</tbody></table></div>
     ${evaluated.rows.length > 200 ? `<p class="small-muted">Showing the first 200 of ${evaluated.rows.length} rows.</p>` : ""}
     <footer><button type="button" class="secondary-button" id="cancelStaffImport">Cancel</button><button type="button" class="primary-button" id="commitStaffImport" ${evaluated.create.length + evaluated.update.length ? "" : "disabled"}>Import ${evaluated.create.length + evaluated.update.length} Record(s)</button></footer>
   </section>`;
@@ -10569,8 +10618,7 @@ async function prepareStaffDetailsImport(event) {
     const rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false, dateNF: "yyyy-mm-dd" });
     if (!rows.length) throw new Error("The worksheet contains no staff rows.");
     const headers = Object.keys(rows[0]).map(staffImportHeaderKey);
-    const missing = staffWorkbookColumns.filter((heading) => !headers.includes(staffImportHeaderKey(heading)));
-    if (missing.length) throw new Error(`Missing column(s): ${missing.join(", ")}`);
+    if (!headers.includes(staffImportHeaderKey("Employee ID"))) throw new Error("Missing required column: Employee ID");
     staffImportSession = { sourceRows: rows, fileName: file.name, mode: "skip" };
     renderStaffImportModal();
   } catch (error) {
@@ -10587,6 +10635,7 @@ async function commitStaffDetailsImport() {
   const evaluated = evaluateStaffImport(staffImportSession?.mode);
   const button = document.querySelector("#commitStaffImport");
   if (!evaluated.create.length && !evaluated.update.length) return;
+  const stateBeforeImport = structuredClone(state);
   if (button) {
     button.disabled = true;
     button.textContent = "Importing...";
@@ -10634,10 +10683,58 @@ async function commitStaffDetailsImport() {
     });
   });
   addAuditLog("Staff Excel import completed", { created: createdRows.length, updated: updatedIds.size, skipped: evaluated.skipped.length, invalid: evaluated.invalid.length, source: staffImportSession.fileName });
-  saveState({ fullRemote: true });
-  closeStaffImportModal();
-  renderStaffDetailsPage();
-  toast(`Import completed: ${evaluated.rows.length} total, ${createdRows.length} added, ${updatedIds.size} updated, ${evaluated.skipped.length} skipped, ${evaluated.invalid.length} failed.`);
+  const importedRecords = [...createdRows, ...updatedRows.filter((row) => updatedIds.has(row.id))];
+  try {
+    saveState({ skipMerge: true, skipRemote: true });
+    if (isSupabaseMode()) {
+      if (button) button.textContent = "Saving to database...";
+      await persistStaffDetailsImportToApi(importedRecords);
+    }
+    ["staffSearch", "staffDepartment", "staffPosition", "staffEmploymentType", "staffStatus", "staffBloodGroup", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"]
+      .forEach((key) => state.filters[key] = "");
+    saveViewState();
+    closeStaffImportModal();
+    renderStaffDetailsPage();
+    toast(`Import completed: ${evaluated.rows.length} total, ${createdRows.length} added, ${updatedIds.size} updated, ${evaluated.skipped.length} skipped, ${evaluated.invalid.length} failed.`);
+  } catch (error) {
+    console.error("Staff details import save failed", error);
+    state = stateBeforeImport;
+    saveState({ skipMerge: true, skipRemote: true });
+    renderStaffDetailsPage();
+    if (button) {
+      button.disabled = false;
+      button.textContent = `Import ${evaluated.create.length + evaluated.update.length} Record(s)`;
+    }
+    toast(`Staff import was not saved: ${error.message || "Central database update failed. Please try again."}`);
+  }
+}
+
+async function persistStaffDetailsImportToApi(importedRecords = []) {
+  if (!isSupabaseMode()) return;
+  centralImportInFlight = true;
+  clearTimeout(remoteSaveTimer);
+  try {
+    const shared = sharedStateForStorage(state);
+    const snapshot = JSON.stringify(shared);
+    const payload = await apiJson("/api/state", {
+      method: "PUT",
+      body: JSON.stringify({ state: shared }),
+    });
+    const savedStaffDetails = payload?.state?.staffDetails;
+    if (!Array.isArray(savedStaffDetails)) {
+      throw new Error("The central database did not confirm the imported staff records.");
+    }
+    const savedById = new Map(savedStaffDetails.map((row) => [String(row.id || ""), row]));
+    const missing = importedRecords.filter((row) => !savedById.has(String(row.id || "")));
+    if (missing.length) {
+      throw new Error(`The central database did not confirm ${missing.length} imported staff record(s).`);
+    }
+    lastRemoteSaveSnapshot = snapshot;
+    lastCentralRefreshAt = Date.now();
+    applyCentralState(payload.state, { rerender: false });
+  } finally {
+    centralImportInFlight = false;
+  }
 }
 
 function exportStaffDetailsExcel() { exportStaffDetailsWorkbook("staff-details-register", staffDetailsReportRows(), "Staff Details"); }

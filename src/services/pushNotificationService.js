@@ -205,6 +205,25 @@ function authUserIdForStateUser(user = {}) {
   return String(user.authUserId || user.auth_user_id || "").trim();
 }
 
+function authUserIdFromProfiles(profiles = [], ...identities) {
+  const values = identities.flat().map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+  for (const identity of values) {
+    const profile = (profiles || []).find((row) => row.is_active !== false && [row.id, row.auth_user_id, row.email, row.name]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .includes(identity));
+    if (profile?.auth_user_id) return String(profile.auth_user_id).trim();
+  }
+  return "";
+}
+
+async function getNotificationAuthProfiles() {
+  const { data, error } = await supabaseAdmin.from("app_users")
+    .select("id,auth_user_id,name,email,role,is_active")
+    .eq("is_active", true);
+  if (error) throw error;
+  return data || [];
+}
+
 function findStateUser(state = {}, ...identities) {
   const values = identities.flat().map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
   return (state.users || []).find((user) => [user.id, user.authUserId, user.auth_user_id, user.email, user.name]
@@ -235,11 +254,14 @@ function fileNotificationRoute(category, recipient = {}) {
 }
 
 async function dispatchFileNotifications(state = {}, notifications = []) {
+  const authProfiles = await getNotificationAuthProfiles();
   const unique = new Map();
   for (const notice of notifications || []) {
     const recipient = findStateUser(state,
       notice.targetUserId, notice.targetUserEmail, notice.targetUserName, notice.user_id, notice.userId);
-    const authUserId = authUserIdForStateUser(recipient);
+    const authUserId = authUserIdForStateUser(recipient) || authUserIdFromProfiles(authProfiles,
+      notice.targetUserId, notice.targetUserEmail, notice.targetUserName,
+      recipient?.id, recipient?.email, recipient?.name);
     if (!authUserId || !notice.id) continue;
     const key = `${authUserId}:${notice.id}`;
     if (unique.has(key)) continue;
@@ -268,6 +290,7 @@ async function dispatchFileNotifications(state = {}, notifications = []) {
 
 async function dispatchChatNotification(state = {}, message = {}) {
   if (!message.id) return [];
+  const authProfiles = await getNotificationAuthProfiles();
   const sender = findStateUser(state, message.userId, message.authSenderId, message.userEmail, message.user) || {};
   let recipients = [];
   if (message.targetType === "personal") {
@@ -282,10 +305,13 @@ async function dispatchChatNotification(state = {}, message = {}) {
       recipients = (group?.memberIds || []).map((id) => findStateUser(state, id)).filter(Boolean);
     }
   }
-  const senderAuthId = authUserIdForStateUser(sender) || String(message.authSenderId || "");
+  const senderAuthId = authUserIdForStateUser(sender) || authUserIdFromProfiles(authProfiles,
+    message.authSenderId, message.userId, message.userEmail, message.user,
+    sender.id, sender.email, sender.name);
   const unique = new Map();
   for (const recipient of recipients) {
-    const authUserId = authUserIdForStateUser(recipient);
+    const authUserId = authUserIdForStateUser(recipient) || authUserIdFromProfiles(authProfiles,
+      recipient.id, recipient.email, recipient.name);
     if (!authUserId || authUserId === senderAuthId || recipient.isActive === false || recipient.is_active === false) continue;
     unique.set(authUserId, sendToUser(authUserId, {
       id: `chat-${message.id}`,
@@ -322,6 +348,7 @@ async function dispatchDueReminders() {
   const [state, settings] = await Promise.all([getAppState(), getOrganizationSettings()]);
   if (!settings.organization_enabled || settings.due_enabled === false) return { sent: 0, skipped: true };
   const today = indiaDateKey();
+  const authProfiles = await getNotificationAuthProfiles();
   const reminderDays = new Set((settings.due_reminder_days || [1, 0, -1]).map(Number));
   const jobs = [];
   for (const file of state.files || []) {
@@ -331,7 +358,10 @@ async function dispatchDueReminders() {
     const assignee = findStateUser(state,
       file.reAssignedStaffId, file.reAssignedStaffEmail, file.reAssignedStaff,
       file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff);
-    const authUserId = authUserIdForStateUser(assignee);
+    const authUserId = authUserIdForStateUser(assignee) || authUserIdFromProfiles(authProfiles,
+      file.reAssignedStaffId, file.reAssignedStaffEmail, file.reAssignedStaff,
+      file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff,
+      assignee?.id, assignee?.email, assignee?.name);
     if (!authUserId) continue;
     const when = days === 0
       ? "due today"
@@ -365,4 +395,5 @@ module.exports = {
   dispatchChatNotification,
   dispatchDueReminders,
   deliverySummary,
+  authUserIdFromProfiles,
 };
