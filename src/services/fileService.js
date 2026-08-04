@@ -172,6 +172,23 @@ function fileCorrectionRowTime(row = {}) {
   return dateOrNumber(row.returned_at || row.returnedAt || row.created_at || row.createdAt || row.returnedDate);
 }
 
+const PROTECTED_BILLING_FIELDS = [
+  "billingType", "billing_type", "billed", "billedDate", "billed_date", "billDate", "bill_date", "billingDate", "billing_date",
+  "billNo", "bill_no", "billNumber", "bill_number", "invoiceNumber", "invoice_number", "invoiceNo", "invoice_no",
+  "billedAmount", "billed_amount", "billAmount", "bill_amount", "feeAmount", "fee_amount", "balanceAmount", "balance_amount",
+  "feeReceived", "fee_received", "feeReceivedDate", "fee_received_date", "feeReceivedAmount", "fee_received_amount",
+  "amountReceived", "amount_received", "paymentStatus", "payment_status", "paymentMode", "payment_mode", "receiptMode", "receipt_mode",
+  "feeReceiptId", "fee_receipt_id", "feeTransactionId", "fee_transaction_id", "transactionId", "transaction_id",
+];
+
+function assertBillingMutationPermission(before, after, profile = {}) {
+  if (!before || ["Admin", "Manager"].includes(String(profile?.role || "").trim())) return;
+  const changed = PROTECTED_BILLING_FIELDS.some((field) => JSON.stringify(before[field] ?? null) !== JSON.stringify(after[field] ?? null));
+  const beforeStage = Boolean(before.stages?.Billed);
+  const afterStage = Boolean(after.stages?.Billed);
+  if (changed || beforeStage !== afterStage) throw httpError("Only Admin or Manager can change billing or payment details.", 403);
+}
+
 async function upsertFile(file, userId, profile = {}) {
   return patchAppState((state) => {
     const now = Date.now();
@@ -203,6 +220,7 @@ async function upsertFile(file, userId, profile = {}) {
     if (before && isRemovedFile(before) && !isRemovedFile(record)) {
       throw httpError("Use Take Back to restore a removed file.", 400);
     }
+    assertBillingMutationPermission(before, { ...(before || {}), ...record }, profile);
     preserveCheckingDetailsForGeneralSave(record, before);
     validateReassignmentTarget(before, file);
     const nowIso = new Date(now).toISOString();
@@ -325,6 +343,156 @@ async function removeFile(fileId, payload, userId, profile = {}) {
       id: crypto.randomUUID(),
       action: "File moved to Removed Files",
       details: { fileId, fileName: before.name, removalReason, previousStatus: removalEvent.previousStatus, previousAssignedStaff: removalEvent.previousAssignedStaff },
+      user: actorName,
+      role: profile?.role || "",
+      at: nowIso,
+    }].slice(-1000);
+    state.files = sortFilesNewestFirst(files);
+    return state;
+  }, userId);
+}
+
+function isActiveBillingReceipt(receipt = {}) {
+  const status = String(receipt.status || receipt.receiptStatus || receipt.receipt_status || "active").trim().toLowerCase();
+  return receipt.isDeleted !== true
+    && receipt.is_deleted !== true
+    && receipt.isReversed !== true
+    && receipt.is_reversed !== true
+    && !["reversed", "cancelled", "canceled", "not_received", "not received", "deleted"].includes(status);
+}
+
+function isActiveBillingCollection(collection = {}) {
+  const status = String(collection.status || "active").trim().toLowerCase();
+  return collection.isDeleted !== true
+    && collection.is_deleted !== true
+    && collection.isReversed !== true
+    && collection.is_reversed !== true
+    && !["reversed", "cancelled", "canceled", "deleted"].includes(status);
+}
+
+async function removeBilledFileSafely(fileId, payload, userId, profile = {}) {
+  return patchAppState((state) => {
+    assertRemovalPermission(profile);
+    const files = state.files || [];
+    const fileIndex = files.findIndex((file) => file.id === fileId);
+    if (fileIndex < 0) throw httpError("File record not found.", 404);
+    if (isRemovedFile(files[fileIndex])) throw httpError("This file is already in Removed Files.", 409);
+    if (!files[fileIndex].billed) throw httpError("Only billed records can use this operation.", 409);
+    const removalReason = String(payload.removalReason || payload.removal_reason || "").trim();
+    if (!removalReason) throw httpError("Removal reason is required.", 400);
+
+    const before = { ...files[fileIndex] };
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const date = nowIso.slice(0, 10);
+    const actorId = profile?.id || profile?.auth_user_id || userId || "";
+    const actorName = String(profile?.name || profile?.email || "").trim() || "Admin";
+    const activeReceipts = (state.feeReceipts || []).filter((receipt) => (
+      (receipt.fileId || receipt.file_id) === fileId && isActiveBillingReceipt(receipt)
+    ));
+    const receiptIds = new Set(activeReceipts.map((receipt) => receipt.id).filter(Boolean));
+    const transactionIds = new Set(activeReceipts.map((receipt) => receipt.transactionId || receipt.transaction_id).filter(Boolean));
+
+    state.feeReceipts = (state.feeReceipts || []).map((receipt) => receiptIds.has(receipt.id) ? {
+      ...receipt,
+      status: "not_received",
+      receiptStatus: "not_received",
+      receipt_status: "not_received",
+      isReversed: true,
+      is_reversed: true,
+      reversedAt: nowIso,
+      reversed_at: nowIso,
+      reversedBy: actorName,
+      reversed_by: actorName,
+      reversedByUserId: actorId,
+      reversed_by_user_id: actorId,
+      reversalReason: removalReason,
+      reversal_reason: removalReason,
+      previousPushStatus: (receipt.transactionId || receipt.transaction_id) ? "pushed" : "not_pushed",
+      previous_push_status: (receipt.transactionId || receipt.transaction_id) ? "pushed" : "not_pushed",
+      linkedTransactionStatus: (receipt.transactionId || receipt.transaction_id) ? "reversed" : "not_applicable",
+      linked_transaction_status: (receipt.transactionId || receipt.transaction_id) ? "reversed" : "not_applicable",
+      updatedAt: nowIso,
+      updated_at: nowIso,
+    } : receipt);
+
+    let reversedTransactions = 0;
+    state.otherCashCollections = (state.otherCashCollections || []).map((collection) => {
+      const linkedReceiptId = collection.feeReceiptId || collection.fee_receipt_id || collection.sourceId || collection.source_id || "";
+      const linked = isActiveBillingCollection(collection) && (
+        transactionIds.has(collection.id)
+        || receiptIds.has(linkedReceiptId)
+        || ((collection.fileId || collection.file_id) === fileId && (collection.sourceType || collection.source_type) === "fee_receipt")
+      );
+      if (!linked) return collection;
+      reversedTransactions += 1;
+      return {
+        ...collection,
+        status: "reversed",
+        reversed: true,
+        isReversed: true,
+        is_reversed: true,
+        reversedAt: nowIso,
+        reversed_at: nowIso,
+        reversedBy: actorName,
+        reversed_by: actorName,
+        reversalReason: removalReason,
+        reversal_reason: removalReason,
+        updatedAt: nowIso,
+        updated_at: nowIso,
+      };
+    });
+
+    const removalEvent = {
+      id: crypto.randomUUID(),
+      fileId,
+      file_id: fileId,
+      action: "Billed record safely removed",
+      removedAt: nowIso,
+      removed_at: nowIso,
+      removedBy: actorName,
+      removed_by: actorName,
+      removedByUserId: actorId,
+      removed_by_user_id: actorId,
+      removalReason,
+      removal_reason: removalReason,
+      previousStatus: "Billed",
+      previous_status: "Billed",
+      receiptsReversed: receiptIds.size,
+      transactionsReversed: reversedTransactions,
+    };
+    files[fileIndex] = {
+      ...before,
+      status: "Removed",
+      workflowStatus: "Removed",
+      stages: { ...(before.stages || {}), Removed: true },
+      is_removed: true,
+      isRemoved: true,
+      removed_at: nowIso,
+      removedAt: nowIso,
+      removed_by_user_id: actorId,
+      removedByUserId: actorId,
+      removedBy: actorName,
+      removal_reason: removalReason,
+      removalReason,
+      previous_status: "Billed",
+      previousStatus: "Billed",
+      removalHistory: [...(before.removalHistory || []), removalEvent],
+      lastUpdatedDate: date,
+      updatedAt: now.getTime(),
+    };
+    state.auditLog = [...(state.auditLog || []), {
+      id: crypto.randomUUID(),
+      action: "Billed file safely removed",
+      details: {
+        fileId,
+        clientName: before.name || "",
+        serviceType: before.serviceType || "",
+        actionPerformed: "Reverse financial links and move to Removed Files",
+        previousValue: { billed: before.billed, feeReceived: before.feeReceived, billAmount: before.billedAmount || before.billAmount || before.feeAmount || 0 },
+        newValue: { status: "Removed", receiptsReversed: receiptIds.size, transactionsReversed: reversedTransactions },
+        removalReason,
+      },
       user: actorName,
       role: profile?.role || "",
       at: nowIso,
@@ -992,6 +1160,7 @@ module.exports = {
   markFileChecked,
   returnFileForCorrection,
   removeFile,
+  removeBilledFileSafely,
   restoreRemovedFile,
   deleteFile,
   sortFilesForRequest,

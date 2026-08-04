@@ -14,9 +14,30 @@ let capturedState = {
     name: "TEST ABCD EVE 2",
     billedAmount: 1000,
     stages: { Billed: true },
+  }, {
+    id: "billed-delete-test-file",
+    name: "Billed delete test client",
+    serviceType: "ITR Filing",
+    billed: true,
+    feeReceived: true,
+    billedAmount: 500,
+    stages: { Completed: true, Billed: true },
   }],
-  feeReceipts: [],
-  otherCashCollections: [],
+  feeReceipts: [{
+    id: "billed-delete-receipt",
+    fileId: "billed-delete-test-file",
+    amount: 500,
+    status: "active",
+    transactionId: "billed-delete-transaction",
+  }],
+  otherCashCollections: [{
+    id: "billed-delete-transaction",
+    fileId: "billed-delete-test-file",
+    feeReceiptId: "billed-delete-receipt",
+    sourceType: "fee_receipt",
+    amount: 500,
+    status: "active",
+  }],
   auditLog: [],
 };
 
@@ -30,10 +51,13 @@ require.cache[appStatePath] = {
       capturedState = await mutator(structuredClone(capturedState));
       return capturedState;
     },
+    sortFilesNewestFirst: (rows) => rows,
+    normalizeFileNotifications: (rows) => rows,
   },
 };
 
 const { saveFeeReceipt } = require(path.join(root, "src/services/financeService.js"));
+const { removeBilledFileSafely, upsertFile } = require(path.join(root, "src/services/fileService.js"));
 const profile = { id: "admin-id", name: "Test Admin", email: "admin@example.com", role: "Admin" };
 
 async function saveMode(paymentMode, accountKey, index) {
@@ -93,6 +117,22 @@ async function main() {
   assert.equal(settledFile.balanceAmount, 0);
   assert.equal(settledFile.paymentStatus, "Fee Received");
 
+  await removeBilledFileSafely("billed-delete-test-file", { removalReason: "Test safe removal" }, profile.id, profile);
+  const removedFile = capturedState.files.find((file) => file.id === "billed-delete-test-file");
+  const reversedReceipt = capturedState.feeReceipts.find((receipt) => receipt.id === "billed-delete-receipt");
+  const reversedTransaction = capturedState.otherCashCollections.find((item) => item.id === "billed-delete-transaction");
+  assert.equal(removedFile.status, "Removed");
+  assert.equal(removedFile.isRemoved, true);
+  assert.equal(reversedReceipt.status, "not_received");
+  assert.equal(reversedReceipt.isReversed, true);
+  assert.equal(reversedTransaction.status, "reversed");
+  assert.equal(reversedTransaction.isReversed, true);
+  assert.match(capturedState.auditLog.at(-1).action, /Billed file safely removed/);
+  await assert.rejects(
+    () => upsertFile({ ...capturedState.files.find((file) => file.id === "fee-mode-test-file"), billingType: "Non-Billable" }, "staff-id", { id: "staff-id", name: "Test Staff", role: "Staff" }),
+    /Only Admin or Manager can change billing or payment details/,
+  );
+
   const browserAppSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
   const pendingAmountBody = browserAppSource.match(/function filePendingAmount\(file\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(pendingAmountBody, /feeReceiptSummaryForFile\(file\)\.outstandingAmount/,
@@ -122,6 +162,20 @@ async function main() {
     "Fee Pending table must use automatic column layout");
   assert.doesNotMatch(pendingTableStyles, /min-width:\s*1180px|table-layout:\s*fixed/,
     "Fee Pending table must not retain its old fixed-width layout");
+  const billedActionsBody = browserAppSource.match(
+    /function billedFileActions[\s\S]*?(?=\nlet activeBilledActionToggle)/,
+  )?.[0] || "";
+  for (const label of ["Mark Received", "Received", "View Transaction", "Mark Non-Billable", "Mark Not Received", "Delete"]) {
+    assert.match(billedActionsBody, new RegExp(label), `Billed actions must include ${label}`);
+  }
+  assert.match(billedActionsBody, /rolePerm\(\)\.delete/,
+    "Billed Delete must follow role permissions");
+  assert.match(browserAppSource, /function bindBilledActionMenus/,
+    "Billed action menus must have dedicated interaction bindings");
+  assert.match(appStyles, /\.billed-action-menu\s*\{[\s\S]*?position:\s*fixed/,
+    "Billed dropdown must render above the table without clipping");
+  assert.match(appStyles, /@media \(max-width: 680px\)[\s\S]*?\.billed-action-menu/,
+    "Billed actions must provide a mobile bottom-sheet layout");
   console.log("Fee receipt payment mode and account tests passed.");
 }
 

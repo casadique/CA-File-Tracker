@@ -7,6 +7,7 @@ const {
   markFileChecked,
   returnFileForCorrection,
   removeFile,
+  removeBilledFileSafely,
   restoreRemovedFile,
   deleteFile,
 } = require("../services/fileService");
@@ -88,6 +89,21 @@ router.post("/:id/remove", requireAuth, requireRole("Admin", "Manager"), async (
     const state = await removeFile(req.params.id, req.body || {}, req.user.id, req.profile);
     const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
     res.json({ ok: true, file: savedFile });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/remove-billed", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
+  try {
+    const state = await removeBilledFileSafely(req.params.id, req.body || {}, req.user.id, req.profile);
+    res.json({
+      ok: true,
+      files: state.files || [],
+      feeReceipts: state.feeReceipts || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+      auditLog: state.auditLog || [],
+    });
   } catch (error) {
     next(error);
   }

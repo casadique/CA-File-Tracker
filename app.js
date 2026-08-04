@@ -1532,6 +1532,19 @@ async function removeFileInApi(fileId, removalReason, file = null) {
   });
 }
 
+async function removeBilledFileInApi(fileId, removalReason) {
+  const result = await apiJson(`/api/files/${encodeURIComponent(fileId)}/remove-billed`, {
+    method: "POST",
+    body: JSON.stringify({ removalReason }),
+  });
+  if (result?.files) state.files = result.files;
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  if (result?.auditLog) state.auditLog = result.auditLog;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function restoreRemovedFileInApi(fileId) {
   return apiJson(`/api/files/${encodeURIComponent(fileId)}/restore`, { method: "POST" });
 }
@@ -6360,15 +6373,16 @@ function renderFileTable(files) {
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
+  const isBilledView = state.filters.listView === "billed";
   const dateColumnLabel = isCompletedView ? "Completed Date" : "Due";
   const assignedColumnLabel = isCompletedView ? "Done By" : "Assigned Staff";
   const managerCheckingColumns = canManageChecking() && isCompletedView;
   const headerRow = isCompletedView
     ? `<th>SN</th><th class="completed-client-column">Client Name</th><th class="completed-fy-column">FY</th><th>Service Type</th><th>${dateColumnLabel}</th><th>${assignedColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
-    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th>Actions</th>`;
+    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th class="${isBilledView ? "billed-actions-column" : ""}">Actions</th>`;
   return `
     <div class="table-wrap file-table-wrap">
-      <table class="file-table${compactClass}${isCompletedView ? " completed-files-table" : ""}">
+      <table class="file-table${compactClass}${isCompletedView ? " completed-files-table" : ""}${isBilledView ? " billed-files-table" : ""}">
         <thead><tr>
           ${headerRow}
         </tr></thead>
@@ -6386,7 +6400,7 @@ function renderFileTable(files) {
               <td class="completed-doc-cell">${fmt(dateValue)}</td>
               <td class="completed-staff-cell">${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}${receiptInfo}</td>
               ${managerCheckingColumns ? `<td>${renderCheckingStatusBadge(file)}</td><td>${escapeHtml(file.checkedBy || "-")}</td><td>${file.checkedDate ? fmt(file.checkedDate) : "-"}</td>` : ""}
-              <td><div class="action-row">${fileRowActions(file)}</div></td>`;
+              <td class="${isBilledView ? "billed-actions-column" : ""}"><div class="action-row">${fileRowActions(file)}</div></td>`;
             const activeCells = `
               <td>${fileSerialNumber(file, index)}</td>
               <td><span class="client-name">${escapeHtml(file.name || "")}${isReassignedFile(file) ? ` <span class="reassigned-inline-label">(Re Assigned)</span>` : ""}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
@@ -7177,6 +7191,7 @@ function fileSerialNumber(file, fallbackIndex = 0) {
 }
 
 function fileRowActions(file) {
+  if (state.filters.listView === "billed" && isBilledFile(file)) return billedFileActions(file);
   const actions = [`<button class="mini-button" data-edit="${file.id}">Edit</button>`];
   const canManageBilling = rolePerm().assign;
   const canManageFeeReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
@@ -7212,6 +7227,141 @@ function fileRowActions(file) {
   }
   if (rolePerm().delete) actions.push(`<button class="mini-button danger" data-delete="${file.id}">Delete</button>`);
   return actions.join("");
+}
+
+function billedActionIcon(name) {
+  const paths = {
+    edit: `<path d="M4 13.5V16h2.5L14 8.5 11.5 6 4 13.5Z"/><path d="m10.5 7 2.5 2.5"/>`,
+    received: `<path d="m4 10 3 3 7-7"/>`,
+    transaction: `<path d="M3 6h12M3 10h12M3 14h8"/>`,
+    nonbillable: `<circle cx="9" cy="9" r="6"/><path d="m5 13 8-8"/>`,
+    reverse: `<path d="M5 6H2v-3"/><path d="M2.5 6a7 7 0 1 1 .5 7"/>`,
+    delete: `<path d="M3 5h12M7 5V3h4v2M5 5l1 11h6l1-11M8 8v5M10 8v5"/>`,
+    menu: `<circle cx="9" cy="4" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="14" r="1" fill="currentColor" stroke="none"/>`,
+  };
+  return `<svg class="billed-action-icon" viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] || paths.menu}</svg>`;
+}
+
+function billedActionMenuItem({ label, icon, attrs = "", danger = false, divider = false }) {
+  return `${divider ? `<div class="billed-action-menu-divider" role="separator"></div>` : ""}<button type="button" class="billed-action-menu-item${danger ? " danger" : ""}" role="menuitem" ${attrs}>${billedActionIcon(icon)}<span>${escapeHtml(label)}</span></button>`;
+}
+
+function billedFileActions(file = {}) {
+  const summary = feeReceiptSummaryForFile(file);
+  const activeReceipt = summary.receipts[0] || null;
+  const linkedCollection = linkedFeeReceiptCollection(file) || (activeReceipt ? linkedCollectionForFeeReceipt(activeReceipt) : null);
+  const hasReceivedAmount = summary.totalReceived > 0 || summary.totalDiscount > 0;
+  const isSettled = hasReceivedAmount && summary.outstandingAmount <= 0;
+  const canEdit = Boolean(rolePerm().edit);
+  const canManageBilling = Boolean(rolePerm().assign);
+  const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
+  const canDelete = Boolean(rolePerm().delete);
+  const fileId = escapeHtml(file.id || "");
+  const menuItems = [];
+
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canManageBilling && !hasReceivedAmount && !activeReceipt && !linkedCollection) {
+    menuItems.push(billedActionMenuItem({ label: "Mark Non-Billable", icon: "nonbillable", attrs: `data-fee-non-billable="${fileId}"` }));
+  }
+  if (canManageBilling && summary.outstandingAmount > 0) {
+    menuItems.push(billedActionMenuItem({ label: "Mark Received", icon: "received", attrs: `data-mark-received="${fileId}"` }));
+  }
+  if (canManageReceipt && activeReceipt?.id) {
+    menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(activeReceipt.id)}"` }));
+  } else if (canManageReceipt && hasReceivedAmount && !linkedCollection) {
+    menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-mark-not-received="${fileId}"` }));
+  }
+  if (canManageReceipt && linkedCollection?.id) {
+    menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linkedCollection.id)}"` }));
+  }
+  if (canDelete) {
+    menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete-billed="${fileId}"`, danger: true, divider: true }));
+  }
+
+  let primaryAction = "";
+  if (linkedCollection?.id && canManageReceipt) {
+    primaryAction = `<button type="button" class="billed-primary-action transaction" data-go-fee-transaction="${escapeHtml(linkedCollection.id)}">${billedActionIcon("transaction")}<span>View Transaction</span></button>`;
+  } else if (summary.outstandingAmount > 0 && canManageBilling) {
+    primaryAction = `<button type="button" class="billed-primary-action mark-received" data-mark-received="${fileId}">${billedActionIcon("received")}<span>Mark Received</span></button>`;
+  } else if (isSettled || hasReceivedAmount) {
+    primaryAction = `<button type="button" class="billed-primary-action received" data-billed-receipt-details="${fileId}">${billedActionIcon("received")}<span>Received</span></button>`;
+  } else if (canEdit) {
+    primaryAction = `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`;
+  } else {
+    primaryAction = `<span class="billed-payment-state">${isSettled || hasReceivedAmount ? "Received" : "Pending"}</span>`;
+  }
+
+  return `<div class="billed-actions" data-billed-actions="${fileId}">
+    ${primaryAction}
+    ${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="More actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button>
+    <div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}
+  </div>`;
+}
+
+let activeBilledActionToggle = null;
+let billedActionMenuDocumentBound = false;
+
+function closeBilledActionMenus({ restoreFocus = false } = {}) {
+  document.querySelectorAll(".billed-action-menu.open").forEach((menu) => {
+    menu.classList.remove("open", "open-up");
+    menu.style.removeProperty("top");
+    menu.style.removeProperty("left");
+  });
+  document.querySelectorAll("[data-billed-menu-toggle][aria-expanded='true']").forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
+  if (restoreFocus && activeBilledActionToggle?.isConnected) activeBilledActionToggle.focus();
+  activeBilledActionToggle = null;
+}
+
+function openBilledActionMenu(toggle, { focusFirst = false } = {}) {
+  const menu = document.querySelector(`[data-billed-action-menu="${CSS.escape(toggle.dataset.billedMenuToggle || "")}"]`);
+  if (!menu) return;
+  const wasOpen = menu.classList.contains("open");
+  closeBilledActionMenus();
+  if (wasOpen) return;
+  activeBilledActionToggle = toggle;
+  menu.classList.add("open");
+  toggle.setAttribute("aria-expanded", "true");
+  if (!window.matchMedia("(max-width: 680px)").matches) {
+    const anchor = toggle.getBoundingClientRect();
+    const menuBox = menu.getBoundingClientRect();
+    const openUp = window.innerHeight - anchor.bottom < menuBox.height + 12 && anchor.top > menuBox.height + 12;
+    menu.classList.toggle("open-up", openUp);
+    menu.style.top = `${Math.max(8, openUp ? anchor.top - menuBox.height - 6 : anchor.bottom + 6)}px`;
+    menu.style.left = `${Math.max(8, Math.min(anchor.right - menuBox.width, window.innerWidth - menuBox.width - 8))}px`;
+  }
+  if (focusFirst) menu.querySelector(".billed-action-menu-item")?.focus();
+}
+
+function bindBilledActionMenus() {
+  document.querySelectorAll("[data-billed-menu-toggle]").forEach((toggle) => {
+    toggle.onclick = (event) => {
+      event.stopPropagation();
+      openBilledActionMenu(toggle);
+    };
+    toggle.onkeydown = (event) => {
+      if (!["Enter", " ", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      openBilledActionMenu(toggle, { focusFirst: true });
+    };
+  });
+  document.querySelectorAll(".billed-action-menu-item").forEach((item) => item.addEventListener("click", () => closeBilledActionMenus()));
+  if (billedActionMenuDocumentBound) return;
+  billedActionMenuDocumentBound = true;
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".billed-actions")) closeBilledActionMenus();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") return closeBilledActionMenus({ restoreFocus: true });
+    const item = event.target.closest(".billed-action-menu-item");
+    if (!item || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const menu = item.closest(".billed-action-menu");
+    const items = [...menu.querySelectorAll(".billed-action-menu-item:not(:disabled)")];
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(item);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
+    items[next].focus();
+  });
 }
 
 function feeReceiptById(receiptId) {
@@ -7291,6 +7441,44 @@ function openFeeReceiptViewModal(receiptId) {
           <h4>Receipt Information</h4>
           <div class="receipt-audit-grid">
             ${feeReceiptAuditDetails(receipt, file).filter(([label]) => !["Bill Amount", "Original Received Amount"].includes(label)).map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+          </div>
+        </section>
+      </div>
+      <div class="drawer-actions"><button class="secondary-button" data-close-fee-receipt-modal>Close</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.querySelector("#backdrop")?.classList.add("show");
+  modal.querySelectorAll("[data-close-fee-receipt-modal]").forEach((button) => { button.onclick = closeFeeReceiptActionModal; });
+}
+
+function openBilledReceiptDetails(fileId) {
+  const file = (state.files || []).find((item) => item.id === fileId);
+  if (!file) return toast("File record not found.");
+  const receipt = feeReceiptSummaryForFile(file).receipts[0];
+  if (receipt?.id) return openFeeReceiptViewModal(receipt.id);
+  const details = feeReceiptDetails(file);
+  const modal = document.createElement("div");
+  modal.id = "feeReceiptActionModal";
+  modal.className = "simple-modal open";
+  modal.innerHTML = `
+    <div class="simple-modal-card receipt-action-modal-card">
+      <div class="drawer-head">
+        <div><h3>Fee Receipt Details</h3><p class="small-muted">${escapeHtml(file.name || "File")} | ${escapeHtml(file.serviceType || "")}</p></div>
+        <button class="icon-button" data-close-fee-receipt-modal title="Close">X</button>
+      </div>
+      <div class="drawer-body receipt-details-body">
+        <section class="receipt-details-section">
+          <h4>Payment Information</h4>
+          <div class="receipt-audit-grid">
+            ${[
+              ["Bill Date", displayDate(details.billDate)],
+              ["Bill Number", details.billNo || "-"],
+              ["Billed Amount", rupee(details.billedAmount)],
+              ["Received Amount", rupee(details.receivedAmount)],
+              ["Receipt Date", displayDate(details.receivedDate)],
+              ["Payment Mode", details.paymentMode || "-"],
+              ["Account", financeAccountLabel(details.accountKey || transactionAccountKey(file, ""))],
+            ].map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
           </div>
         </section>
       </div>
@@ -7421,6 +7609,103 @@ function notCheckedFileActions(file) {
   return actions.join("");
 }
 
+function removeBilledFileLocally(fileId, removalReason) {
+  const index = (state.files || []).findIndex((file) => file.id === fileId);
+  if (index < 0) throw new Error("File record not found.");
+  const before = { ...state.files[index] };
+  const now = new Date().toISOString();
+  const actor = state.currentUser || loggedInUser()?.name || "Team";
+  const receiptIds = new Set(
+    (state.feeReceipts || [])
+      .filter((receipt) => (receipt.fileId || receipt.file_id) === fileId && isValidFeeReceiptRecord(receipt))
+      .map((receipt) => receipt.id),
+  );
+  const transactionIds = new Set(
+    (state.feeReceipts || [])
+      .filter((receipt) => receiptIds.has(receipt.id))
+      .map((receipt) => receipt.transactionId || receipt.transaction_id)
+      .filter(Boolean),
+  );
+  state.feeReceipts = (state.feeReceipts || []).map((receipt) => receiptIds.has(receipt.id) ? {
+    ...receipt,
+    status: "not_received",
+    receiptStatus: "not_received",
+    receipt_status: "not_received",
+    isReversed: true,
+    is_reversed: true,
+    reversedAt: now,
+    reversed_at: now,
+    reversedBy: actor,
+    reversed_by: actor,
+    reversalReason: removalReason,
+    reversal_reason: removalReason,
+    linkedTransactionStatus: transactionIds.has(receipt.transactionId || receipt.transaction_id) ? "reversed" : "not_applicable",
+  } : receipt);
+  state.otherCashCollections = (state.otherCashCollections || []).map((collection) => {
+    const linked = transactionIds.has(collection.id)
+      || receiptIds.has(collection.feeReceiptId || collection.fee_receipt_id || collection.sourceId || collection.source_id)
+      || ((collection.fileId || collection.file_id) === fileId && (collection.sourceType || collection.source_type) === "fee_receipt");
+    return linked ? { ...collection, status: "reversed", reversed: true, isReversed: true, is_reversed: true, reversedAt: now, reversed_at: now, reversedBy: actor, reversalReason: removalReason } : collection;
+  });
+  state.files[index] = {
+    ...before,
+    status: "Removed",
+    workflowStatus: "Removed",
+    stages: { ...normalizeStages(before), Removed: true },
+    isRemoved: true,
+    is_removed: true,
+    removedAt: now,
+    removed_at: now,
+    removedBy: actor,
+    removalReason,
+    removal_reason: removalReason,
+    previousStatus: "Billed",
+    previous_status: "Billed",
+    updatedAt: Date.now(),
+    lastUpdatedDate: todayDate(),
+  };
+  addAuditLog("Billed file safely removed", {
+    fileId,
+    clientName: before.name || "",
+    serviceType: before.serviceType || "",
+    actionPerformed: "Reverse financial links and move to Removed Files",
+    previousValue: { billed: before.billed, feeReceived: before.feeReceived, billAmount: dashboardFileAmount(before, "billed") },
+    newValue: { status: "Removed", receiptsReversed: receiptIds.size, transactionsReversed: transactionIds.size },
+    removalReason,
+  });
+  saveState({ skipMerge: true });
+}
+
+async function deleteBilledFileSafely(fileId, button = null) {
+  if (!rolePerm().delete || !["Admin", "Manager"].includes(normalizeRole(state.currentRole))) return toast("Only Admin or an authorised Manager can delete billed records.");
+  const file = (state.files || []).find((item) => item.id === fileId);
+  if (!file) return toast("File record not found.");
+  const billNo = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-";
+  const message = `Remove this billed record safely?\n\nClient: ${file.name || "-"}\nService: ${file.serviceType || "-"}\nBill No.: ${billNo}\nBilled Amount: ${rupee(dashboardFileAmount(file, "billed"))}\n\nActive receipts and linked transactions will be reversed, and the file will move to Removed Files with its audit history preserved.`;
+  if (!window.confirm(message)) return;
+  const originalHtml = button?.innerHTML || "";
+  if (button) {
+    button.disabled = true;
+    button.classList.add("is-loading");
+    button.innerHTML = `<span class="billed-action-spinner" aria-hidden="true"></span><span>Removing...</span>`;
+  }
+  const removalReason = "Deleted from Billed Files by an authorised user";
+  try {
+    if (isSupabaseMode()) await removeBilledFileInApi(fileId, removalReason);
+    else removeBilledFileLocally(fileId, removalReason);
+    closeBilledActionMenus();
+    toast("Billed record moved to Removed Files. Linked financial entries were safely reversed.");
+    renderAll();
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+      button.innerHTML = originalHtml;
+    }
+    toast(error.message || "Unable to remove this billed record safely.");
+  }
+}
+
 function bindFileActions() {
   document.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => openFileDrawer(btn.dataset.edit)));
   document.querySelectorAll("[data-check-file]").forEach((btn) => {
@@ -7436,7 +7721,20 @@ function bindFileActions() {
     btn.onclick = () => updateFileBilling(btn.dataset.nonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as non-billable");
   });
   document.querySelectorAll("[data-fee-non-billable]").forEach((btn) => {
-    btn.onclick = () => updateFileBilling(btn.dataset.feeNonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as Non Billable.");
+    btn.onclick = async () => {
+      const file = state.files.find((item) => item.id === btn.dataset.feeNonBillable);
+      if (!file) return toast("File record not found.");
+      if (state.filters.listView === "billed") {
+        const summary = feeReceiptSummaryForFile(file);
+        if (summary.totalReceived > 0 || summary.totalDiscount > 0 || summary.receipts.length || linkedFeeReceiptCollection(file)) {
+          return toast("Reverse all receipts and linked transactions before marking this file Non-Billable.");
+        }
+        if (!window.confirm(`Mark ${file.name || "this file"} (${file.serviceType || "service"}) as Non-Billable? The file and work history will be preserved.`)) return;
+        btn.disabled = true;
+      }
+      const ok = await updateFileBilling(btn.dataset.feeNonBillable, { billingType: "Non-Billable", billed: false, billedDate: "", feeReceived: false, feeReceivedDate: "" }, "File marked as Non Billable.");
+      if (!ok && btn.isConnected) btn.disabled = false;
+    };
   });
   document.querySelectorAll("[data-mark-billed]").forEach((btn) => {
     btn.onclick = () => openBilledFileModal(btn.dataset.markBilled);
@@ -7446,6 +7744,9 @@ function bindFileActions() {
   });
   document.querySelectorAll("[data-view-fee-receipt]").forEach((btn) => {
     btn.onclick = () => openFeeReceiptViewModal(btn.dataset.viewFeeReceipt);
+  });
+  document.querySelectorAll("[data-billed-receipt-details]").forEach((btn) => {
+    btn.onclick = () => openBilledReceiptDetails(btn.dataset.billedReceiptDetails);
   });
   document.querySelectorAll("[data-fee-receipt-not-received]").forEach((btn) => {
     btn.onclick = () => openFeeReceiptNotReceivedModal(btn.dataset.feeReceiptNotReceived);
@@ -8020,6 +8321,16 @@ async function updateFileBilling(fileId, updates, message, nextListView = "") {
   };
   applyFeeReceivedTimestamp(updated, file);
   state.files[index] = updated;
+  if (state.filters.listView === "billed") {
+    addAuditLog("Billed file updated", {
+      fileId: file.id,
+      clientName: file.name || "",
+      serviceType: file.serviceType || "",
+      actionPerformed: message,
+      previousValue: { billingType: file.billingType, billed: file.billed, feeReceived: file.feeReceived, billAmount: dashboardFileAmount(file, "billed") },
+      newValue: { billingType: updated.billingType, billed: updated.billed, feeReceived: updated.feeReceived, billAmount: dashboardFileAmount(updated, "billed") },
+    });
+  }
   queueFileChangeNotification(updated, billingChangeText(file, updated), updates.billed ? "Billed" : updates.feeReceived ? "Fee Received" : "Billing Update");
   saveState();
   try {
@@ -17086,6 +17397,10 @@ function openNotifications() {
       refreshNotificationsPanel();
     };
   });
+  document.querySelectorAll("[data-delete-billed]").forEach((btn) => {
+    btn.onclick = () => deleteBilledFileSafely(btn.dataset.deleteBilled, btn);
+  });
+  bindBilledActionMenus();
 }
 
 function markNotificationItemsRead(items = []) {
