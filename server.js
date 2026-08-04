@@ -42,6 +42,17 @@ const loginRateLimiter = rateLimit({
 app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
+const vendorAssets = {
+  "chart.umd.min.js": path.join(__dirname, "node_modules", "chart.js", "dist", "chart.umd.min.js"),
+  "supabase.umd.js": path.join(__dirname, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"),
+};
+app.get("/vendor/:asset", (req, res, next) => {
+  const assetPath = vendorAssets[req.params.asset];
+  if (!assetPath) return next();
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  return res.sendFile(assetPath);
+});
+
 app.use("/api/auth/login", loginRateLimiter);
 app.use("/api", apiRateLimiter, apiRoutes);
 app.use(["/src", "/database", "/tools", "/Backups", "/data"], (_req, res) => {
