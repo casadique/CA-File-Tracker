@@ -3134,7 +3134,7 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const configuredBillingView = ["active", "completed", "nonBilled", "feePending", "feeReceived"].includes(f.listView);
+    const configuredBillingView = ["", "active", "completed", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
       ? configuredFinancialSearchHaystack(file)
@@ -4337,7 +4337,10 @@ function renderNav() {
         saveState();
       } else {
         if (page === "files") {
+          persistConfiguredFinancialFilterValues(state.filters.listView);
           resetFilters();
+          state.filters.listView = "";
+          restoreConfiguredFinancialFilterValues("");
           saveState();
         }
         activePage = page;
@@ -5396,18 +5399,18 @@ function openFilesFromDashboard(kind) {
   if (kind === "notStarted") state.filters.workflow = "Received";
   if (kind === "wip") state.filters.workflow = "WIP";
   if (kind === "wipGroup") state.filters.dashboardKind = "wipGroup";
-  if (kind === "onHold") state.filters.workflow = "On Hold";
-  if (kind === "clientPending") state.filters.workflow = "Client Pending";
-  if (kind === "workDone") state.filters.workflow = "Work Done";
+  if (kind === "onHold") { state.filters.workflow = "On Hold"; state.filters.fileListWorkflow = "On Hold"; }
+  if (kind === "clientPending") { state.filters.workflow = "Client Pending"; state.filters.fileListWorkflow = "Client Pending"; }
+  if (kind === "workDone") { state.filters.workflow = "Work Done"; state.filters.fileListWorkflow = "Work Done"; }
   if (kind === "shared") state.filters.dashboardKind = "shared";
   if (kind === "reportPrepared") state.filters.dashboardKind = "reportsPrepared";
-  if (kind === "awaitingApproval") state.filters.pendingApproval = "Yes";
-  if (kind === "approved") state.filters.workflow = "Approved";
-  if (kind === "filed") state.filters.status = "Completed";
+  if (kind === "awaitingApproval") { state.filters.pendingApproval = "Yes"; state.filters.fileListApproval = "Pending"; }
+  if (kind === "approved") { state.filters.workflow = "Approved"; state.filters.fileListWorkflow = "Approved"; }
+  if (kind === "filed") { state.filters.status = "Completed"; state.filters.fileListStatus = "Completed"; }
   if (kind === "feePending") state.filters.listView = "feePending";
   if (kind === "pending") state.filters.dashboardKind = "pending";
-  if (kind === "overdue") state.filters.overdue = "Yes";
-  if (kind === "approval") state.filters.pendingApproval = "Yes";
+  if (kind === "overdue") { state.filters.overdue = "Yes"; state.filters.fileListOverdue = "Yes"; }
+  if (kind === "approval") { state.filters.pendingApproval = "Yes"; state.filters.fileListApproval = "Pending"; }
   if (kind === "correction") state.filters.dashboardKind = "correctionRequired";
   if (kind === "reallotted") state.filters.dashboardKind = "reAllotted";
   if (kind === "report") state.filters.dashboardKind = "reportsPrepared";
@@ -5595,7 +5598,41 @@ function configuredFinancialFilterConfigs() {
     "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority", "Workflow Status",
   ];
+  const fileListSort = [
+    "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
+    "Due Date - Latest First", "Completion Date - Newest First", "Client Name - A to Z",
+    "Service Type", "Assigned Staff", "Priority", "Workflow Status", "Billing Status",
+  ];
   return {
+    fileList: {
+      title: "Search & Filter File List",
+      mobileTitle: "Filter File List",
+      mainPrimary: [
+        { ...common.search, placeholder: "Search client, PAN, contact, service, staff, C/o or remarks" },
+        common.client, common.careOf, common.service, common.staff,
+        { key: "fileListStatus", label: "File Status", type: "select", emptyLabel: "All statuses", options: ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Corrected & Completed", "Approved", "Completed", "Billed", "Overdue"] },
+      ],
+      mainSecondary: [
+        { label: "Received Date Range", type: "range", controls: [
+          { key: "fileListReceivedFrom", label: "Received From", type: "date" },
+          { key: "fileListReceivedTo", label: "Received To", type: "date" },
+        ] },
+        { label: "Due Date Range", type: "range", controls: [
+          { key: "fileListDueFrom", label: "Due From", type: "date" },
+          { key: "fileListDueTo", label: "Due To", type: "date" },
+        ] },
+        { key: "priority", label: "Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+        { key: "fileListBilling", label: "Billing Status", type: "select", emptyLabel: "All billing states", options: ["Fee Received", "Fee Pending", "Billed", "Unbilled", "Non Billable", "Not Ready"] },
+        { key: "fileListSort", label: "Sort By", type: "select", options: fileListSort, defaultValue: fileListSort[0] },
+      ],
+      advanced: [common.pan, common.fy,
+        { key: "fileListWorkflow", label: "Workflow Stage", type: "select", emptyLabel: "All workflow stages", options: stages },
+        { key: "fileListAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Assigned", "Reassigned"] },
+        { key: "fileListOverdue", label: "Overdue", type: "select", emptyLabel: "All due states", options: ["Yes", "No"] },
+        { key: "fileListApproval", label: "Approval", type: "select", emptyLabel: "All approval states", options: ["Pending", "Approved", "Not Submitted"] },
+        common.hasRemarks,
+      ],
+    },
     active: {
       title: "Search & Filter Active Files",
       mobileTitle: "Filter Active Files",
@@ -5750,7 +5787,7 @@ function configuredFinancialRange(label, minimumKey, maximumKey, minimumPlacehol
 }
 
 function configuredFinancialFilterConfig(listView = state.filters.listView) {
-  return configuredFinancialFilterConfigs()[listView] || null;
+  return configuredFinancialFilterConfigs()[listView || "fileList"] || null;
 }
 
 function configuredFinancialFilterDefinitions(config) {
@@ -5909,12 +5946,45 @@ function configuredFinancialDateInRange(value, from, to) {
   return true;
 }
 
+function fileListBillingStatus(file = {}) {
+  if (isFeeReceivedFile(file)) return "Fee Received";
+  if (isFeePendingFile(file)) return "Fee Pending";
+  if (String(file.billingType || file.billing_type || "").toLowerCase().includes("non")) return "Non Billable";
+  if (isBilledFile(file)) return "Billed";
+  if (isBillingReadyFile(file)) return "Unbilled";
+  return "Not Ready";
+}
+
 function configuredFinancialFileMatches(file, listView, filters) {
   const facts = configuredFinancialFacts(file);
   const financial = facts.pdfRecord;
   if (filters.financialFy && fileFy(file) !== filters.financialFy) return false;
   if (filters.hasRemarks === "Yes" && !facts.remarks.trim()) return false;
   if (filters.hasRemarks === "No" && facts.remarks.trim()) return false;
+  if (listView === "") {
+    const selectedStatus = filters.fileListStatus || filters.status;
+    const selectedWorkflow = filters.fileListWorkflow || filters.workflow;
+    const selectedOverdue = filters.fileListOverdue || filters.overdue;
+    if (selectedStatus && statusOf(file).label !== selectedStatus) return false;
+    if (filters.priority && String(file.priority || "Medium") !== filters.priority) return false;
+    if (selectedWorkflow && stages[stageIndex(file)] !== selectedWorkflow) return false;
+    if (filters.due && facts.dueDate !== filters.due) return false;
+    if (!configuredFinancialDateInRange(facts.receivedDate, filters.fileListReceivedFrom, filters.fileListReceivedTo)) return false;
+    if (!configuredFinancialDateInRange(facts.dueDate, filters.fileListDueFrom, filters.fileListDueTo)) return false;
+    if (filters.fileListBilling && fileListBillingStatus(file) !== filters.fileListBilling) return false;
+    if (selectedOverdue === "Yes" && !isOverdue(file)) return false;
+    if (selectedOverdue === "No" && isOverdue(file)) return false;
+    const assignee = currentFileAssignee(file);
+    const assigned = hasAssignedStaffValue(assignee.name) || Boolean(assignee.id || assignee.email);
+    if (filters.fileListAssignment === "Assigned" && !assigned) return false;
+    if (filters.fileListAssignment === "Not Assigned" && assigned) return false;
+    if (filters.fileListAssignment === "Reassigned" && !isReassignedFile(file)) return false;
+    if (filters.fileListApproval === "Pending" && !pendingApproval(file)) return false;
+    if (filters.fileListApproval === "Approved" && !file.approved) return false;
+    if (filters.fileListApproval === "Not Submitted" && (file.shared || file.approved)) return false;
+    if (filters.pendingApproval === "Yes" && !pendingApproval(file)) return false;
+    return true;
+  }
   if (listView === "active") {
     if (filters.activeStatus && statusOf(file).label !== filters.activeStatus) return false;
     if (filters.priority && String(file.priority || "Medium") !== filters.priority) return false;
@@ -6318,7 +6388,7 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
   document.querySelector("#files").innerHTML = `<div class="panel">
     ${renderConfiguredFinancialFilterPanel(files, config)}
     ${billedFilesActionToolbar()}
-    <div id="fileResults">${listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : renderStaffFileTable(files, listView)}</div>
+    <div id="fileResults">${listView === "" ? renderMasterFileTable(files) : listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : renderStaffFileTable(files, listView)}</div>
   </div>`;
   bindConfiguredFinancialFilters(config);
   const exportExcelButton = document.querySelector("#exportFiltered");
@@ -6692,7 +6762,7 @@ function financeNewestFirst(a = {}, b = {}) {
 }
 
 function sortConfiguredFinancialFiles(files, listView) {
-  const sortLabel = state.filters[`${listView}Sort`] || "";
+  const sortLabel = state.filters[listView ? `${listView}Sort` : "fileListSort"] || "";
   const rows = [...files];
   const factsByFile = new Map(rows.map((file) => [file, configuredFinancialFacts(file)]));
   const dateCompare = (left, right, direction = "desc") => {
@@ -6743,7 +6813,7 @@ function sortConfiguredFinancialFiles(files, listView) {
 }
 
 function sortFilesForDisplay(files) {
-  if (["active", "completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView)) return sortConfiguredFinancialFiles(files, state.filters.listView);
+  if (["", "active", "completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -7133,6 +7203,8 @@ function refreshConfiguredFinancialResults(config) {
   if (results) {
     results.innerHTML = state.filters.listView === "active"
       ? renderActiveFileTable(files)
+      : state.filters.listView === ""
+        ? renderMasterFileTable(files)
       : state.filters.listView === "completed"
         ? renderCompletedFileTable(files)
       : (isStaffLogin() ? renderStaffFileTable(files, state.filters.listView) : renderFileTable(files));
@@ -7477,6 +7549,87 @@ function renderBilledFileTable(files = []) {
   </div>`;
 }
 
+function masterFileActions(file = {}) {
+  const fileId = escapeHtml(file.id || "");
+  const canEdit = Boolean(rolePerm().edit);
+  const canDelete = Boolean(rolePerm().delete);
+  const menuItems = [];
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete="${fileId}"`, danger: true, divider: true }));
+  return `<div class="billed-actions master-file-actions" data-billed-actions="${fileId}">
+    <button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>
+    ${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}
+  </div>`;
+}
+
+function masterFileTimeline(file = {}) {
+  const completed = isCheckedCompleted(file) ? workCompletedDate(file) : "";
+  const finalLabel = completed ? "Completed" : "Due";
+  const finalDate = completed || file.dueDate;
+  return `<div class="master-file-timeline"><span><b>Received</b>${escapeHtml(displayDate(file.fileReceivedDate) || "-")}</span><span><b>Allotted</b>${escapeHtml(displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-")}</span><span class="${!completed && isOverdue(file) ? "is-overdue" : ""}"><b>${finalLabel}</b>${escapeHtml(displayDate(finalDate) || "Not set")}</span></div>`;
+}
+
+function masterFileBillingBadge(file = {}) {
+  const label = fileListBillingStatus(file);
+  const className = label === "Fee Received" ? "is-received"
+    : label === "Fee Pending" ? "is-pending"
+      : label === "Billed" ? "is-billed"
+        : label === "Non Billable" ? "is-non-billable"
+          : label === "Unbilled" ? "is-unbilled" : "is-not-ready";
+  return `<span class="master-billing-badge ${className}"><i></i>${escapeHtml(label)}</span>`;
+}
+
+function masterFileExpandedDetails(file = {}) {
+  const assignee = currentFileAssignee(file);
+  const checking = checkingStatusOf(file);
+  const payment = feeReceiptSummaryForFile(file);
+  const billNumber = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "Not recorded";
+  return `<div class="master-file-expanded-grid">
+    <div><span>Work Started</span><strong>${escapeHtml(displayDate(file.workStartedDate || file.work_started_date || (file.stages?.WIP ? file.workAllotmentDate : "")) || "Not recorded")}</strong></div>
+    <div><span>Assignment</span><strong>${escapeHtml(isReassignedFile(file) ? "Reassigned" : (hasAssignedStaffValue(assignee.name) ? "Assigned" : "Not Assigned"))}</strong></div>
+    <div><span>Checking</span><strong>${escapeHtml(checking.label || "Not applicable")}${file.checkedBy ? ` · ${escapeHtml(file.checkedBy)}` : ""}</strong></div>
+    <div><span>Bill Details</span><strong>${escapeHtml(String(billNumber))}${file.billDate ? ` · ${escapeHtml(displayDate(file.billDate))}` : ""}</strong></div>
+    <div><span>Received / Balance</span><strong>${escapeHtml(rupee(payment.totalReceived || 0))} / ${escapeHtml(rupee(payment.outstandingAmount || 0))}</strong></div>
+    <div><span>Mode</span><strong>${escapeHtml(file.mode || "Not recorded")}</strong></div>
+    <div class="master-file-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div>
+  </div>`;
+}
+
+function masterFileDesktopRows(files = []) {
+  return files.map((file, index) => {
+    const status = statusOf(file);
+    const assignee = currentFileAssignee(file);
+    return `<tr class="master-file-row file-row-${status.className}">
+      <td class="master-file-sn">${fileSerialNumber(file, index)}</td>
+      <td class="master-file-client"><div class="master-file-client-line"><button type="button" class="billed-expand-toggle" data-master-file-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(file)}</div></div></td>
+      <td class="master-file-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")}</span></td>
+      <td class="master-file-timeline-cell">${masterFileTimeline(file)}</td>
+      <td class="master-file-careof">${escapeHtml(file.careOf || "Direct")}</td>
+      <td class="master-file-status"><span class="badge ${status.className}">${escapeHtml(status.label)}</span><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></td>
+      <td class="master-file-billing">${masterFileBillingBadge(file)}</td>
+      <td class="master-file-staff"><strong>${escapeHtml(assignee.name || "Not Assigned")}</strong>${isReassignedFile(file) ? `<span>Reassigned${assignee.date ? ` · ${escapeHtml(displayDate(assignee.date))}` : ""}</span>` : ""}</td>
+      <td class="master-file-actions-column"><div class="action-row">${masterFileActions(file)}</div></td>
+    </tr><tr class="master-file-details-row" hidden><td colspan="9">${masterFileExpandedDetails(file)}</td></tr>`;
+  }).join("");
+}
+
+function masterFileMobileCard(file = {}, index = 0) {
+  const status = statusOf(file);
+  const assignee = currentFileAssignee(file);
+  return `<article class="master-file-mobile-card${index % 2 ? " is-alt" : ""}">
+    <div class="master-file-mobile-head"><button type="button" class="billed-expand-toggle" data-master-file-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
+    <div class="master-file-mobile-badges"><span class="badge ${status.className}">${escapeHtml(status.label)}</span><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span>${masterFileBillingBadge(file)}</div>
+    <div class="master-file-mobile-summary"><div><span>Assigned Staff</span><strong>${escapeHtml(assignee.name || "Not Assigned")}</strong></div><div><span>C/o</span><strong>${escapeHtml(file.careOf || "Direct")}</strong></div></div>
+    ${masterFileTimeline(file)}
+    <div class="master-file-mobile-actions">${masterFileActions(file)}</div><div class="master-file-mobile-details" hidden>${masterFileExpandedDetails(file)}</div>
+  </article>`;
+}
+
+function renderMasterFileTable(files = []) {
+  if (!files.length) return empty("No files match these filters.");
+  return `<div class="table-wrap master-file-table-wrap"><table class="file-table master-file-table"><thead><tr><th class="master-file-sn">SN</th><th class="master-file-client">Client</th><th>Service</th><th>Work Timeline</th><th>C/o</th><th>Status</th><th>Billing</th><th>Assigned Staff</th><th class="master-file-actions-column">Actions</th></tr></thead><tbody>${masterFileDesktopRows(files)}</tbody></table><div class="master-file-mobile-list">${files.map(masterFileMobileCard).join("")}</div></div>`;
+}
+
 function activeFileActions(file = {}) {
   const fileId = escapeHtml(file.id || "");
   const canEdit = Boolean(rolePerm().edit);
@@ -7619,6 +7772,7 @@ function renderCompletedFileTable(files = []) {
 
 function renderFileTable(files) {
   if (!files.length) return empty("No files match these filters.");
+  if (!state.filters.listView) return renderMasterFileTable(files);
   if (state.filters.listView === "reAssigned") return renderReAssignedFileTable(files);
   if (state.filters.listView === "feeReceived") return renderFeeReceivedFileTable(files);
   if (state.filters.listView === "feePending") return renderFeePendingFileTable(files);
@@ -9082,6 +9236,22 @@ function bindFileActions() {
       const details = desktopRow?.nextElementSibling?.classList.contains("active-details-row")
         ? desktopRow.nextElementSibling
         : mobileCard?.querySelector(".active-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
+  document.querySelectorAll("[data-master-file-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".master-file-row");
+      const mobileCard = button.closest(".master-file-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("master-file-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".master-file-mobile-details");
       if (!details) return;
       const opening = details.hidden;
       details.hidden = !opening;
