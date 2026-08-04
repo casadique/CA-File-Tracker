@@ -6609,7 +6609,7 @@ function renderFeePendingFileTable(files = []) {
         <thead><tr>${headers.map((header) => `<th class="${columnClass(header)}">${escapeHtml(header)}</th>`).join("")}<th class="fee-pending-actions-column">Actions</th></tr></thead>
         <tbody>${files.map((file, index) => {
           const row = rows[index];
-          return `<tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"><div class="action-row">${fileRowActions(file)}</div></td></tr>`;
+          return `<tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"><div class="action-row">${billedFileActions(file, { context: "feePending" })}</div></td></tr>`;
         }).join("")}</tbody>
         <tfoot><tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(totals[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"></td></tr></tfoot>
       </table>
@@ -6937,7 +6937,13 @@ function feeReceiptCollectionPayload(file = {}, receipt = {}, existing = null) {
 }
 
 async function saveFeeReceiptCollection(file = {}, receipt = {}) {
-  const existing = linkedFeeReceiptCollection({ ...file, feeReceiptId: receipt.feeReceiptId, fee_receipt_id: receipt.feeReceiptId, feeTransactionId: receipt.transactionId });
+  const existing = activeCashCollections().find((item) => (
+    (receipt.transactionId && item.id === receipt.transactionId)
+    || item.feeReceiptId === receipt.feeReceiptId
+    || item.fee_receipt_id === receipt.feeReceiptId
+    || item.sourceId === receipt.feeReceiptId
+    || item.source_id === receipt.feeReceiptId
+  )) || null;
   const record = feeReceiptCollectionPayload(file, receipt, existing);
   if (isSupabaseMode()) {
     await saveCashCollectionToApi(record);
@@ -6983,7 +6989,7 @@ function feeReceiptFromModal(file = {}) {
   };
 }
 
-function validateFeeReceipt(receipt = {}) {
+function validateFeeReceipt(receipt = {}, outstandingAmount = null) {
   if (receipt.billNo && !/^[A-Za-z0-9/-]+$/.test(receipt.billNo)) return "Bill No. can contain only letters, numbers, slash and hyphen.";
   if (!receipt.billedAmount || receipt.billedAmount <= 0) return "Please enter a valid billed amount.";
   if (!receipt.receivedAmount || receipt.receivedAmount <= 0) return "Please enter a valid received amount.";
@@ -6992,6 +6998,7 @@ function validateFeeReceipt(receipt = {}) {
   if (!receipt.receivedDate) return "Received Date is required.";
   if (receipt.paymentMode === "Cash" && receipt.accountKey !== "cash") return "Cash receipts must use Cash in Hand.";
   if (receipt.paymentMode !== "Cash" && !["federal_bank", "tmb"].includes(receipt.accountKey)) return "Select Federal Bank or TMB for this non-cash receipt.";
+  if (Number.isFinite(outstandingAmount) && receipt.receivedAmount + receipt.discountAmount > outstandingAmount + 0.005) return `Received amount and discount cannot exceed the outstanding balance of ${money(outstandingAmount)}.`;
   if (receipt.receivedAmount > receipt.billedAmount && !confirm("Received Amount is more than Billed Amount. Do you want to continue?")) return "Receipt save cancelled.";
   return "";
 }
@@ -7030,18 +7037,22 @@ function updateFeeReceiptTransactionStatus(file = {}, transaction = null) {
 }
 
 function feeReceiptPushControl(file = {}) {
-  const pushed = feeReceiptIsPushed(file);
-  return `<label class="receipt-push-control ${pushed ? "is-pushed" : ""}">
-    <input type="checkbox" name="receiptPushToTransactions" ${pushed ? "checked disabled" : ""}>
-    <span>${pushed ? "Already pushed to Transactions" : "Push this receipt to Transactions"}</span>
+  return `<label class="receipt-push-control">
+    <input type="checkbox" name="receiptPushToTransactions">
+    <span>Push this receipt to Transactions</span>
   </label>`;
 }
 
 function feeReceiptModalStatus(file = {}) {
-  return `<div class="receipt-status-row">
+  const summary = feeReceiptSummaryForFile(file);
+  return `<div class="receipt-progress-summary">
+    <div><span>Total Billed</span><strong>${money(summary.billedAmount)}</strong></div>
+    <div><span>Previously Received</span><strong>${money(summary.totalReceived)}</strong></div>
+    <div><span>Outstanding Balance</span><strong>${money(summary.outstandingAmount)}</strong></div>
+  </div><div class="receipt-status-row">
     <span>Balance Amount</span>
     <strong id="receiptBalancePreview">${money(filePendingAmount(file))}</strong>
-    <em>${escapeHtml(feeReceiptStatusLabel(file))}</em>
+    <em>New receipt not yet pushed to Transactions</em>
   </div>`;
 }
 
@@ -7405,7 +7416,7 @@ function billedActionMenuItem({ label, icon, attrs = "", danger = false, divider
   return `${divider ? `<div class="billed-action-menu-divider" role="separator"></div>` : ""}<button type="button" class="billed-action-menu-item${danger ? " danger" : ""}" role="menuitem" ${attrs}>${billedActionIcon(icon)}<span>${escapeHtml(label)}</span></button>`;
 }
 
-function billedFileActions(file = {}) {
+function billedFileActions(file = {}, options = {}) {
   const summary = feeReceiptSummaryForFile(file);
   const activeReceipt = summary.receipts[0] || null;
   const linkedCollection = linkedFeeReceiptCollection(file) || (activeReceipt ? linkedCollectionForFeeReceipt(activeReceipt) : null);
@@ -7417,25 +7428,16 @@ function billedFileActions(file = {}) {
   const canDelete = Boolean(rolePerm().delete);
   const fileId = escapeHtml(file.id || "");
   const menuItems = [];
+  const feePendingContext = options.context === "feePending";
+  const receiveLabel = hasReceivedAmount ? "Receive Balance" : "Mark Received";
 
   if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
-  if (canManageBilling && !hasReceivedAmount && !activeReceipt && !linkedCollection) {
-    menuItems.push(billedActionMenuItem({ label: "Mark Non-Billable", icon: "nonbillable", attrs: `data-fee-non-billable="${fileId}"` }));
-  }
-  if (canManageBilling && summary.outstandingAmount > 0) {
-    menuItems.push(billedActionMenuItem({ label: "Mark Received", icon: "received", attrs: `data-mark-received="${fileId}"` }));
-  }
-  if (canManageReceipt && summary.outstandingAmount > 0) {
-    menuItems.push(billedActionMenuItem({ label: "Go to Transactions", icon: "transaction", attrs: `data-go-transactions="${fileId}"` }));
-  }
-  if (canManageReceipt && linkedCollection?.id) {
-    menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linkedCollection.id)}"` }));
-  }
-  if (canManageReceipt && activeReceipt?.id) {
-    menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(activeReceipt.id)}"` }));
-  } else if (canManageReceipt && hasReceivedAmount && !linkedCollection) {
-    menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-mark-not-received="${fileId}"` }));
-  }
+  if (canManageBilling && !hasReceivedAmount && !activeReceipt && !linkedCollection) menuItems.push(billedActionMenuItem({ label: "Mark Non-Billable", icon: "nonbillable", attrs: `data-fee-non-billable="${fileId}"` }));
+  if (canManageReceipt && linkedCollection?.id) menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linkedCollection.id)}"` }));
+  if (canManageBilling && summary.outstandingAmount > 0) menuItems.push(billedActionMenuItem({ label: feePendingContext ? receiveLabel : "Mark Received", icon: "received", attrs: `data-mark-received="${fileId}"` }));
+  if (canManageReceipt && activeReceipt?.id) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(activeReceipt.id)}"` }));
+  else if (canManageReceipt && hasReceivedAmount && !linkedCollection) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-mark-not-received="${fileId}"` }));
+  if (canManageReceipt && summary.outstandingAmount > 0 && !linkedCollection) menuItems.push(billedActionMenuItem({ label: "Go to Transactions", icon: "transaction", attrs: `data-go-transactions="${fileId}"` }));
   if (canDelete) {
     menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete-billed="${fileId}"`, danger: true, divider: true }));
   }
@@ -7444,7 +7446,7 @@ function billedFileActions(file = {}) {
   if (linkedCollection?.id && canManageReceipt) {
     primaryAction = `<button type="button" class="billed-primary-action transaction" data-go-fee-transaction="${escapeHtml(linkedCollection.id)}">${billedActionIcon("transaction")}<span>View Transaction</span></button>`;
   } else if (summary.outstandingAmount > 0 && canManageBilling) {
-    primaryAction = `<button type="button" class="billed-primary-action mark-received" data-mark-received="${fileId}">${billedActionIcon("received")}<span>Mark Received</span></button>`;
+    primaryAction = `<button type="button" class="billed-primary-action mark-received" data-mark-received="${fileId}">${billedActionIcon("received")}<span>${escapeHtml(feePendingContext ? receiveLabel : "Mark Received")}</span></button>`;
   } else if (isSettled || hasReceivedAmount) {
     primaryAction = `<button type="button" class="billed-primary-action received" data-billed-receipt-details="${fileId}">${billedActionIcon("received")}<span>Received</span></button>`;
   } else if (canEdit) {
@@ -7884,7 +7886,8 @@ async function deleteBilledFileSafely(fileId, button = null) {
   const file = (state.files || []).find((item) => item.id === fileId);
   if (!file) return toast("File record not found.");
   const billNo = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-";
-  const message = `Remove this billed record safely?\n\nClient: ${file.name || "-"}\nService: ${file.serviceType || "-"}\nBill No.: ${billNo}\nBilled Amount: ${rupee(dashboardFileAmount(file, "billed"))}\n\nActive receipts and linked transactions will be reversed, and the file will move to Removed Files with its audit history preserved.`;
+  const summary = feeReceiptSummaryForFile(file);
+  const message = `Remove this billed record safely?\n\nClient: ${file.name || "-"}\nService: ${file.serviceType || "-"}\nBill No.: ${billNo}\nBilled Amount: ${rupee(summary.billedAmount)}\nReceived Amount: ${rupee(summary.totalReceived)}\nOutstanding Balance: ${rupee(summary.outstandingAmount)}\n\nActive receipts and linked transactions will be reversed, and the file will move to Removed Files with its audit history preserved.`;
   if (!window.confirm(message)) return;
   const originalHtml = button?.innerHTML || "";
   if (button) {
@@ -7952,7 +7955,7 @@ function bindFileActions() {
     btn.onclick = async () => {
       const file = state.files.find((item) => item.id === btn.dataset.feeNonBillable);
       if (!file) return toast("File record not found.");
-      if (state.filters.listView === "billed") {
+      if (["billed", "feePending"].includes(state.filters.listView)) {
         const summary = feeReceiptSummaryForFile(file);
         if (summary.totalReceived > 0 || summary.totalDiscount > 0 || summary.receipts.length || linkedFeeReceiptCollection(file)) {
           return toast("Reverse all receipts and linked transactions before marking this file Non-Billable.");
@@ -8371,6 +8374,7 @@ function openMarkReceivedModal(fileId) {
   closeMarkReceivedModal();
   const receipt = feeReceiptDetails(file);
   const receiptSummary = feeReceiptSummaryForFile(file);
+  receipt.receivedAmount = receiptSummary.outstandingAmount > 0 ? receiptSummary.outstandingAmount : "";
   const modal = document.createElement("div");
   modal.id = "markReceivedModal";
   modal.className = "simple-modal open";
@@ -8394,7 +8398,7 @@ function openMarkReceivedModal(fileId) {
           </div>
           <div class="receipt-form-row receipt-payment-row">
             ${feeReceiptField("receiptReceivedDate", "Received On", receipt.receivedDate, "date")}
-            ${feeReceiptField("receiptReceivedAmount", "Received Amount", receipt.receivedAmount, "number", "min='0.01' step='0.01'")}
+            ${feeReceiptField("receiptReceivedAmount", "Received Amount", receipt.receivedAmount, "number", `min='0.01' max='${receiptSummary.outstandingAmount}' step='0.01'`)}
             ${feeReceiptField("receiptDiscountAmount", "Discount", receipt.discountAmount, "number", "min='0' step='0.01'")}
             ${feeReceiptSelect("receiptPaymentMode", "Mode", paymentModes(), receipt.paymentMode)}
           </div>
@@ -8431,20 +8435,20 @@ function closeMarkReceivedModal() {
 
 async function saveReceivedFromModal(fileId) {
   const file = state.files.find((item) => item.id === fileId) || {};
+  const currentSummary = feeReceiptSummaryForFile(file);
   const receipt = feeReceiptFromModal(file);
-  const validationMessage = validateFeeReceipt(receipt);
+  const validationMessage = validateFeeReceipt(receipt, currentSummary.outstandingAmount);
   if (validationMessage) return toast(validationMessage);
   const button = document.querySelector("#saveReceivedModal");
   if (button) button.disabled = true;
   const user = loggedInUser() || {};
   const receivedAt = new Date().toISOString();
-  const currentSummary = feeReceiptSummaryForFile(file);
   const totalDiscount = Number(currentSummary.totalDiscount || 0) + Number(receipt.discountAmount || 0);
   const balanceAmount = Math.max(Number(receipt.billedAmount || 0) - currentSummary.totalReceived - Number(receipt.receivedAmount || 0) - totalDiscount, 0);
   let linkedTransaction = null;
   if (isSupabaseMode()) {
     try {
-      const collection = receipt.pushToTransactions ? feeReceiptCollectionPayload(file, receipt, linkedFeeReceiptCollection(file)) : null;
+      const collection = receipt.pushToTransactions ? feeReceiptCollectionPayload(file, receipt) : null;
       const result = await saveLinkedFeeReceiptToApi(fileId, { ...receipt, receivedAt }, collection);
       if (button) button.disabled = false;
       closeMarkReceivedModal();
@@ -8555,7 +8559,7 @@ async function updateFileBilling(fileId, updates, message, nextListView = "") {
   };
   applyFeeReceivedTimestamp(updated, file);
   state.files[index] = updated;
-  if (state.filters.listView === "billed") {
+  if (["billed", "feePending"].includes(state.filters.listView)) {
     addAuditLog("Billed file updated", {
       fileId: file.id,
       clientName: file.name || "",

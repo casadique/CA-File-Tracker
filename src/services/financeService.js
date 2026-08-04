@@ -193,6 +193,28 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
     }
     const receiptId = receiptPayload.feeReceiptId || receiptPayload.id || crypto.randomUUID();
     const existingReceipt = (state.feeReceipts || []).find((item) => item.id === receiptId);
+    const previousSummary = feeReceiptSummary(original, (state.feeReceipts || []).filter((item) => item.id !== receiptId));
+    const billedAmount = Number(
+      receiptPayload.billedAmount
+      || receiptPayload.billed_amount
+      || original.billedAmount
+      || original.billed_amount
+      || original.billAmount
+      || original.feeAmount
+      || original.amount
+      || 0,
+    );
+    const outstandingAmount = Math.max(
+      (Number.isFinite(billedAmount) ? billedAmount : 0)
+      - Number(previousSummary.totalReceived || 0)
+      - Number(previousSummary.totalDiscount || 0),
+      0,
+    );
+    if (receivedAmount + discountAmount > outstandingAmount + 0.005) {
+      const error = new Error(`Received amount and discount cannot exceed the outstanding balance of ${outstandingAmount.toFixed(2)}.`);
+      error.status = 400;
+      throw error;
+    }
     let transactionId = existingReceipt?.transactionId || existingReceipt?.transaction_id || "";
     let pushStatus = existingReceipt?.pushStatus || existingReceipt?.push_status || "not_requested";
     let collection = null;
@@ -293,7 +315,25 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
     };
     state.feeReceipts = upsertById(state.feeReceipts || [], receipt).sort(financeNewestFirst);
     state.files[fileIndex] = applyFeeReceiptSummary(original, state.feeReceipts, now, profile, receiptPayload);
-    appendAudit(state, shouldPush ? "Fee receipt saved with linked collection" : "Fee receipt saved", receipt, profile, now);
+    appendAudit(state, shouldPush ? "Fee receipt saved with linked collection" : "Fee receipt saved", {
+      ...receipt,
+      clientName: original.name || "",
+      serviceType: original.serviceType || "",
+      billedAmount,
+      outstandingBalance: Math.max(outstandingAmount - receivedAmount - discountAmount, 0),
+      previousValue: {
+        totalReceived: Number(previousSummary.totalReceived || 0),
+        totalDiscount: Number(previousSummary.totalDiscount || 0),
+        outstandingBalance: outstandingAmount,
+      },
+      newValue: {
+        receivedAmount,
+        discountAmount,
+        totalReceived: Number(previousSummary.totalReceived || 0) + receivedAmount,
+        totalDiscount: Number(previousSummary.totalDiscount || 0) + discountAmount,
+        outstandingBalance: Math.max(outstandingAmount - receivedAmount - discountAmount, 0),
+      },
+    }, profile, now);
     return state;
   }, userId);
 }
@@ -1161,8 +1201,16 @@ function appendAudit(state, action, record, profile, now) {
         fileId: record.fileId || record.file_id || "",
         receiptId: record.receiptId || record.receipt_id || record.id || "",
         transactionId: record.transactionId || record.transaction_id || "",
+        clientName: record.clientName || record.client_name || "",
+        serviceType: record.serviceType || record.service_type || "",
         date: record.date,
         amount: record.amount,
+        billedAmount: record.billedAmount || record.billed_amount || 0,
+        outstandingBalance: record.outstandingBalance || record.outstanding_balance || 0,
+        paymentMode: record.paymentMode || record.payment_mode || record.mode || "",
+        account: record.accountName || record.account_name || financeAccountName(record.accountKey || record.account_key || ""),
+        previousValue: record.previousValue || record.previous_value || null,
+        newValue: record.newValue || record.new_value || null,
         particulars: record.particulars,
         status: record.status || record.receiptStatus || record.receipt_status || "",
         previousPushStatus: record.previousPushStatus || record.previous_push_status || "",

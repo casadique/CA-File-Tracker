@@ -15,6 +15,12 @@ let capturedState = {
     billedAmount: 1000,
     stages: { Billed: true },
   }, {
+    id: "fee-partial-test-file",
+    name: "Partial payment client",
+    serviceType: "ITR Filing",
+    billedAmount: 1000,
+    stages: { Billed: true },
+  }, {
     id: "billed-delete-test-file",
     name: "Billed delete test client",
     serviceType: "ITR Filing",
@@ -117,6 +123,65 @@ async function main() {
   assert.equal(settledFile.balanceAmount, 0);
   assert.equal(settledFile.paymentStatus, "Fee Received");
 
+  const firstPartial = await saveFeeReceipt("fee-partial-test-file", {
+    feeReceiptId: "fee-partial-receipt-1",
+    receivedDate: "2026-08-04",
+    receivedAmount: 400,
+    discountAmount: 0,
+    paymentMode: "Cash",
+    accountKey: "cash",
+    pushToTransactions: true,
+  }, {
+    id: "fee-partial-collection-1",
+    paymentMethod: "Cash",
+    accountKey: "cash",
+    receivedFrom: "Partial payment client",
+    particulars: "Fee Collection",
+    amount: 400,
+  }, profile.id, profile);
+  const partialFile = firstPartial.files.find((file) => file.id === "fee-partial-test-file");
+  assert.equal(partialFile.feeReceived, false);
+  assert.equal(partialFile.balanceAmount, 600);
+  assert.equal(partialFile.paymentStatus, "Partly Received");
+  await assert.rejects(
+    () => saveFeeReceipt("fee-partial-test-file", {
+      feeReceiptId: "fee-partial-overpayment",
+      receivedDate: "2026-08-04",
+      receivedAmount: 601,
+      paymentMode: "UPI",
+      accountKey: "federal_bank",
+      pushToTransactions: true,
+    }, {}, profile.id, profile),
+    /cannot exceed the outstanding balance of 600\.00/,
+  );
+  const fullyPaid = await saveFeeReceipt("fee-partial-test-file", {
+    feeReceiptId: "fee-partial-receipt-2",
+    receivedDate: "2026-08-05",
+    receivedAmount: 600,
+    discountAmount: 0,
+    paymentMode: "UPI",
+    accountKey: "federal_bank",
+    pushToTransactions: true,
+  }, {
+    id: "fee-partial-collection-2",
+    paymentMethod: "UPI",
+    accountKey: "federal_bank",
+    receivedFrom: "Partial payment client",
+    particulars: "Fee Collection",
+    amount: 600,
+  }, profile.id, profile);
+  const fullyPaidFile = fullyPaid.files.find((file) => file.id === "fee-partial-test-file");
+  assert.equal(fullyPaidFile.feeReceived, true);
+  assert.equal(fullyPaidFile.balanceAmount, 0);
+  assert.equal(fullyPaid.feeReceipts.filter((receipt) => receipt.fileId === "fee-partial-test-file").length, 2);
+  assert.equal(fullyPaid.otherCashCollections.filter((item) => item.fileId === "fee-partial-test-file" && item.isDeleted !== true).length, 2);
+  const partialAudit = fullyPaid.auditLog.filter((entry) => entry.details?.fileId === "fee-partial-test-file").at(-1);
+  assert.equal(partialAudit.details.clientName, "Partial payment client");
+  assert.equal(partialAudit.details.paymentMode, "UPI");
+  assert.equal(partialAudit.details.account, "Federal Bank");
+  assert.equal(partialAudit.details.previousValue.outstandingBalance, 600);
+  assert.equal(partialAudit.details.newValue.outstandingBalance, 0);
+
   await removeBilledFileSafely("billed-delete-test-file", { removalReason: "Test safe removal" }, profile.id, profile);
   const removedFile = capturedState.files.find((file) => file.id === "billed-delete-test-file");
   const reversedReceipt = capturedState.feeReceipts.find((receipt) => receipt.id === "billed-delete-receipt");
@@ -190,6 +255,25 @@ async function main() {
     "Billed action dropdown must reposition when the viewport changes");
   assert.match(browserAppSource, /data-go-transactions/,
     "Fee Pending actions must navigate to the existing Transactions screen");
+  const feePendingTableBody = browserAppSource.match(
+    /function renderFeePendingFileTable[\s\S]*?(?=\nfunction renderReAssignedFileTable)/,
+  )?.[0] || "";
+  assert.match(feePendingTableBody, /billedFileActions\(file, \{ context: "feePending" \}\)/,
+    "Fee Pending must reuse the working Billed Files actions component");
+  assert.match(billedActionsBody, /Receive Balance/,
+    "Partially received Fee Pending records must offer Receive Balance");
+  const receiptModalBody = browserAppSource.match(
+    /function openMarkReceivedModal[\s\S]*?(?=\nfunction closeMarkReceivedModal)/,
+  )?.[0] || "";
+  assert.match(receiptModalBody, /receiptSummary\.outstandingAmount/,
+    "Fee receipt modal must prefill and cap the amount using the outstanding balance");
+  const collectionSaveBody = browserAppSource.match(
+    /async function saveFeeReceiptCollection[\s\S]*?(?=\nfunction feeReceiptFromModal)/,
+  )?.[0] || "";
+  assert.match(collectionSaveBody, /item\.feeReceiptId === receipt\.feeReceiptId/,
+    "Partial receipt transaction lookup must match the exact receipt");
+  assert.doesNotMatch(collectionSaveBody, /linkedFeeReceiptCollection/,
+    "Partial receipts must not reuse an unrelated earlier transaction for the file");
   const billedLayoutBody = browserAppSource.match(
     /let billedTableSort[\s\S]*?(?=\nfunction renderFileTable)/,
   )?.[0] || "";
@@ -216,6 +300,8 @@ async function main() {
     "Billed action trigger must provide a pointer-enabled 40 by 40 pixel target");
   assert.match(appStyles, /@media \(max-width: 680px\)[\s\S]*?\.billed-action-menu/,
     "Billed actions must provide a mobile bottom-sheet layout");
+  assert.match(appStyles, /\.fee-pending-report-table \.fee-pending-actions-column\s*\{[\s\S]*?min-width:\s*194px/,
+    "Fee Pending actions must use the compact Billed Files action width");
   assert.match(appStyles, /\.billed-files-table th\s*\{[\s\S]*?position:\s*sticky[\s\S]*?background:\s*#e8eef7/i,
     "Billed Files must have a sticky pale blue header");
   assert.match(appStyles, /\.billed-files-table th\.billed-client-cell,[\s\S]*?position:\s*sticky[\s\S]*?left:\s*52px/,

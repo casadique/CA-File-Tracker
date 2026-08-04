@@ -6176,12 +6176,19 @@ textarea {
 
 .fee-pending-report-table .fee-pending-actions-column {
   width: 1%;
-  min-width: 96px;
+  min-width: 194px;
   white-space: nowrap;
+  overflow: visible;
+  vertical-align: middle;
 }
 
 .fee-pending-report-table .fee-pending-actions-column .action-row {
   flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.fee-pending-report-table .fee-pending-actions-column .billed-actions {
+  width: 100%;
 }
 
 .fee-pending-report-table tfoot td {
@@ -6189,6 +6196,47 @@ textarea {
   background: #eff6ff;
   color: #0f172a;
   font-weight: 800;
+}
+
+.receipt-progress-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.receipt-progress-summary > div {
+  padding: 10px 12px;
+  border: 1px solid #d8e4f2;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.receipt-progress-summary span,
+.receipt-progress-summary strong {
+  display: block;
+}
+
+.receipt-progress-summary span {
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.receipt-progress-summary strong {
+  color: #17345d;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@media (max-width: 680px) {
+  .receipt-progress-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Billed Files: compact, context-sensitive actions. */
