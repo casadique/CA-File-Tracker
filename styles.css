@@ -9118,6 +9118,43 @@ table td {
   gap: 10px;
 }
 
+.receipt-details-body,
+.receipt-details-section {
+  display: grid;
+  gap: 12px;
+}
+
+.receipt-details-section + .receipt-details-section {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid #d7e3f1;
+}
+
+.receipt-details-section h4 {
+  margin: 0;
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.receipt-amount-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.receipt-amount-item {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.receipt-amount-item strong {
+  color: #0f3d91;
+  font-size: 15px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .receipt-audit-item {
   min-width: 0;
   padding: 11px 12px;
@@ -9162,7 +9199,8 @@ table td {
 }
 
 @media (max-width: 620px) {
-  .receipt-audit-grid {
+  .receipt-audit-grid,
+  .receipt-amount-grid {
     grid-template-columns: 1fr;
   }
 }

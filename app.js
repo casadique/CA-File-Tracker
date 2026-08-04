@@ -6501,7 +6501,7 @@ function renderFeeReceivedFileTable(files) {
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table file-table-compact fee-received-table">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Receipt Amount</th><th class="amount-column">Balance</th><th>Receipt Date</th><th>Account</th><th>Status</th><th>Transaction</th><th>Actions</th></tr></thead>
+        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>FY</th><th>Bill Date</th><th>Bill No.</th><th class="amount-column">Billed Amount</th><th class="amount-column">Receipt Amount</th><th class="amount-column">Balance</th><th>Receipt Date</th><th>Payment Mode</th><th>Account</th><th>Status</th><th>Transaction</th><th>Actions</th></tr></thead>
         <tbody>
           ${rows.map(({ file, receipt }, index) => {
             const linked = receipt ? linkedCollectionForFeeReceipt(receipt) : linkedFeeReceiptCollection(file);
@@ -6533,6 +6533,7 @@ function renderFeeReceivedFileTable(files) {
               <td class="amount-cell amount-column">${rupee(filePendingAmount(file))}</td>
               <td>${fmt(receipt ? feeReceiptRecordDate(receipt) : (file.feeReceivedDate || file.receivedOn || file.received_on))}</td>
               <td>${escapeHtml(receipt?.paymentMode || receipt?.payment_mode || file.paymentMode || file.receiptMode || "-")}</td>
+              <td>${escapeHtml(financeAccountLabel(transactionAccountKey(receipt || file, "")))}</td>
               <td><span class="badge ${active ? "filed" : "returned"}">${escapeHtml(status)}</span></td>
               <td><div class="action-row fee-transaction-actions">${transactionAction}</div></td>
               <td><div class="action-row">
@@ -6547,7 +6548,7 @@ function renderFeeReceivedFileTable(files) {
             <td class="amount-cell amount-column">${rupee(totals.billed)}</td>
             <td class="amount-cell amount-column">${rupee(totals.received)}</td>
             <td class="amount-cell amount-column">${rupee(totals.balance)}</td>
-            <td colspan="5"></td>
+            <td colspan="6"></td>
           </tr>
         </tfoot>
       </table>
@@ -7182,13 +7183,30 @@ function feeReceiptAuditDetails(receipt = {}, file = {}) {
     ["Bill Amount", rupee(dashboardFileAmount(file, "billed"))],
     ["Original Receipt Date", displayDate(feeReceiptRecordDate(receipt))],
     ["Original Received Amount", rupee(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0)],
-    ["Payment Account", receipt.paymentMode || receipt.payment_mode || "-"],
+    ["Payment Mode", receipt.paymentMode || receipt.payment_mode || "-"],
+    ["Payment Account", financeAccountLabel(transactionAccountKey(receipt, ""))],
     ["Receipt Status", feeReceiptRecordStatus(receipt)],
     ["Previous Transaction Push Status", pushedBefore ? "Pushed" : "Not pushed"],
     ["Linked Transaction Status", receipt.linkedTransactionStatus || receipt.linked_transaction_status || (linkedCollectionForFeeReceipt(receipt) ? "Active" : "-")],
     ["Reversal Date", receipt.reversedAt || receipt.reversed_at ? formatDateTime(receipt.reversedAt || receipt.reversed_at) : "-"],
     ["Reversed By", receipt.reversedBy || receipt.reversed_by || "-"],
     ["Reversal Reason", receipt.reversalReason || receipt.reversal_reason || "-"],
+  ];
+}
+
+function feeReceiptAmountDetails(receipt = {}, file = {}) {
+  const billedAmount = Number(dashboardFileAmount(file, "billed") || 0);
+  const receivedAmount = Number(receipt.amount ?? receipt.receivedAmount ?? receipt.received_amount ?? 0);
+  const discountAmount = Number(receipt.discountAmount ?? receipt.discount_amount ?? receipt.discount ?? 0);
+  const savedBalance = receipt.balanceAmount ?? receipt.balance_amount;
+  const balanceAmount = savedBalance === undefined || savedBalance === null
+    ? Math.max(0, billedAmount - receivedAmount - discountAmount)
+    : Number(savedBalance || 0);
+  return [
+    ["Billed Amount", rupee(billedAmount)],
+    ["Received Amount", rupee(receivedAmount)],
+    ["Discount Amount", rupee(discountAmount)],
+    ["Balance Amount", rupee(balanceAmount)],
   ];
 }
 
@@ -7206,8 +7224,19 @@ function openFeeReceiptViewModal(receiptId) {
         <div><h3>Fee Receipt Details</h3><p class="small-muted">Original receipt and reversal audit information.</p></div>
         <button class="icon-button" data-close-fee-receipt-modal title="Close">X</button>
       </div>
-      <div class="drawer-body receipt-audit-grid">
-        ${feeReceiptAuditDetails(receipt, file).map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      <div class="drawer-body receipt-details-body">
+        <section class="receipt-details-section">
+          <h4>Amount Details</h4>
+          <div class="receipt-audit-grid receipt-amount-grid">
+            ${feeReceiptAmountDetails(receipt, file).map(([label, value]) => `<div class="receipt-audit-item receipt-amount-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+          </div>
+        </section>
+        <section class="receipt-details-section">
+          <h4>Receipt Information</h4>
+          <div class="receipt-audit-grid">
+            ${feeReceiptAuditDetails(receipt, file).filter(([label]) => !["Bill Amount", "Original Received Amount"].includes(label)).map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+          </div>
+        </section>
       </div>
       <div class="drawer-actions"><button class="secondary-button" data-close-fee-receipt-modal>Close</button></div>
     </div>`;
