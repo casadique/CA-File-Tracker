@@ -49,8 +49,18 @@ assert.match(source, /DAILY ACTIVITY REPORT/);
 assert.match(source, /drawDailyReportPdfFirstHeader/);
 assert.match(source, /drawDailyReportPdfCompactHeader/);
 assert.match(source, /dailyReportPdfCardItems/);
+assert.match(source, /function drawDailyReportPdfCompactCards/);
+assert.match(source, /const cardHeight = 20/);
+assert.match(source, /let y = 180/);
 assert.match(source, /function dailyReportPdfTotalLabel/);
 assert.match(source, /New Work Received/);
+[
+  "Client Name", "Service Type", "C/o", "Done By", "Checked By", "Billed Status",
+  "Assigned To", "Status", "Completion On", "Visitor Name", "Mobile No", "Company",
+  "Purpose", "Time", "Met", "Expense Item", "Paid To", "Method", "Account", "Voucher No.",
+].forEach((header) => assert.match(source, new RegExp(`header: "${header.replace(".", "\\.")}"`), `${header} PDF column must exist`));
+assert.match(source, /"Billed Status": isBilledFile\(file\) \? "Billed" : "Not Billed"/);
+assert.match(source, /"Completion On": displayDate/);
 assert.match(source, /rowPageBreak: "avoid"/);
 assert.match(source, /showHead: "everyPage"/);
 assert.match(source, /No records found for the selected date/);
