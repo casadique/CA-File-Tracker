@@ -6391,7 +6391,7 @@ function renderFileTable(files) {
             const status = statusOf(file);
             const checking = isCompletedView ? checkingStatusOf(file) : { label: "", className: "" };
             const dateValue = isCompletedView ? workCompletedDate(file) : file.dueDate;
-            const receiptInfo = receiptSummary(file);
+            const receiptInfo = isBilledView ? "" : receiptSummary(file);
             const completedCells = `
               <td>${fileSerialNumber(file, index)}</td>
               <td class="client-details-cell completed-client-column">${clientDetailsCell(file)}</td>
@@ -6412,7 +6412,7 @@ function renderFileTable(files) {
               <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}${receiptInfo}</td>
               <td>${file.assignedStaff}</td>
               <td class="${isOverdue(file) ? "due-date-cell overdue-due-date" : "due-date-cell"}">${fmt(dateValue)}</td>
-              <td><div class="action-row">${fileRowActions(file)}</div></td>`;
+              <td class="${isBilledView ? "billed-actions-column" : ""}"><div class="action-row">${fileRowActions(file)}</div></td>`;
             return `<tr class="file-row file-row-${status.className}">${isCompletedView ? completedCells : activeCells}</tr>`;
           }).join("")}
         </tbody>

@@ -172,6 +172,9 @@ async function main() {
     "Billed Delete must follow role permissions");
   assert.match(browserAppSource, /function bindBilledActionMenus/,
     "Billed action menus must have dedicated interaction bindings");
+  const fileTableBody = browserAppSource.match(/function renderFileTable[\s\S]*?(?=\nfunction renderNotCheckedFileTable)/)?.[0] || "";
+  assert.match(fileTableBody, /const receiptInfo = isBilledView \? "" : receiptSummary\(file\)/,
+    "Billed Files Final Status must show only the status badge, without receipt amount details");
   assert.match(appStyles, /\.billed-action-menu\s*\{[\s\S]*?position:\s*fixed/,
     "Billed dropdown must render above the table without clipping");
   assert.match(appStyles, /@media \(max-width: 680px\)[\s\S]*?\.billed-action-menu/,
