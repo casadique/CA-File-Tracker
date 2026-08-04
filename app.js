@@ -3134,7 +3134,7 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const configuredBillingView = ["nonBilled", "feePending", "feeReceived"].includes(f.listView);
+    const configuredBillingView = ["completed", "nonBilled", "feePending", "feeReceived"].includes(f.listView);
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
       ? configuredFinancialSearchHaystack(file)
@@ -3143,7 +3143,7 @@ function filteredFiles() {
     if (f.listView === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
     if (f.listView === "correctionRequired" && !hasOpenCorrection(file)) return false;
-    if (f.listView === "completed" && f.checkingStatus && checkingStatusOf(file).label !== f.checkingStatus) return false;
+    if (f.listView === "completed" && !configuredBillingView && f.checkingStatus && checkingStatusOf(file).label !== f.checkingStatus) return false;
     if (f.listView === "billed" && !isBilledFile(file)) return false;
     if (f.listView === "nonBilled" && !isNonBilledFile(file)) return false;
     if (f.listView === "feePending" && !isFeePendingFile(file)) return false;
@@ -3161,7 +3161,7 @@ function filteredFiles() {
     if (!configuredBillingView && f.due && file.dueDate !== f.due) return false;
     if (f.priority && (!configuredBillingView || f.listView === "nonBilled") && file.priority !== f.priority) return false;
     if (!configuredBillingView && f.status && statusOf(file).label !== f.status) return false;
-    if (f.listView === "completed" && f.billing && completedFileBillingCategory(file) !== f.billing) return false;
+    if (f.listView === "completed" && !configuredBillingView && f.billing && completedFileBillingCategory(file) !== f.billing) return false;
     if (!configuredBillingView && f.listView !== "completed" && f.billing === "Billed" && !isBilledFile(file)) return false;
     if (!configuredBillingView && f.listView !== "completed" && f.billing === "Unbilled" && !isNonBilledFile(file)) return false;
     if (!configuredBillingView && f.overdue === "Yes" && !isOverdue(file)) return false;
@@ -5587,7 +5587,36 @@ function configuredFinancialFilterConfigs() {
     "Received Amount - Lowest First", "Bill Date - Newest First", "Client Name - A to Z",
     "Payment Account", "Received By",
   ];
+  const completedSort = [
+    "Completion Date - Newest First", "Completion Date - Oldest First", "Checked Date - Newest First",
+    "Checked Date - Oldest First", "Client Name - A to Z", "Service Type", "Done By", "Checked By", "Billing Status",
+  ];
   return {
+    completed: {
+      title: "Search & Filter Completed Files",
+      mobileTitle: "Filter Completed Files",
+      mainPrimary: [common.search, common.client, common.careOf, common.service,
+        { key: "completedDoneBy", label: "Done By", type: "select", emptyLabel: "All staff", options: () => assignableStaffNames() },
+        { key: "completedCheckingStatus", label: "Checking Status", type: "select", emptyLabel: "All checking states", options: ["Not Checked", "Checked", "Returned for Correction"] }],
+      mainSecondary: [
+        { label: "Completion Date Range", type: "range", controls: [
+          { key: "completedFrom", label: "Completed From", type: "date" },
+          { key: "completedTo", label: "Completed To", type: "date" },
+        ] },
+        { label: "Checked Date Range", type: "range", controls: [
+          { key: "completedCheckedFrom", label: "Checked From", type: "date" },
+          { key: "completedCheckedTo", label: "Checked To", type: "date" },
+        ] },
+        { key: "completedBillingStatus", label: "Billing Status", type: "select", emptyLabel: "All billing states", options: ["Billed", "Unbilled", "Non Billable"] },
+        common.fy,
+        { key: "completedSort", label: "Sort By", type: "select", options: completedSort, defaultValue: completedSort[0] },
+      ],
+      advanced: [common.pan,
+        { key: "completedCheckedBy", label: "Checked By", type: "text", placeholder: "Search checker" },
+        { key: "priority", label: "File Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+        common.hasRemarks,
+      ],
+    },
     nonBilled: {
       title: "Search & Filter Non-Billed Files",
       mobileTitle: "Filter Non-Billed Files",
@@ -5830,7 +5859,7 @@ function configuredFinancialFacts(file = {}) {
 function configuredFinancialSearchHaystack(file = {}) {
   const facts = configuredFinancialFacts(file);
   return [file.name, fileRegistrationNumber(file), file.pan, facts.contact, file.serviceType, file.careOf, file.assignedStaff,
-    file.reAssignedStaff, facts.billNumber, facts.remarks, ...facts.receivedBy, ...facts.transactionReferences,
+    file.reAssignedStaff, file.completedBy, file.workDoneBy, file.checkedBy, file.billingType, facts.billNumber, facts.remarks, ...facts.receivedBy, ...facts.transactionReferences,
     ...facts.paymentModes, ...facts.receiptModes].filter(Boolean).join(" ").toLowerCase();
 }
 
@@ -5853,6 +5882,16 @@ function configuredFinancialFileMatches(file, listView, filters) {
   if (filters.financialFy && fileFy(file) !== filters.financialFy) return false;
   if (filters.hasRemarks === "Yes" && !facts.remarks.trim()) return false;
   if (filters.hasRemarks === "No" && facts.remarks.trim()) return false;
+  if (listView === "completed") {
+    const doneBy = String(file.completedBy || file.workDoneBy || file.assignedStaff || "");
+    if (filters.completedDoneBy && !sameStaffName(doneBy, filters.completedDoneBy)) return false;
+    if (filters.completedCheckingStatus && checkingStatusOf(file).label !== filters.completedCheckingStatus) return false;
+    if (filters.completedBillingStatus && completedFileBillingCategory(file) !== filters.completedBillingStatus) return false;
+    if (!configuredFinancialDateInRange(facts.completionDate, filters.completedFrom, filters.completedTo)) return false;
+    if (!configuredFinancialDateInRange(facts.checkedDate, filters.completedCheckedFrom, filters.completedCheckedTo)) return false;
+    if (filters.completedCheckedBy && !String(file.checkedBy || file.checked_by || "").toLowerCase().includes(filters.completedCheckedBy.toLowerCase())) return false;
+    return true;
+  }
   if (listView === "nonBilled") {
     const billingType = String(file.billingType || file.billing_type || "").toLowerCase();
     if (filters.nonBilledState === "nonBillable" && !billingType.includes("non")) return false;
@@ -6008,8 +6047,9 @@ function renderFilesPage() {
       if (state.filters.listView || state.filters.dashboardKind) {
         const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
-        const exactDatedName = ["nonBilled", "feePending", "feeReceived"].includes(state.filters.listView);
-        await downloadXlsxRows(exactDatedName ? fileListPdfFileName(fileListSectionTitle()) : `${fileListPdfFileName(fileListSectionTitle())}-${todayDate()}`, rows);
+        const exactDatedName = ["completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView);
+        const completedHeading = state.filters.listView === "completed" ? completedFilesReportHeading(sourceFiles) : "";
+        await downloadXlsxRows(exactDatedName ? fileListPdfFileName(fileListSectionTitle()) : `${fileListPdfFileName(fileListSectionTitle())}-${todayDate()}`, rows, completedHeading);
         return toast("Excel file downloaded");
       }
       return exportExcel("filtered-files", sourceFiles);
@@ -6228,13 +6268,21 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
   document.querySelector("#files").innerHTML = `<div class="panel">
     ${renderConfiguredFinancialFilterPanel(files, config)}
     ${billedFilesActionToolbar()}
-    <div id="fileResults">${renderStaffFileTable(files, listView)}</div>
+    <div id="fileResults">${listView === "completed" ? renderCompletedFileTable(files) : renderStaffFileTable(files, listView)}</div>
   </div>`;
   bindConfiguredFinancialFilters(config);
   const exportExcelButton = document.querySelector("#exportFiltered");
-  if (exportExcelButton) exportExcelButton.onclick = () => exportStaffPageExcel(listView, sortFilesForDisplay(filteredFiles()));
+  if (exportExcelButton) exportExcelButton.onclick = async () => {
+    const reportFiles = sortFilesForDisplay(filteredFiles());
+    if (listView !== "completed") return exportStaffPageExcel(listView, reportFiles);
+    const rows = fileListReportRows(reportFiles, { format: "excel" });
+    await downloadXlsxRows(fileListPdfFileName(fileListSectionTitle()), rows, completedFilesReportHeading(reportFiles));
+    toast("Excel file downloaded");
+  };
   const exportPdfButton = document.querySelector("#exportFilteredPdf");
-  if (exportPdfButton) exportPdfButton.onclick = () => exportStaffPagePdf(listView, sortFilesForDisplay(filteredFiles()));
+  if (exportPdfButton) exportPdfButton.onclick = () => listView === "completed"
+    ? exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportPdfButton)
+    : exportStaffPagePdf(listView, sortFilesForDisplay(filteredFiles()));
   bindFileActions();
 }
 
@@ -6613,6 +6661,7 @@ function sortConfiguredFinancialFiles(files, listView) {
     if (sortLabel === "Completion Date - Newest First") result = dateCompare(left.completionDate, right.completionDate);
     else if (sortLabel === "Completion Date - Oldest First" || sortLabel === "Oldest Unbilled First") result = dateCompare(left.completionDate, right.completionDate, "asc");
     else if (sortLabel === "Checked Date - Newest First") result = dateCompare(left.checkedDate, right.checkedDate);
+    else if (sortLabel === "Checked Date - Oldest First") result = dateCompare(left.checkedDate, right.checkedDate, "asc");
     else if (sortLabel === "Bill Date - Newest First") result = dateCompare(left.billDate, right.billDate);
     else if (sortLabel === "Bill Date - Oldest First" || sortLabel === "Oldest Pending First") result = dateCompare(left.billDate, right.billDate, "asc");
     else if (sortLabel === "Receipt Date - Newest First") result = dateCompare(left.receiptDate, right.receiptDate);
@@ -6624,6 +6673,9 @@ function sortConfiguredFinancialFiles(files, listView) {
     else if (sortLabel === "Client Name - A to Z") result = textCompare(a.name, b.name);
     else if (sortLabel === "Service Type") result = textCompare(a.serviceType, b.serviceType);
     else if (sortLabel === "Assigned Staff") result = textCompare(a.assignedStaff, b.assignedStaff);
+    else if (sortLabel === "Done By") result = textCompare(a.completedBy || a.workDoneBy || a.assignedStaff, b.completedBy || b.workDoneBy || b.assignedStaff);
+    else if (sortLabel === "Checked By") result = textCompare(a.checkedBy, b.checkedBy);
+    else if (sortLabel === "Billing Status") result = textCompare(completedFileBillingCategory(a), completedFileBillingCategory(b));
     else if (sortLabel === "C/o") result = textCompare(a.careOf, b.careOf);
     else if (sortLabel === "Payment Account") result = textCompare(left.receiptModes[0] || "Not Recorded", right.receiptModes[0] || "Not Recorded");
     else if (sortLabel === "Received By") result = textCompare(left.receivedBy[0], right.receivedBy[0]);
@@ -6632,7 +6684,7 @@ function sortConfiguredFinancialFiles(files, listView) {
 }
 
 function sortFilesForDisplay(files) {
-  if (["nonBilled", "feePending", "feeReceived"].includes(state.filters.listView)) return sortConfiguredFinancialFiles(files, state.filters.listView);
+  if (["completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView)) return sortConfiguredFinancialFiles(files, state.filters.listView);
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -7020,7 +7072,9 @@ function refreshConfiguredFinancialResults(config) {
   setConfiguredFinancialFilterLoading(false);
   const results = document.querySelector("#fileResults");
   if (results) {
-    results.innerHTML = isStaffLogin() ? renderStaffFileTable(files, state.filters.listView) : renderFileTable(files);
+    results.innerHTML = state.filters.listView === "completed"
+      ? renderCompletedFileTable(files)
+      : (isStaffLogin() ? renderStaffFileTable(files, state.filters.listView) : renderFileTable(files));
     bindFileActions();
   }
 }
@@ -7362,6 +7416,80 @@ function renderBilledFileTable(files = []) {
   </div>`;
 }
 
+function completedBillingBadge(file = {}) {
+  const label = completedFileBillingCategory(file);
+  const className = label === "Billed" ? "is-billed" : label === "Non Billable" ? "is-non-billable" : "is-unbilled";
+  return `<span class="completed-billing-badge ${className}"><i></i>${escapeHtml(label)}</span>`;
+}
+
+function completedFileActions(file = {}) {
+  const fileId = escapeHtml(file.id || "");
+  const canEdit = Boolean(rolePerm().edit);
+  const canManageBilling = Boolean(rolePerm().assign);
+  const canDelete = Boolean(rolePerm().delete);
+  const billing = completedFileBillingCategory(file);
+  const menuItems = [];
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canManageBilling && isBillingReadyFile(file) && billing !== "Non Billable") {
+    menuItems.push(billedActionMenuItem({ label: "Mark Non-Billable", icon: "nonbillable", attrs: `data-non-billable="${fileId}"` }));
+  }
+  if (canManageBilling && billing === "Non Billable") {
+    menuItems.push(billedActionMenuItem({ label: "Mark Billable", icon: "received", attrs: `data-billable="${fileId}"` }));
+  } else if (canManageBilling && billing !== "Billed" && isBillingReadyFile(file)) {
+    menuItems.push(billedActionMenuItem({ label: "Mark Billed", icon: "received", attrs: `data-mark-billed="${fileId}"` }));
+  }
+  if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete="${fileId}"`, danger: true, divider: true }));
+  const primary = canEdit
+    ? `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`
+    : `<span class="billed-payment-state">${escapeHtml(billing)}</span>`;
+  return `<div class="billed-actions completed-actions" data-billed-actions="${fileId}">${primary}${menuItems.length
+    ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>`
+    : ""}</div>`;
+}
+
+function completedExpandedDetails(file = {}) {
+  const billDate = file.billDate || file.bill_date || file.billedDate || file.billingDate || "";
+  const billNumber = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "-";
+  return `<div class="completed-expanded-grid">
+    <div><span>Received</span><strong>${escapeHtml(displayDate(file.fileReceivedDate) || "-")}</strong></div>
+    <div><span>Work Allotted</span><strong>${escapeHtml(displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-")}</strong></div>
+    <div><span>Priority</span><strong>${escapeHtml(file.priority || "Medium")}</strong></div>
+    <div><span>Bill Details</span><strong>${escapeHtml(billNumber)}${billDate ? ` · ${escapeHtml(displayDate(billDate))}` : ""}</strong></div>
+    <div class="completed-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div>
+  </div>`;
+}
+
+function completedDesktopRows(files = []) {
+  return files.map((file, index) => {
+    const checking = checkingStatusOf(file);
+    const doneBy = file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned";
+    return `<tr class="completed-file-row">
+      <td class="completed-sn-cell">${fileSerialNumber(file, index)}</td>
+      <td class="completed-client-cell"><div class="completed-client-line"><button type="button" class="billed-expand-toggle" data-completed-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(file)}</div></div></td>
+      <td class="completed-service-cell"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")}</span></td>
+      <td class="completed-work-cell"><strong>${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</strong><span>Done by ${escapeHtml(doneBy)}</span></td>
+      <td class="completed-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
+      <td class="completed-checking-cell"><span class="badge ${checking.className || "approval"}">${escapeHtml(checking.label || "-")}</span><span>${escapeHtml(file.checkedBy || "Not checked")}${file.checkedDate ? ` · ${escapeHtml(displayDate(file.checkedDate))}` : ""}</span></td>
+      <td class="completed-billing-cell">${completedBillingBadge(file)}</td>
+      <td class="completed-actions-column"><div class="action-row">${completedFileActions(file)}</div></td>
+    </tr><tr class="completed-details-row" hidden><td colspan="8">${completedExpandedDetails(file)}</td></tr>`;
+  }).join("");
+}
+
+function completedMobileCard(file = {}, index = 0) {
+  const checking = checkingStatusOf(file);
+  const doneBy = file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned";
+  return `<article class="completed-mobile-card${index % 2 ? " is-alt" : ""}">
+    <div class="completed-mobile-head"><button type="button" class="billed-expand-toggle" data-completed-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
+    <div class="completed-mobile-summary"><div><span>Completed</span><strong>${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</strong></div><div><span>Done By</span><strong>${escapeHtml(doneBy)}</strong></div><div><span>Checking</span><strong><span class="badge ${checking.className || "approval"}">${escapeHtml(checking.label || "-")}</span></strong></div><div><span>Billing</span><strong>${completedBillingBadge(file)}</strong></div></div>
+    <div class="completed-mobile-actions">${completedFileActions(file)}</div><div class="completed-mobile-details" hidden>${completedExpandedDetails(file)}</div>
+  </article>`;
+}
+
+function renderCompletedFileTable(files = []) {
+  return `<div class="table-wrap completed-table-wrap"><table class="file-table completed-modern-table"><thead><tr><th class="completed-sn-cell">SN</th><th class="completed-client-cell">Client</th><th>Service</th><th>Completion</th><th>C/o</th><th>Checking</th><th>Billing Status</th><th class="completed-actions-column">Actions</th></tr></thead><tbody>${completedDesktopRows(files)}</tbody></table><div class="completed-mobile-list">${files.map(completedMobileCard).join("")}</div></div>`;
+}
+
 function renderFileTable(files) {
   if (!files.length) return empty("No files match these filters.");
   if (state.filters.listView === "reAssigned") return renderReAssignedFileTable(files);
@@ -7369,6 +7497,7 @@ function renderFileTable(files) {
   if (state.filters.listView === "feePending") return renderFeePendingFileTable(files);
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
   if (state.filters.listView === "billed") return renderBilledFileTable(files);
+  if (state.filters.listView === "completed") return renderCompletedFileTable(files);
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
   const isBilledView = state.filters.listView === "billed";
@@ -8398,7 +8527,9 @@ function scheduleBilledActionMenuPosition() {
 
 function openBilledActionMenu(toggle, { focusFirst = false } = {}) {
   const owner = toggle.closest(".billed-actions");
-  const menu = owner?.querySelector("[data-billed-action-menu]");
+  const menu = activeBilledActionToggle === toggle && activeBilledActionMenu
+    ? activeBilledActionMenu
+    : owner?.querySelector("[data-billed-action-menu]");
   if (!menu) return;
   if (activeBilledActionToggle === toggle && activeBilledActionMenu === menu) {
     closeBilledActionMenus();
@@ -8419,13 +8550,7 @@ function bindBilledActionMenus() {
   if (billedActionMenuDocumentBound) return;
   billedActionMenuDocumentBound = true;
   document.addEventListener("click", (event) => {
-    const toggle = event.target.closest("[data-billed-menu-toggle]");
-    if (!toggle) return;
-    event.preventDefault();
-    event.stopPropagation();
-    openBilledActionMenu(toggle);
-  }, true);
-  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-billed-menu-toggle]")) return;
     if (event.target.closest(".billed-action-menu-item")) return closeBilledActionMenus();
     if (!event.target.closest(".billed-action-menu")) closeBilledActionMenus();
   });
@@ -8796,6 +8921,30 @@ async function deleteBilledFileSafely(fileId, button = null) {
 }
 
 function bindFileActions() {
+  bindBilledActionMenus();
+  document.querySelectorAll("[data-billed-menu-toggle]").forEach((toggle) => {
+    toggle.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openBilledActionMenu(toggle);
+    };
+  });
+  document.querySelectorAll("[data-completed-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".completed-file-row");
+      const mobileCard = button.closest(".completed-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("completed-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".completed-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
   document.querySelectorAll("[data-billed-sort]").forEach((button) => {
     button.onclick = () => {
       const key = button.dataset.billedSort;
@@ -13191,11 +13340,18 @@ async function downloadXlsxRows(name, rows, title = "") {
       SN: 6,
       "Client Name": 28,
       "PAN / Reg No.": 17,
+      "PAN / Reg No": 17,
       "Service Type": 24,
       FY: 12,
       "C/o": 18,
       "Contact No.": 16,
       "Completed Date": 15,
+      "Completion Date": 16,
+      "Done By": 25,
+      "Checking Status": 18,
+      "Checked By": 20,
+      "Checked Date": 16,
+      "Billing Status": 17,
       "Checked Date": 15,
       "Bill Date": 14,
       "Bill No.": 14,
@@ -18315,14 +18471,16 @@ function fileListReportRows(files, options = {}) {
       return {
         SN: base.SN,
         "Client Name": base["Client Name"],
-        FY: base.FY,
+        "PAN / Reg No.": filePdfText(fileRegistrationNumber(file), "Not Available"),
         "Service Type": base["Service Type"],
+        FY: base.FY,
+        "C/o": base["C/o"],
         "Completion Date": filePdfCompletionDate(file),
         "Done By": filePdfText(file.completedBy || file.workDoneBy || file.assignedStaff, "Not Assigned"),
-        "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
-        "Checked By": filePdfText(file.checkedBy, "-"),
-        "Checked Date": filePdfDate(file.checkedDate),
-        "Billing Status": isBilledFile(file) ? "Billed" : isNonBilledFile(file) ? "Non-Billed" : "Pending",
+      "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
+      "Checked By": filePdfText(file.checkedBy, "-"),
+      "Checked Date": filePdfDate(file.checkedDate),
+      "Billing Status": completedFileBillingCategory(file),
         Remarks: base.Remarks,
       };
     }
@@ -18374,6 +18532,121 @@ function fileListReportRows(files, options = {}) {
   return ["feePending", "feeReceived"].includes(section)
     ? appendFeeReceiptTotals(rows, sourceFiles, { numeric: section === "feePending" && format === "excel" })
     : rows;
+}
+
+function completedFilesReportHeading(files = []) {
+  return [
+    "Muhammad & Associates",
+    "Chartered Accountants",
+    `Generated: ${fileExportDateTime()} | Records: ${files.length} | Filters: ${completedPdfFilterSummary()}`,
+    "COMPLETED FILES REPORT",
+  ];
+}
+
+function completedPdfFilterSummary() {
+  const config = configuredFinancialFilterConfig("completed");
+  const active = config ? configuredFinancialActiveFilters(config) : [];
+  return active.length
+    ? active.map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`).join(" | ")
+    : "No filters applied";
+}
+
+function completedPdfRecords(sourceFiles = []) {
+  return sourceFiles.map((file, index) => ({
+    index: index + 1,
+    client: `${filePdfText(file.name)}\n${filePdfText(fileRegistrationNumber(file), "Regn No. Not Available")} · FY ${filePdfText(fileFy(file), "NA")}`,
+    service: `${filePdfText(file.serviceType)}\nC/o: ${filePdfText(file.careOf, "Direct")}`,
+    completion: `${filePdfCompletionDate(file)}\nDone by: ${filePdfText(file.completedBy || file.workDoneBy || file.assignedStaff, "Not Assigned")}`,
+    checking: `${filePdfText(checkingStatusOf(file).label, "-")}\n${filePdfText(file.checkedBy, "Not checked")}${file.checkedDate ? ` · ${filePdfDate(file.checkedDate)}` : ""}`,
+    billing: completedFileBillingCategory(file),
+    priority: filePdfText(file.priority, "Medium"),
+    remarks: filePdfText(file.remarks, "-"),
+  }));
+}
+
+function completedPdfSummary(sourceFiles = []) {
+  return sourceFiles.reduce((summary, file) => {
+    summary.total += 1;
+    const checking = checkingStatusOf(file).label;
+    if (checking === "Checked") summary.checked += 1;
+    else if (checking === "Returned for Correction") summary.correction += 1;
+    else summary.notChecked += 1;
+    const billing = completedFileBillingCategory(file);
+    if (billing === "Billed") summary.billed += 1;
+    else if (billing === "Non Billable") summary.nonBillable += 1;
+    else summary.unbilled += 1;
+    return summary;
+  }, { total: 0, checked: 0, notChecked: 0, correction: 0, billed: 0, unbilled: 0, nonBillable: 0 });
+}
+
+function drawCompletedPdfFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, generatedBy, filterSummary, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* Branded text remains available. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(14); doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(8.2); doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(15); doc.text("COMPLETED FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.blue); doc.setLineWidth(1.5); doc.line(pageWidth / 2 - 88, 69, pageWidth / 2 + 88, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text); doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${summary.total}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 145)}  |  Sort: ${state.filters.completedSort || "Completion Date - Newest First"}`, margin + 8, 103);
+  drawBilledPdfCards(doc, [
+    ["Completed Files", String(summary.total), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+    ["Checked", String(summary.checked), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Not Checked", String(summary.notChecked), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Correction", String(summary.correction), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["Billed", String(summary.billed), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+    ["Unbilled", String(summary.unbilled), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Non-Billable", String(summary.nonBillable), BILLED_PDF_COLORS.muted, BILLED_PDF_COLORS.alternate],
+  ], margin, 121, pageWidth - margin * 2, 7);
+}
+
+function drawCompletedPdfCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24); doc.text("Completed Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.5); doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" }); doc.text(`Filters: ${billedPdfShortText(filterSummary, 120)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.line(30, 46, pageWidth - 30, 46);
+}
+
+async function createCompletedFilesPdfDocument(sourceFiles = []) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = completedPdfRecords(sourceFiles);
+  const summary = completedPdfSummary(sourceFiles);
+  const context = { doc, assets, records, summary, generatedAt: fileExportDateTime(), generatedBy: state.currentUser || loggedInUser()?.name || "Not Recorded", filterSummary: completedPdfFilterSummary(), pageWidth: doc.internal.pageSize.getWidth(), pageHeight: doc.internal.pageSize.getHeight() };
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "index" }, { header: "Client Details", dataKey: "client" }, { header: "Service / C/o", dataKey: "service" },
+      { header: "Completion", dataKey: "completion" }, { header: "Checking", dataKey: "checking" }, { header: "Billing Status", dataKey: "billing" },
+      { header: "Priority", dataKey: "priority" }, { header: "Remarks", dataKey: "remarks" },
+    ],
+    body: records, theme: "grid", showHead: "everyPage", rowPageBreak: "avoid", margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: { top: 4, right: 3, bottom: 4, left: 3 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: .3, minCellHeight: 28 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 7.2, fillColor: BILLED_PDF_COLORS.navy, textColor: [255,255,255], halign: "center", minCellHeight: 27 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { index: { halign: "center", cellWidth: 24 }, client: { cellWidth: 145, fontStyle: "bold" }, service: { cellWidth: 115 }, completion: { cellWidth: 112 }, checking: { cellWidth: 120 }, billing: { halign: "center", cellWidth: 76 }, priority: { halign: "center", cellWidth: 55 }, remarks: { cellWidth: 133 } },
+    willDrawPage: (data) => { if (data.pageNumber === 1) drawCompletedPdfFirstHeader(doc, context); else drawCompletedPdfCompactHeader(doc, context); },
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      const record = records[data.row.index];
+      if (data.column.dataKey === "billing") {
+        data.cell.styles.fontStyle = "bold";
+        if (record.billing === "Billed") { data.cell.styles.textColor = BILLED_PDF_COLORS.green; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightGreen; }
+        else if (record.billing === "Non Billable") { data.cell.styles.textColor = BILLED_PDF_COLORS.muted; data.cell.styles.fillColor = BILLED_PDF_COLORS.alternate; }
+        else { data.cell.styles.textColor = BILLED_PDF_COLORS.amber; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightAmber; }
+      }
+    },
+  });
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
 }
 
 const BILLED_PDF_DISCOUNT_KEYS = ["discountAmount", "discount_amount", "discount"];
@@ -19372,6 +19645,7 @@ async function exportFilteredFilesPdf(files, button) {
   const sectionTitle = fileListSectionTitle();
   const reportTitle = `${sectionTitle} Report`.toUpperCase();
   const billedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "billed";
+  const completedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "completed";
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
   const feePendingPdf = (state.filters.listView || state.filters.dashboardKind) === "feePending";
@@ -19385,6 +19659,12 @@ async function exportFilteredFilesPdf(files, button) {
       const { doc } = await createBilledFilesPdfDocument(sourceFiles);
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
       toast("Billed Files PDF downloaded");
+      return;
+    }
+    if (completedFilesPdf) {
+      const { doc } = await createCompletedFilesPdfDocument(sourceFiles);
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Completed Files PDF downloaded");
       return;
     }
     if (feePendingPdf) {

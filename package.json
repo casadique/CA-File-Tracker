@@ -10,6 +10,7 @@
     "test:dashboard": "node tools/test-dashboard-counts.js",
     "test:daily-report-pdf": "node tools/test-daily-report-pdf.js",
     "test:file-completion": "node tools/test-file-completion-save.js",
+    "test:completed-files": "node tools/test-completed-files-modernization.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
     "test:fee-pending-pdf": "node tools/test-fee-pending-pdf.js",
     "test:filters": "node tools/test-financial-file-filters.js",
