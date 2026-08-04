@@ -211,6 +211,15 @@ async function main() {
   }
   assert.doesNotMatch(receivedReportBody, /"Bill No\."|"Transaction Status"|"Payment Status"|"Received By"/,
     "Fee Received report must exclude obsolete columns");
+  const billedReportBody = browserAppSource.match(
+    /function billedFilesReportFields[\s\S]*?(?=\nfunction feeReceivedFilesReportRow)/,
+  )?.[0] || "";
+  for (const column of ["Bill Date", "Billed Amount", "Received Amount", "Balance Amount", "Received Date", "Payment Mode"]) {
+    assert.match(billedReportBody, new RegExp(`"${column}"|${column}:`),
+      `Billed Files report must include ${column}`);
+  }
+  assert.doesNotMatch(billedReportBody, /"Bill No\."|"Transaction Status"|"Payment Status"/,
+    "Billed Files report must exclude obsolete columns");
   const receivedTableBody = browserAppSource.match(
     /function renderFeeReceivedFileTable[\s\S]*?(?=\nfunction feeReceiptIdForFile)/,
   )?.[0] || "";

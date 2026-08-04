@@ -7085,6 +7085,18 @@ function feeReceiptReportFields(file = {}, balanceLabel = "Balance Amount") {
   };
 }
 
+function billedFilesReportFields(file = {}) {
+  const receiptFields = feeReceiptReportFields(file);
+  return {
+    "Bill Date": receiptFields["Bill Date"],
+    "Billed Amount": receiptFields["Billed Amount"],
+    "Received Amount": receiptFields["Received Amount"],
+    "Balance Amount": receiptFields["Balance Amount"],
+    "Received Date": receiptFields["Received Date"],
+    "Payment Mode": receiptFields["Payment Mode"],
+  };
+}
+
 function feeReceivedFilesReportRow(file = {}, index = 0, options = {}) {
   const { includeSn = true, format = "display" } = options;
   const summary = feeReceiptSummaryForFile(file);
@@ -17246,8 +17258,7 @@ function fileListReportRows(files, options = {}) {
         "Client Name": base["Client Name"],
         "Service Type": base["Service Type"],
         "Completion Date": filePdfCompletionDate(file),
-        ...feeReceiptReportFields(file),
-        "Payment Status": file.feeReceived ? "Received" : "Pending",
+        ...billedFilesReportFields(file),
       };
     }
     if (section === "nonBilled") {
