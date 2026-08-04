@@ -53,6 +53,14 @@ assert.equal(feePendingPdfAging("2026-05-20").category, "61–90 Days");
 assert.equal(feePendingPdfAging("2026-04-01").category, "Above 90 Days");
 assert.equal(feePendingPdfAging("").category, "Date Not Recorded");
 
+const staffNameSource = functionSource("feePendingStaffName", "feePendingReportRow");
+const feePendingStaffName = Function(
+  "filePdfText", `return (${staffNameSource})`,
+)((value, fallback = "") => String(value || fallback).trim() || fallback);
+assert.equal(feePendingStaffName({ assignedStaff: "Rabiyath", completedBy: "Another Staff" }), "Rabiyath");
+assert.equal(feePendingStaffName({ completedBy: "Munazza Abdul Muthalib" }), "Munazza Abdul Muthalib");
+assert.equal(feePendingStaffName({}), "Not Assigned");
+
 const eligibilitySource = functionSource("feePendingPdfBillingIsActive", "feePendingPdfContact");
 const feePendingPdfBillingIsActive = Function(
   "isBilledFile", "isRemovedFileRecord", `return (${eligibilitySource})`,
@@ -84,6 +92,9 @@ assert.deepEqual(feePendingPdfRecords([
 ]).map((record) => record.id), ["partial", "unpaid"]);
 
 assert.match(source, /async function createFeePendingFilesPdfDocument/);
+assert.match(source, /function feePendingStaffName/);
+assert.match(source, /Staff: feePendingStaffName\(file\)/);
+assert.doesNotMatch(source.match(/function feePendingPdfStaff[\s\S]*?(?=\nfunction feePendingPdfRecord)/)?.[0] || "", /Assigned:|Done By:/);
 assert.match(source, /new jsPDF\(\{ orientation: "landscape", unit: "pt", format: "a4"/);
 assert.match(source, /showHead: "everyPage"/);
 assert.match(source, /rowPageBreak: "avoid"/);

@@ -8089,6 +8089,14 @@ function excelDateValue(value) {
   return new Date(year, month - 1, day, 12, 0, 0);
 }
 
+function feePendingStaffName(file = {}) {
+  return filePdfText(
+    file.assignedStaff || file.reAssignedStaff || file.assigned_staff
+    || file.completedBy || file.workDoneBy || file.work_done_by,
+    "Not Assigned",
+  );
+}
+
 function feePendingReportRow(file = {}, index = 0, options = {}) {
   const { includeSn = true, format = "display" } = options;
   const summary = feeReceiptSummaryForFile(file);
@@ -8122,7 +8130,7 @@ function feePendingReportRow(file = {}, index = 0, options = {}) {
     "Amount Received": amountValue(summary.totalReceived),
     "Received Date": dateValue(summary.latestReceiptDate),
     "Outstanding Amount": amountValue(summary.outstandingAmount),
-    "Assigned Staff / Done By": filePdfText(file.completedBy || file.workDoneBy || file.assignedStaff, "Not Assigned"),
+    Staff: feePendingStaffName(file),
     Remarks: filePdfText(file.remarks || file.billingRemarks || file.feeRemarks),
   };
   return includeSn ? { SN: index + 1, ...row } : row;
@@ -8136,7 +8144,7 @@ function feePendingDisplayRow(file = {}, index = 0) {
     "Bill Date",
     "Bill No.",
     "Received Date",
-    "Assigned Staff / Done By",
+    "Staff",
     "Remarks",
   ]);
   return Object.fromEntries(
@@ -8211,7 +8219,7 @@ function feePendingPdfColumnStyles() {
     "Amount Received": { halign: "right", cellWidth: 50 },
     "Received Date": { halign: "center", cellWidth: 42 },
     "Outstanding Amount": { halign: "right", cellWidth: 50 },
-    "Assigned Staff / Done By": { cellWidth: 58 },
+    Staff: { cellWidth: 58 },
     Remarks: { cellWidth: 72 },
   };
 }
@@ -13199,7 +13207,7 @@ async function downloadXlsxRows(name, rows, title = "") {
       "Amount Received": 18,
       "Received Date": 15,
       "Outstanding Amount": 20,
-      "Assigned Staff / Done By": 24,
+      Staff: 20,
       Remarks: 34,
     };
     return { wch: preferred[header] || Math.max(14, Math.min(34, header.length + 8)) };
@@ -18844,12 +18852,7 @@ function feePendingPdfAging(billDate, reportDate = indiaTodayDate()) {
 }
 
 function feePendingPdfStaff(file = {}) {
-  const assigned = filePdfText(file.assignedStaff || file.reAssignedStaff || file.assigned_staff || "");
-  const doneBy = filePdfText(file.completedBy || file.workDoneBy || file.work_done_by || "");
-  if (assigned && doneBy && assigned.toLowerCase() !== doneBy.toLowerCase()) return `Assigned: ${assigned}\nDone By: ${doneBy}`;
-  if (assigned) return `Assigned: ${assigned}`;
-  if (doneBy) return `Done By: ${doneBy}`;
-  return "Not Assigned";
+  return feePendingStaffName(file);
 }
 
 function feePendingPdfRecord(file = {}, index = 0, reportDate = indiaTodayDate()) {
@@ -18874,7 +18877,7 @@ function feePendingPdfRecord(file = {}, index = 0, reportDate = indiaTodayDate()
     careOf,
     billDetails: `Bill No: ${filePdfText(file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo, "Not Recorded")}\nBill Date: ${filePdfDate(billDateRaw) || "-"}`,
     aging: feePendingPdfAging(billDateRaw, reportDate),
-    assignedStaff: filePdfText(file.assignedStaff || file.reAssignedStaff || file.assigned_staff || "Not Assigned", "Not Assigned"),
+    assignedStaff: feePendingStaffName(file),
     staffText,
     remarks: filePdfText(file.remarks || file.billingRemarks || file.feeRemarks, "-"),
     pendingStatus: financial.receivedAmount > 0 ? "Partially Received" : "Not Received",
