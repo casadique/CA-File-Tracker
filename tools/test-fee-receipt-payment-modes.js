@@ -199,6 +199,76 @@ async function main() {
   );
 
   const browserAppSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  const ownNumberSource = browserAppSource.match(
+    /function billedPdfOwnNumber[\s\S]*?(?=\nfunction billedPdfPaymentStatus)/,
+  )?.[0] || "";
+  const billedPdfOwnNumber = Function(`return (${ownNumberSource})`)();
+  assert.equal(billedPdfOwnNumber({ netBillAmount: null }, ["netBillAmount"]), null,
+    "Null financial fields must not be treated as an explicit zero payable amount");
+  assert.equal(billedPdfOwnNumber({ netBillAmount: "" }, ["netBillAmount"]), null,
+    "Blank financial fields must not be treated as an explicit zero payable amount");
+  assert.match(browserAppSource, /savedApprovedPayableAmount > 0 \|\| approvedDiscountAmount >= summary\.billedAmount/,
+    "Default zero payable fields must be ignored unless the bill is fully discounted");
+  const paymentStatusSource = browserAppSource.match(
+    /function billedPdfPaymentStatus[\s\S]*?(?=\nfunction billedPdfFinancialValues)/,
+  )?.[0] || "";
+  const financialValuesSource = browserAppSource.match(
+    /function billedPdfFinancialValues[\s\S]*?(?=\nfunction billedPdfReceiptMode)/,
+  )?.[0] || "";
+  const billedPdfPaymentStatus = Function(`return (${paymentStatusSource})`)();
+  const billedPdfFinancialValues = Function("billedPdfPaymentStatus", `return (${financialValuesSource})`)(billedPdfPaymentStatus);
+  assert.deepEqual(billedPdfFinancialValues({
+    grossBilledAmount: 1000,
+    approvedDiscountAmount: 50,
+    totalReceivedAmount: 950,
+  }), {
+    grossBilledAmount: 1000,
+    discountAmount: 50,
+    netBillAmount: 950,
+    receivedAmount: 950,
+    balanceAmount: 0,
+    paymentStatus: "Received",
+  }, "A fully settled discounted bill must have zero balance and Received status");
+  assert.equal(billedPdfFinancialValues({ grossBilledAmount: 1000, approvedDiscountAmount: 50, totalReceivedAmount: 400 }).paymentStatus, "Partially Received");
+  assert.equal(billedPdfFinancialValues({ grossBilledAmount: 1000, approvedDiscountAmount: 1000, totalReceivedAmount: 0 }).paymentStatus, "Fully Discounted");
+  assert.equal(billedPdfFinancialValues({ grossBilledAmount: 1000, approvedDiscountAmount: 0, totalReceivedAmount: 0 }).paymentStatus, "Not Received");
+  assert.equal(billedPdfFinancialValues({
+    grossBilledAmount: 1000,
+    approvedDiscountAmount: 50,
+    totalReceivedAmount: 950,
+    approvedPayableAmount: null,
+  }).netBillAmount, 950, "A null approved payable amount must use gross less approved discount");
+  const legacySettledPdfValues = billedPdfFinancialValues({
+    grossBilledAmount: 1000,
+    approvedDiscountAmount: 0,
+    totalReceivedAmount: 950,
+    savedBalanceAmount: 0,
+    preserveLegacyBalance: true,
+  });
+  assert.equal(legacySettledPdfValues.netBillAmount, 950);
+  assert.equal(legacySettledPdfValues.balanceAmount, 0);
+  assert.equal(legacySettledPdfValues.paymentStatus, "Received");
+  const unpaidWithEmptySavedBalance = billedPdfFinancialValues({
+    grossBilledAmount: 5000,
+    approvedDiscountAmount: 0,
+    totalReceivedAmount: 0,
+    savedBalanceAmount: 0,
+    preserveLegacyBalance: false,
+  });
+  assert.equal(unpaidWithEmptySavedBalance.netBillAmount, 5000);
+  assert.equal(unpaidWithEmptySavedBalance.balanceAmount, 5000);
+  assert.equal(unpaidWithEmptySavedBalance.paymentStatus, "Not Received");
+  const billedPdfDocumentBody = browserAppSource.match(
+    /async function createBilledFilesPdfDocument[\s\S]*?(?=\nasync function exportFilteredFilesPdf)/,
+  )?.[0] || "";
+  for (const requiredPattern of [
+    /orientation: "landscape"/,
+    /format: "a4"/,
+    /rowPageBreak: "avoid"/,
+    /showHead: "everyPage"/,
+    /drawBilledPdfGrandTotals/,
+    /drawBilledPdfFooters/,
+  ]) assert.match(billedPdfDocumentBody, requiredPattern, `Billed Files PDF must include ${requiredPattern}`);
   const pendingAmountBody = browserAppSource.match(/function filePendingAmount\(file\) \{([\s\S]*?)\n\}/)?.[1] || "";
   assert.match(pendingAmountBody, /feeReceiptSummaryForFile\(file\)\.outstandingAmount/,
     "Fee Pending must use the receipt summary, including discounts");

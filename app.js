@@ -350,6 +350,7 @@ let desktopNotificationAdminStatus = null;
 let currentDeviceSubscribed = false;
 let filterTimer = null;
 let billedFilterRequestId = 0;
+let billedPdfAssetsPromise = null;
 let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
@@ -17561,12 +17562,586 @@ function fileListReportRows(files, options = {}) {
     : rows;
 }
 
+const BILLED_PDF_DISCOUNT_KEYS = ["discountAmount", "discount_amount", "discount"];
+const BILLED_PDF_PAYABLE_KEYS = ["netBillAmount", "net_bill_amount", "payableAmount", "payable_amount", "approvedPayableAmount", "approved_payable_amount"];
+
+function billedPdfOwnNumber(record = {}, keys = []) {
+  for (const key of keys) {
+    if (!Object.hasOwn(record || {}, key)) continue;
+    const rawValue = record[key];
+    if (rawValue === null || rawValue === undefined || String(rawValue).trim() === "") continue;
+    const value = Number(rawValue);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function billedPdfPaymentStatus(values = {}) {
+  const gross = Math.max(Number(values.grossBilledAmount || 0), 0);
+  const discount = Math.max(Number(values.discountAmount || 0), 0);
+  const net = Math.max(Number(values.netBillAmount || 0), 0);
+  const received = Math.max(Number(values.receivedAmount || 0), 0);
+  const balance = Math.max(Number(values.balanceAmount || 0), 0);
+  const epsilon = 0.005;
+  if (gross > epsilon && net <= epsilon && discount + epsilon >= gross) return "Fully Discounted";
+  if (balance <= epsilon && received + epsilon >= net) return "Received";
+  if (received > epsilon && received + epsilon < net) return "Partially Received";
+  if (received <= epsilon && net > epsilon) return "Not Received";
+  return balance <= epsilon ? "Received" : "Not Received";
+}
+
+function billedPdfFinancialValues(input = {}) {
+  const grossBilledAmount = Math.max(Number(input.grossBilledAmount || 0), 0);
+  const approvedDiscountAmount = Math.min(Math.max(Number(input.approvedDiscountAmount || 0), 0), grossBilledAmount);
+  const totalReceivedAmount = Math.max(Number(input.totalReceivedAmount || 0), 0);
+  const approvedPayableRaw = input.approvedPayableAmount;
+  const approvedPayable = approvedPayableRaw === null
+    || approvedPayableRaw === undefined
+    || String(approvedPayableRaw).trim() === ""
+    ? Number.NaN
+    : Number(approvedPayableRaw);
+  let netBillAmount = Number.isFinite(approvedPayable)
+    ? Math.max(approvedPayable, 0)
+    : Math.max(grossBilledAmount - approvedDiscountAmount, 0);
+  let balanceAmount = Math.max(netBillAmount - totalReceivedAmount, 0);
+  const savedBalance = Number(input.savedBalanceAmount);
+  if (input.preserveLegacyBalance && Number.isFinite(savedBalance)) {
+    balanceAmount = Math.max(savedBalance, 0);
+    netBillAmount = Math.max(totalReceivedAmount + balanceAmount, 0);
+  }
+  const values = {
+    grossBilledAmount,
+    discountAmount: approvedDiscountAmount,
+    netBillAmount,
+    receivedAmount: totalReceivedAmount,
+    balanceAmount,
+  };
+  return { ...values, paymentStatus: billedPdfPaymentStatus(values) };
+}
+
+function billedPdfReceiptMode(receipt = {}, file = {}) {
+  const linked = receipt?.id ? linkedCollectionForFeeReceipt(receipt) : linkedFeeReceiptCollection(file);
+  const source = linked || receipt || file;
+  const accountKey = transactionAccountKey(source, "") || transactionAccountKey(receipt, "") || transactionAccountKey(file, "");
+  if (accountKey === "cash") return "Cash";
+  if (accountKey === "federal_bank") return "Federal Bank";
+  if (accountKey === "tmb") return "TMB";
+  const rawMode = String(
+    source.paymentMethod || source.payment_method || source.paymentMode || source.payment_mode || source.mode
+    || receipt.paymentMode || receipt.payment_mode || file.paymentMode || file.receiptMode || "",
+  ).trim();
+  if (!rawMode) return "Not Recorded";
+  const normalized = normalizeTransactionPaymentMethod(rawMode);
+  if (normalized === "Cash") return "Cash";
+  if (normalized === "Other" && !/^other$/i.test(rawMode)) return rawMode;
+  return normalized;
+}
+
+function billedPdfReceiptEntries(file = {}, summary = feeReceiptSummaryForFile(file)) {
+  if (summary.receipts.length) {
+    return summary.receipts.map((receipt) => ({
+      amount: Math.max(Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0), 0),
+      date: feeReceiptRecordDate(receipt),
+      mode: billedPdfReceiptMode(receipt, file),
+    })).filter((entry) => entry.amount > 0);
+  }
+  const hasReceiptHistory = allFeeReceiptRecordsForFile(file).length > 0;
+  if (hasReceiptHistory || summary.totalReceived <= 0) return [];
+  return [{
+    amount: summary.totalReceived,
+    date: normalizeImportDate(file.feeReceivedDate || file.receivedDate || file.received_date || file.receivedOn || file.received_on || ""),
+    mode: billedPdfReceiptMode({}, file),
+  }];
+}
+
+function billedPdfRecord(file = {}, index = 0) {
+  const summary = feeReceiptSummaryForFile(file);
+  const fileDiscount = billedPdfOwnNumber(file, BILLED_PDF_DISCOUNT_KEYS);
+  const receiptDiscount = summary.receipts.reduce((total, receipt) => (
+    total + Math.max(billedPdfOwnNumber(receipt, BILLED_PDF_DISCOUNT_KEYS) || 0, 0)
+  ), 0);
+  const hasExplicitDiscount = fileDiscount !== null
+    || summary.receipts.some((receipt) => billedPdfOwnNumber(receipt, BILLED_PDF_DISCOUNT_KEYS) !== null);
+  const approvedDiscountAmount = fileDiscount !== null ? fileDiscount : receiptDiscount;
+  const savedApprovedPayableAmount = billedPdfOwnNumber(file, BILLED_PDF_PAYABLE_KEYS);
+  const approvedPayableAmount = savedApprovedPayableAmount !== null
+    && (savedApprovedPayableAmount > 0 || approvedDiscountAmount >= summary.billedAmount)
+    ? savedApprovedPayableAmount
+    : null;
+  const savedBalanceAmount = billedPdfOwnNumber(file, ["balanceAmount", "balance_amount"]);
+  const financial = billedPdfFinancialValues({
+    grossBilledAmount: summary.billedAmount,
+    approvedDiscountAmount,
+    totalReceivedAmount: summary.totalReceived,
+    approvedPayableAmount,
+    savedBalanceAmount,
+    preserveLegacyBalance: !hasExplicitDiscount
+      && approvedPayableAmount === null
+      && savedBalanceAmount !== null
+      && (summary.totalReceived > 0 || savedBalanceAmount > 0),
+  });
+  const legacyBalancePreserved = !hasExplicitDiscount
+    && approvedPayableAmount === null
+    && savedBalanceAmount !== null
+    && (summary.totalReceived > 0 || savedBalanceAmount > 0)
+    && Math.abs(financial.netBillAmount - Math.max(summary.billedAmount - approvedDiscountAmount, 0)) > 0.005;
+  const receiptEntries = billedPdfReceiptEntries(file, summary);
+  const latestReceipt = receiptEntries[0] || null;
+  return {
+    index: index + 1,
+    file,
+    ...financial,
+    receiptEntries,
+    clientName: filePdfText(file.name, "-"),
+    serviceType: filePdfText(file.serviceType, "-"),
+    completedDate: filePdfCompletionDate(file) || "-",
+    billedDate: filePdfDate(file.billDate || file.bill_date || file.billedDate) || "-",
+    receiptDate: latestReceipt?.date ? displayDate(latestReceipt.date) : "-",
+    receiptMode: latestReceipt?.mode || (financial.receivedAmount > 0 ? "Not Recorded" : "-"),
+    legacyBalancePreserved,
+  };
+}
+
+function billedPdfSummary(records = []) {
+  return records.reduce((totals, record) => {
+    totals.totalRecords += 1;
+    totals.grossBilledAmount += record.grossBilledAmount;
+    totals.discountAmount += record.discountAmount;
+    totals.netBillAmount += record.netBillAmount;
+    totals.receivedAmount += record.receivedAmount;
+    totals.balanceAmount += record.balanceAmount;
+    if (record.paymentStatus === "Received") totals.receivedFiles += 1;
+    if (record.paymentStatus === "Partially Received") totals.partiallyReceivedFiles += 1;
+    if (record.paymentStatus === "Not Received") totals.notReceivedFiles += 1;
+    if (record.paymentStatus === "Fully Discounted") totals.fullyDiscountedFiles += 1;
+    if (record.legacyBalancePreserved) totals.legacyBalanceFiles += 1;
+    record.receiptEntries.forEach((receipt) => {
+      const mode = receipt.mode || "Not Recorded";
+      totals.paymentModes[mode] = (totals.paymentModes[mode] || 0) + Number(receipt.amount || 0);
+    });
+    return totals;
+  }, {
+    totalRecords: 0,
+    grossBilledAmount: 0,
+    discountAmount: 0,
+    netBillAmount: 0,
+    receivedAmount: 0,
+    balanceAmount: 0,
+    receivedFiles: 0,
+    partiallyReceivedFiles: 0,
+    notReceivedFiles: 0,
+    fullyDiscountedFiles: 0,
+    legacyBalanceFiles: 0,
+    paymentModes: {},
+  });
+}
+
+function billedPdfMoney(value) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
+function billedPdfFilterSummary() {
+  const parts = BILLED_FILE_FILTERS
+    .filter(({ key, defaultValue }) => key !== "receivedSort" && String(state.filters[key] || "") !== String(defaultValue || ""))
+    .map(({ key, label }) => {
+      const raw = String(state.filters[key] || "").trim();
+      const value = ["due", "fileFrom", "fileTo"].includes(key) ? displayDate(raw) : raw;
+      return `${label}: ${value}`;
+    });
+  return parts.length ? parts.join(" | ") : "No Filters Applied";
+}
+
+function billedPdfSortSummary() {
+  return `Received Date - ${state.filters.receivedSort || "Newest First"}`;
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  }
+  return btoa(binary);
+}
+
+function loadBilledPdfAssets() {
+  if (billedPdfAssetsPromise) return billedPdfAssetsPromise;
+  billedPdfAssetsPromise = Promise.all([
+    fetch("/assets/DejaVuSans.ttf").then((response) => {
+      if (!response.ok) throw new Error("PDF font could not be loaded.");
+      return response.arrayBuffer();
+    }),
+    fetch("/assets/DejaVuSans-Bold.ttf").then((response) => {
+      if (!response.ok) throw new Error("PDF bold font could not be loaded.");
+      return response.arrayBuffer();
+    }),
+    fetch("/assets/ca-india-logo.png").then((response) => {
+      if (!response.ok) throw new Error("Company logo could not be loaded.");
+      return response.arrayBuffer();
+    }),
+  ]).then(([regular, semibold, logo]) => ({
+    regular: arrayBufferToBase64(regular),
+    semibold: arrayBufferToBase64(semibold),
+    logo: `data:image/png;base64,${arrayBufferToBase64(logo)}`,
+  })).catch((error) => {
+    billedPdfAssetsPromise = null;
+    throw error;
+  });
+  return billedPdfAssetsPromise;
+}
+
+function registerBilledPdfFonts(doc, assets) {
+  doc.addFileToVFS("DejaVuSans.ttf", assets.regular);
+  doc.addFont("DejaVuSans.ttf", "DejaVuSans", "normal");
+  doc.addFileToVFS("DejaVuSans-Bold.ttf", assets.semibold);
+  doc.addFont("DejaVuSans-Bold.ttf", "DejaVuSans", "bold");
+  doc.setFont("DejaVuSans", "normal");
+  if (typeof doc.setCharSpace === "function") doc.setCharSpace(0);
+}
+
+const BILLED_PDF_COLORS = {
+  navy: [15, 42, 95],
+  blue: [37, 99, 235],
+  lightBlue: [239, 246, 255],
+  border: [203, 213, 225],
+  text: [15, 23, 42],
+  muted: [100, 116, 139],
+  green: [21, 128, 61],
+  lightGreen: [236, 253, 245],
+  amber: [180, 83, 9],
+  lightAmber: [255, 251, 235],
+  red: [185, 28, 28],
+  lightRed: [254, 242, 242],
+  violet: [124, 58, 237],
+  lightViolet: [245, 243, 255],
+  alternate: [248, 250, 252],
+};
+
+function billedPdfShortText(value, maxLength = 160) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function billedPdfSummaryCardItems(summary, includeFullyDiscounted = false) {
+  const items = [
+    ["Gross Billed Amount", billedPdfMoney(summary.grossBilledAmount), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+    ["Total Discount", billedPdfMoney(summary.discountAmount), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Net Bill Amount", billedPdfMoney(summary.netBillAmount), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+    ["Total Received", billedPdfMoney(summary.receivedAmount), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Outstanding Balance", billedPdfMoney(summary.balanceAmount), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["Received Files", String(summary.receivedFiles), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Partially Received", String(summary.partiallyReceivedFiles), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Not Received", String(summary.notReceivedFiles), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+  ];
+  if (includeFullyDiscounted) {
+    items.splice(5, 0, ["Total Records", String(summary.totalRecords), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue]);
+    items.push(["Fully Discounted", String(summary.fullyDiscountedFiles), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet]);
+  }
+  return items;
+}
+
+function drawBilledPdfCards(doc, items, x, y, availableWidth, columns = items.length) {
+  const gap = 5;
+  const cardWidth = (availableWidth - gap * (columns - 1)) / columns;
+  const cardHeight = 40;
+  items.forEach(([label, value, accent, fill], index) => {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    const cardX = x + column * (cardWidth + gap);
+    const cardY = y + row * (cardHeight + 6);
+    doc.setFillColor(...fill);
+    doc.setDrawColor(...BILLED_PDF_COLORS.border);
+    doc.setLineWidth(0.45);
+    doc.roundedRect(cardX, cardY, cardWidth, cardHeight, 3, 3, "FD");
+    doc.setFillColor(...accent);
+    doc.roundedRect(cardX, cardY, 3, cardHeight, 2, 2, "F");
+    doc.setTextColor(...BILLED_PDF_COLORS.muted);
+    doc.setFont("DejaVuSans", "normal");
+    doc.setFontSize(5.8);
+    doc.text(doc.splitTextToSize(label, cardWidth - 13).slice(0, 2), cardX + 8, cardY + 10);
+    doc.setTextColor(...accent);
+    doc.setFont("DejaVuSans", "bold");
+    doc.setFontSize(value.length > 15 ? 7.1 : 8.1);
+    doc.text(value, cardX + cardWidth - 7, cardY + 31, { align: "right" });
+  });
+  return y + Math.ceil(items.length / columns) * (cardHeight + 6) - 6;
+}
+
+function drawBilledPdfFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, records, filterSummary, sortSummary, generatedBy, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* The branded text remains if an older PDF engine cannot decode the logo. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(14);
+  doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(8.2);
+  doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(15);
+  doc.text("BILLED FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.blue);
+  doc.setLineWidth(1.5);
+  doc.line(pageWidth / 2 - 72, 69, pageWidth / 2 + 72, 69);
+
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${records.length}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 125)}  |  Sort: ${sortSummary}`, margin + 8, 103);
+  drawBilledPdfCards(doc, billedPdfSummaryCardItems(summary), margin, 121, pageWidth - margin * 2, 8);
+}
+
+function drawBilledPdfCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24);
+  doc.text("Billed Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" });
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 110)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.setLineWidth(0.5);
+  doc.line(30, 46, pageWidth - 30, 46);
+}
+
+function billedPdfTableRows(records) {
+  return records.map((record) => ({
+    sn: record.index,
+    client: record.clientName,
+    service: record.serviceType,
+    dates: `Completed: ${record.completedDate}\nBilled: ${record.billedDate}`,
+    gross: billedPdfMoney(record.grossBilledAmount),
+    discount: billedPdfMoney(record.discountAmount),
+    net: billedPdfMoney(record.netBillAmount),
+    received: billedPdfMoney(record.receivedAmount),
+    balance: billedPdfMoney(record.balanceAmount),
+    receipt: record.receiptEntries.length > 1
+      ? `${record.receiptDate}\n${record.receiptMode} (+${record.receiptEntries.length - 1})`
+      : `${record.receiptDate}\n${record.receiptMode}`,
+    status: record.paymentStatus,
+  }));
+}
+
+function billedPdfPaymentModeRows(summary) {
+  const modes = summary.paymentModes || {};
+  const preferred = ["Cash", "Federal Bank", "TMB"];
+  const other = Object.keys(modes).filter((mode) => !preferred.includes(mode) && mode !== "Not Recorded").sort();
+  const ordered = [...preferred, ...other, "Not Recorded"];
+  const rows = ordered.map((mode) => ({
+    mode,
+    amount: billedPdfMoney(modes[mode] || 0),
+  }));
+  rows.push({ mode: "Total", amount: billedPdfMoney(summary.receivedAmount) });
+  return rows;
+}
+
+function drawBilledPdfGrandTotals(doc, context) {
+  const { pageWidth, pageHeight, summary } = context;
+  let y = (doc.lastAutoTable?.finalY || 60) + 15;
+  const requiredHeight = 235;
+  if (y + requiredHeight > pageHeight - 35) {
+    doc.addPage();
+    drawBilledPdfCompactHeader(doc, context);
+    y = 62;
+  }
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(30, y, pageWidth - 60, 112, 4, 4, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(10);
+  doc.text("GRAND TOTALS", 40, y + 16);
+  const cardsEnd = drawBilledPdfCards(doc, billedPdfSummaryCardItems(summary, true), 40, y + 25, pageWidth - 80, 5);
+  if (summary.legacyBalanceFiles > 0) {
+    doc.setTextColor(...BILLED_PDF_COLORS.muted);
+    doc.setFont("DejaVuSans", "normal");
+    doc.setFontSize(5.8);
+    doc.text(`Note: ${summary.legacyBalanceFiles} legacy record(s) preserve their saved payable and balance treatment because no separate approved discount field exists.`, 40, Math.min(cardsEnd + 9, y + 107));
+  }
+
+  let modeY = y + 127;
+  const modeRows = billedPdfPaymentModeRows(summary);
+  const modeTableHeight = 25 + modeRows.length * 16;
+  if (modeY + modeTableHeight > pageHeight - 35) {
+    doc.addPage();
+    drawBilledPdfCompactHeader(doc, context);
+    modeY = 66;
+  }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(9);
+  doc.text("PAYMENT MODE SUMMARY", 30, modeY);
+  doc.autoTable({
+    startY: modeY + 8,
+    columns: [
+      { header: "Payment Mode", dataKey: "mode" },
+      { header: "Received Amount", dataKey: "amount" },
+    ],
+    body: modeRows,
+    theme: "grid",
+    tableWidth: 355,
+    margin: { left: 30, right: pageWidth - 385, bottom: 30 },
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: 3, textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.35 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { amount: { halign: "right", cellWidth: 130 }, mode: { cellWidth: 225 } },
+    didParseCell: (data) => {
+      if (data.section === "body" && modeRows[data.row.index]?.mode === "Total") {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightBlue;
+      }
+    },
+  });
+}
+
+function drawBilledPdfFooters(doc) {
+  const totalPages = doc.internal.getNumberOfPages();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  for (let page = 1; page <= totalPages; page += 1) {
+    doc.setPage(page);
+    doc.setDrawColor(...BILLED_PDF_COLORS.border);
+    doc.setLineWidth(0.45);
+    doc.line(30, pageHeight - 25, pageWidth - 30, pageHeight - 25);
+    doc.setFont("DejaVuSans", "normal");
+    doc.setFontSize(6.4);
+    doc.setTextColor(...BILLED_PDF_COLORS.muted);
+    doc.text("CA File Tracker", 30, pageHeight - 13);
+    doc.text("Confidential - For Internal Use", pageWidth / 2, pageHeight - 13, { align: "center" });
+    doc.text(`Page ${page} of ${totalPages}`, pageWidth - 30, pageHeight - 13, { align: "right" });
+  }
+}
+
+async function createBilledFilesPdfDocument(sourceFiles) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = sourceFiles.map(billedPdfRecord);
+  const summary = billedPdfSummary(records);
+  const context = {
+    doc,
+    assets,
+    records,
+    summary,
+    generatedAt: fileExportDateTime(),
+    generatedBy: loggedInUser()?.name || state.currentUser || "Not Recorded",
+    filterSummary: billedPdfFilterSummary(),
+    sortSummary: billedPdfSortSummary(),
+    pageWidth: doc.internal.pageSize.getWidth(),
+    pageHeight: doc.internal.pageSize.getHeight(),
+  };
+  const rows = billedPdfTableRows(records);
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "sn" },
+      { header: "Client Name", dataKey: "client" },
+      { header: "Service Type", dataKey: "service" },
+      { header: "Dates", dataKey: "dates" },
+      { header: "Gross\nBill", dataKey: "gross" },
+      { header: "Discount", dataKey: "discount" },
+      { header: "Net\nBill", dataKey: "net" },
+      { header: "Received", dataKey: "received" },
+      { header: "Balance", dataKey: "balance" },
+      { header: "Receipt\nDetails", dataKey: "receipt" },
+      { header: "Payment\nStatus", dataKey: "status" },
+    ],
+    body: rows,
+    theme: "grid",
+    showHead: "everyPage",
+    pageBreak: "auto",
+    rowPageBreak: "avoid",
+    margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: {
+      font: "DejaVuSans",
+      fontStyle: "normal",
+      fontSize: 6.8,
+      cellPadding: { top: 3.5, right: 2.8, bottom: 3.5, left: 2.8 },
+      overflow: "linebreak",
+      valign: "middle",
+      textColor: BILLED_PDF_COLORS.text,
+      lineColor: BILLED_PDF_COLORS.border,
+      lineWidth: 0.3,
+      minCellHeight: 21,
+    },
+    headStyles: {
+      font: "DejaVuSans",
+      fontStyle: "bold",
+      fontSize: 7.3,
+      fillColor: BILLED_PDF_COLORS.navy,
+      textColor: [255, 255, 255],
+      halign: "center",
+      valign: "middle",
+      lineColor: BILLED_PDF_COLORS.border,
+      lineWidth: 0.35,
+      minCellHeight: 26,
+    },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: {
+      sn: { halign: "center", cellWidth: 23 },
+      client: { halign: "left", cellWidth: 140 },
+      service: { halign: "left", cellWidth: 101 },
+      dates: { halign: "left", cellWidth: 86 },
+      gross: { halign: "right", cellWidth: 62 },
+      discount: { halign: "right", cellWidth: 55 },
+      net: { halign: "right", cellWidth: 62 },
+      received: { halign: "right", cellWidth: 62 },
+      balance: { halign: "right", cellWidth: 62 },
+      receipt: { halign: "center", cellWidth: 78 },
+      status: { halign: "center", cellWidth: 50 },
+    },
+    willDrawPage: () => {
+      const page = doc.internal.getCurrentPageInfo().pageNumber;
+      if (page === 1) drawBilledPdfFirstHeader(doc, context);
+      else drawBilledPdfCompactHeader(doc, context);
+    },
+    didParseCell: (data) => {
+      if (data.section !== "body" || data.column.dataKey !== "status") return;
+      const status = rows[data.row.index]?.status;
+      data.cell.styles.fontStyle = "bold";
+      if (status === "Received") {
+        data.cell.styles.textColor = BILLED_PDF_COLORS.green;
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightGreen;
+      } else if (status === "Partially Received") {
+        data.cell.styles.textColor = BILLED_PDF_COLORS.amber;
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightAmber;
+      } else if (status === "Fully Discounted") {
+        data.cell.styles.textColor = BILLED_PDF_COLORS.violet;
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightViolet;
+      } else {
+        data.cell.styles.textColor = BILLED_PDF_COLORS.red;
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightRed;
+      }
+    },
+  });
+  drawBilledPdfGrandTotals(doc, context);
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
 async function exportFilteredFilesPdf(files, button) {
   if (!rolePerm().export) return toast("This role cannot export data.");
   const sourceFiles = Array.isArray(files) ? files : sortFilesForDisplay(filteredFiles());
   if (!sourceFiles.length) return toast("No records available for the selected filters.");
   const sectionTitle = fileListSectionTitle();
   const reportTitle = `${sectionTitle} Report`.toUpperCase();
+  const billedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "billed";
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
   const feePendingPdf = (state.filters.listView || state.filters.dashboardKind) === "feePending";
@@ -17576,6 +18151,12 @@ async function exportFilteredFilesPdf(files, button) {
     button.innerHTML = `${navIcon("pdf")}Generating...`;
   }
   try {
+    if (billedFilesPdf) {
+      const { doc } = await createBilledFilesPdfDocument(sourceFiles);
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Billed Files PDF downloaded");
+      return;
+    }
     await loadPdfTools();
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
