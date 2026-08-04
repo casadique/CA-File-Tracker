@@ -349,6 +349,7 @@ let supabaseBrowserLoadPromise = null;
 let desktopNotificationAdminStatus = null;
 let currentDeviceSubscribed = false;
 let filterTimer = null;
+let billedFilterRequestId = 0;
 let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
@@ -3131,7 +3132,8 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const haystack = `${file.name} ${file.pan} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
+    const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
+    const haystack = `${file.name} ${registrationSearchValue} ${file.serviceType} ${file.careOf || ""} ${file.fy || ""} ${file.mode || ""} ${file.assignedStaff} ${file.reAssignedStaff || ""} ${file.reassignedFrom || ""} ${file.reassignedBy || ""} ${file.remarks}`.toLowerCase();
     if (f.listView === "active" && !isDashboardActiveFile(file)) return false;
     if (f.listView === "completed" && (!isCheckedCompleted(file) || (isCorrectedCompleted(file) && !isCheckedFile(file)))) return false;
     if (f.listView === "notChecked" && !isNotCheckedFile(file)) return false;
@@ -5424,14 +5426,137 @@ function resetFiltersKeepingCurrentFileModule() {
   Object.assign(state.filters, keep);
 }
 
+const BILLED_FILE_FILTERS = [
+  { key: "search", label: "Global Search", defaultValue: "" },
+  { key: "client", label: "Client", defaultValue: "" },
+  { key: "careOfFilter", label: "C/o", defaultValue: "" },
+  { key: "service", label: "Service", defaultValue: "" },
+  { key: "staff", label: "Staff", defaultValue: "" },
+  { key: "status", label: "Status", defaultValue: "" },
+  { key: "workflow", label: "Workflow", defaultValue: "" },
+  { key: "due", label: "Due Date", defaultValue: "" },
+  { key: "priority", label: "Priority", defaultValue: "" },
+  { key: "billing", label: "Billing", defaultValue: "" },
+  { key: "receivedSort", label: "Received Date", defaultValue: "Newest First" },
+  { key: "pan", label: "PAN/Reg No.", defaultValue: "" },
+  { key: "overdue", label: "Overdue", defaultValue: "" },
+  { key: "pendingApproval", label: "Approval Pending", defaultValue: "" },
+];
+
+function billedFilesShownLabel(count) {
+  return `${count} ${count === 1 ? "File" : "Files"} Shown`;
+}
+
+function billedFilterSessionValue(name) {
+  try {
+    return sessionStorage.getItem(`${STORAGE_KEY}-billed-filters-${name}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setBilledFilterSessionValue(name, enabled) {
+  try {
+    sessionStorage.setItem(`${STORAGE_KEY}-billed-filters-${name}`, enabled ? "1" : "0");
+  } catch {
+    // Session storage is optional; filtering remains functional without it.
+  }
+}
+
+function billedActiveFilters() {
+  return BILLED_FILE_FILTERS.filter(({ key, defaultValue }) => {
+    const value = String(state.filters[key] || "");
+    return value !== String(defaultValue || "");
+  }).map((item) => ({ ...item, value: String(state.filters[item.key] || "") }));
+}
+
+function billedSelectFilter(key, label, options, placeholder) {
+  const selected = String(state.filters[key] || "");
+  return `<div class="field"><label>${escapeHtml(label)}</label><select data-filter="${key}" aria-label="${escapeHtml(label)}">
+    <option value="">${escapeHtml(placeholder)}</option>
+    ${options.filter(Boolean).map((option) => `<option value="${escapeHtml(option)}" ${selected === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+  </select></div>`;
+}
+
+function billedActiveFilterChips() {
+  const active = billedActiveFilters();
+  if (!active.length) return "";
+  return `<div class="billed-active-filter-row">
+    <span class="billed-active-filter-label">Active Filters:</span>
+    <div class="billed-filter-chips">${active.map(({ key, label, value }) => `
+      <span class="billed-filter-chip">${escapeHtml(label)}: ${escapeHtml(value)}
+        <button type="button" data-remove-billed-filter="${key}" aria-label="Remove ${escapeHtml(label)} filter">&times;</button>
+      </span>`).join("")}</div>
+    ${active.length > 1 ? `<button type="button" class="billed-chip-clear" data-clear-billed-filters>Clear All</button>` : ""}
+  </div>`;
+}
+
+function renderBilledFilesFilterPanel(files) {
+  const collapsed = billedFilterSessionValue("collapsed");
+  const moreOpen = billedFilterSessionValue("more");
+  const activeCount = billedActiveFilters().length;
+  return `<section class="billed-filter-card ${collapsed ? "is-collapsed" : ""}" id="billedFilterCard">
+    <div class="billed-filter-header">
+      <div class="billed-filter-title-group">
+        <h3>Search &amp; Filter Billed Files</h3>
+        <span class="billed-active-count ${activeCount ? "" : "hidden"}" id="billedActiveFilterCount">${activeCount} Active</span>
+      </div>
+      <div class="billed-filter-header-actions">
+        <span class="billed-filter-loading" id="billedFilterLoading" role="status" aria-live="polite"><i></i> Updating</span>
+        <span class="billed-results-badge" id="fileCount">${billedFilesShownLabel(files.length)}</span>
+        <button type="button" class="billed-header-clear" id="billedHeaderClear" ${activeCount ? "" : "disabled"}>Clear All</button>
+        <button type="button" class="billed-mobile-filter-toggle" id="billedMobileFiltersToggle" aria-expanded="false">Filters${activeCount ? ` (${activeCount})` : ""}</button>
+        <button type="button" class="billed-collapse-toggle" id="billedCollapseToggle" aria-label="${collapsed ? "Expand" : "Collapse"} billed file filters" aria-expanded="${collapsed ? "false" : "true"}">${navIcon("chevron")}</button>
+      </div>
+    </div>
+    <div class="billed-filter-body" id="billedFilterBody" aria-hidden="${collapsed ? "true" : "false"}">
+      <div class="billed-mobile-sheet-head"><strong>Filter Billed Files</strong><button type="button" id="billedMobileFiltersClose" aria-label="Close filters">&times;</button></div>
+      <div class="billed-filter-grid billed-filter-grid-primary">
+        <div class="field billed-global-search"><label>Global Search</label><div class="billed-search-input">${navIcon("search")}<input type="search" data-filter="search" value="${escapeHtml(state.filters.search || "")}" placeholder="Search client, PAN, staff or remarks" aria-label="Global Search"></div></div>
+        ${inputFilter("client", "Client Name", "Select client")}
+        ${comboFilter("careOfFilter", "C/o", careOfDropdownOptions(), "Select C/o")}
+        ${billedSelectFilter("service", "Service Type", serviceFilterOptions(), "Select service")}
+        ${billedSelectFilter("staff", "Staff", assignableStaffNames(), "Select staff")}
+        ${billedSelectFilter("status", "Status", ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Corrected & Completed", "Approved", "Completed", "Billed", "Overdue"], "Select status")}
+      </div>
+      <div class="billed-filter-grid billed-filter-grid-secondary">
+        ${billedSelectFilter("workflow", "Workflow", stages, "Select workflow")}
+        ${inputFilter("due", "Due Date", "", "date")}
+        ${billedSelectFilter("priority", "Priority", ["Low", "Medium", "High", "Urgent"], "Select priority")}
+        ${billedSelectFilter("billing", "Billing", ["Billed", "Unbilled"], "Select billing status")}
+        ${billedSelectFilter("receivedSort", "Sort by Received Date", ["Newest First", "Oldest First"], "Sort by received date")}
+        <div class="field billed-more-field"><label>Additional</label><button type="button" class="billed-more-toggle" id="billedMoreToggle" aria-expanded="${moreOpen ? "true" : "false"}">More Filters <span>${navIcon("chevron")}</span></button></div>
+      </div>
+      <div class="billed-more-filters ${moreOpen ? "is-open" : ""}" id="billedMoreFilters" aria-hidden="${moreOpen ? "false" : "true"}">
+        ${inputFilter("pan", "PAN/Reg No.", "PAN or Registration No.")}
+        ${billedSelectFilter("overdue", "Overdue Files", ["Yes"], "All overdue states")}
+        ${billedSelectFilter("pendingApproval", "Approval Pending", ["Yes"], "All approval states")}
+      </div>
+      <div id="billedActiveFilters">${billedActiveFilterChips()}</div>
+    </div>
+    <button type="button" class="billed-mobile-filter-backdrop" id="billedMobileFilterBackdrop" aria-label="Close filters"></button>
+  </section>`;
+}
+
+function billedFilesActionToolbar() {
+  return `<div class="billed-filter-toolbar">
+    <div><button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button></div>
+    <div class="billed-export-actions">
+      ${rolePerm().export ? `<button class="secondary-button file-action-button file-action-excel" id="exportFiltered">${navIcon("spreadsheet")}Export Filtered Excel</button>` : ""}
+      ${rolePerm().export ? `<button class="secondary-button file-action-button pdf-export-button file-action-pdf" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
+    </div>
+  </div>`;
+}
+
 function renderFilesPage() {
   if (isStaffLogin()) return renderStaffFilesPage();
   if (state.filters.listView === "removed") return renderRemovedFilesPage();
   if (!state.filters.receivedSort) state.filters.receivedSort = "Newest First";
   const files = sortFilesForDisplay(filteredFiles());
+  const isBilledView = state.filters.listView === "billed";
   document.querySelector("#files").innerHTML = `
     <div class="panel">
-      <div class="filter-hero">
+      ${isBilledView ? renderBilledFilesFilterPanel(files) : `<div class="filter-hero">
         <div>
           <h3>Search & Filter Files</h3>
         </div>
@@ -5457,22 +5582,25 @@ function renderFilesPage() {
         ${selectFilter("pendingApproval", "Approval Pending", ["", "Yes"])}
         ${isStaffLogin() ? inputFilter("fileFrom", "From", "", "date") : ""}
         ${isStaffLogin() ? inputFilter("fileTo", "To", "", "date") : ""}
-      </div>
-      <div class="action-row" style="margin-bottom:14px">
+      </div>`}
+      ${isBilledView ? billedFilesActionToolbar() : `<div class="action-row" style="margin-bottom:14px">
         <button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button>
         ${isStaffLogin() ? `<button class="secondary-button" id="clearStaffDates">Clear Dates</button>` : ""}
         ${rolePerm().export ? `<button class="secondary-button file-action-button file-action-excel" id="exportFiltered">${navIcon("spreadsheet")}Export Filtered Excel</button>` : ""}
         ${rolePerm().export ? `<button class="secondary-button file-action-button pdf-export-button file-action-pdf" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
-      </div>
+      </div>`}
       <div id="fileResults">${renderFileTable(files)}</div>
     </div>
   `;
-  bindFilters();
-  document.querySelector("#clearFilters").onclick = () => {
-    resetFiltersKeepingCurrentFileModule();
-    saveState();
-    renderAll();
-  };
+  if (isBilledView) bindBilledFilesFilters();
+  else bindFilters();
+  if (!isBilledView) {
+    document.querySelector("#clearFilters").onclick = () => {
+      resetFiltersKeepingCurrentFileModule();
+      saveState();
+      renderAll();
+    };
+  }
   const clearStaffDates = document.querySelector("#clearStaffDates");
   if (clearStaffDates) {
     clearStaffDates.onclick = () => {
@@ -6236,6 +6364,150 @@ function bindFilters() {
     el.oninput = update;
     el.onchange = update;
   });
+}
+
+function setBilledFilterLoading(loading) {
+  const indicator = document.querySelector("#billedFilterLoading");
+  if (indicator) indicator.classList.toggle("is-active", loading);
+}
+
+function resetBilledFileFilters() {
+  billedFilterRequestId += 1;
+  clearTimeout(filterTimer);
+  BILLED_FILE_FILTERS.forEach(({ key, defaultValue }) => {
+    state.filters[key] = defaultValue;
+    const control = document.querySelector(`[data-filter='${key}']`);
+    if (control) control.value = defaultValue;
+  });
+  saveViewState();
+  refreshBilledFileResults();
+}
+
+function removeBilledFileFilter(key) {
+  const config = BILLED_FILE_FILTERS.find((item) => item.key === key);
+  if (!config) return;
+  billedFilterRequestId += 1;
+  clearTimeout(filterTimer);
+  state.filters[key] = config.defaultValue;
+  const control = document.querySelector(`[data-filter='${key}']`);
+  if (control) control.value = config.defaultValue;
+  saveViewState();
+  refreshBilledFileResults();
+}
+
+function bindBilledFilterChips() {
+  document.querySelectorAll("[data-remove-billed-filter]").forEach((button) => {
+    button.onclick = () => removeBilledFileFilter(button.dataset.removeBilledFilter);
+  });
+  document.querySelectorAll("[data-clear-billed-filters]").forEach((button) => {
+    button.onclick = resetBilledFileFilters;
+  });
+}
+
+function updateBilledFilterChrome(files) {
+  const activeCount = billedActiveFilters().length;
+  const count = document.querySelector("#fileCount");
+  if (count) count.textContent = billedFilesShownLabel(files.length);
+  const activeBadge = document.querySelector("#billedActiveFilterCount");
+  if (activeBadge) {
+    activeBadge.textContent = `${activeCount} Active`;
+    activeBadge.classList.toggle("hidden", !activeCount);
+  }
+  const headerClear = document.querySelector("#billedHeaderClear");
+  if (headerClear) headerClear.disabled = !activeCount;
+  const mobileToggle = document.querySelector("#billedMobileFiltersToggle");
+  if (mobileToggle) mobileToggle.textContent = `Filters${activeCount ? ` (${activeCount})` : ""}`;
+  const chips = document.querySelector("#billedActiveFilters");
+  if (chips) {
+    chips.innerHTML = billedActiveFilterChips();
+    bindBilledFilterChips();
+  }
+}
+
+function refreshBilledFileResults() {
+  const files = sortFilesForDisplay(filteredFiles());
+  const results = document.querySelector("#fileResults");
+  updateBilledFilterChrome(files);
+  setBilledFilterLoading(false);
+  if (results) {
+    results.innerHTML = renderFileTable(files);
+    bindFileActions();
+  }
+}
+
+function scheduleBilledFilterRefresh(delay = 0) {
+  const requestId = ++billedFilterRequestId;
+  clearTimeout(filterTimer);
+  setBilledFilterLoading(delay > 0);
+  filterTimer = setTimeout(() => {
+    if (requestId !== billedFilterRequestId) return;
+    refreshBilledFileResults();
+  }, delay);
+}
+
+function bindBilledFilesFilters() {
+  document.querySelectorAll("#billedFilterCard [data-filter]").forEach((control) => {
+    const key = control.dataset.filter;
+    const update = (delay) => {
+      state.filters[key] = control.value;
+      saveViewState();
+      scheduleBilledFilterRefresh(delay);
+    };
+    if (key === "search") {
+      control.oninput = () => update(350);
+      control.onchange = () => update(0);
+    } else if (control.tagName === "SELECT" || control.type === "date") {
+      control.onchange = () => update(0);
+    } else {
+      control.oninput = () => update(180);
+      control.onchange = () => update(0);
+    }
+  });
+  const clearButton = document.querySelector("#clearFilters");
+  if (clearButton) clearButton.onclick = resetBilledFileFilters;
+  const headerClear = document.querySelector("#billedHeaderClear");
+  if (headerClear) headerClear.onclick = resetBilledFileFilters;
+  bindBilledFilterChips();
+
+  const card = document.querySelector("#billedFilterCard");
+  const body = document.querySelector("#billedFilterBody");
+  const collapseButton = document.querySelector("#billedCollapseToggle");
+  if (collapseButton) {
+    collapseButton.onclick = () => {
+      const collapsed = !card.classList.contains("is-collapsed");
+      card.classList.toggle("is-collapsed", collapsed);
+      collapseButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      collapseButton.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} billed file filters`);
+      body?.setAttribute("aria-hidden", collapsed ? "true" : "false");
+      setBilledFilterSessionValue("collapsed", collapsed);
+    };
+  }
+
+  const moreButton = document.querySelector("#billedMoreToggle");
+  const moreFilters = document.querySelector("#billedMoreFilters");
+  if (moreButton && moreFilters) {
+    moreButton.onclick = () => {
+      const open = !moreFilters.classList.contains("is-open");
+      moreFilters.classList.toggle("is-open", open);
+      moreButton.setAttribute("aria-expanded", open ? "true" : "false");
+      moreFilters.setAttribute("aria-hidden", open ? "false" : "true");
+      setBilledFilterSessionValue("more", open);
+    };
+  }
+
+  const mobileButton = document.querySelector("#billedMobileFiltersToggle");
+  if (mobileButton) {
+    const setMobileOpen = (open) => {
+      card.classList.toggle("mobile-open", open);
+      mobileButton.setAttribute("aria-expanded", open ? "true" : "false");
+      body?.setAttribute("aria-hidden", open ? "false" : (card.classList.contains("is-collapsed") ? "true" : "false"));
+    };
+    mobileButton.onclick = () => setMobileOpen(!card.classList.contains("mobile-open"));
+    const closeButton = document.querySelector("#billedMobileFiltersClose");
+    const backdrop = document.querySelector("#billedMobileFilterBackdrop");
+    if (closeButton) closeButton.onclick = () => setMobileOpen(false);
+    if (backdrop) backdrop.onclick = () => setMobileOpen(false);
+  }
 }
 
 function refreshFileResults() {

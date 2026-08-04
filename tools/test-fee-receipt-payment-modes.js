@@ -220,6 +220,25 @@ async function main() {
   }
   assert.doesNotMatch(billedReportBody, /"Bill No\."|"Transaction Status"|"Payment Status"/,
     "Billed Files report must exclude obsolete columns");
+  const billedFilterPanelBody = browserAppSource.match(
+    /function renderBilledFilesFilterPanel[\s\S]*?(?=\nfunction billedFilesActionToolbar)/,
+  )?.[0] || "";
+  for (const requiredText of ["Search &amp; Filter Billed Files", "Global Search", "More Filters", "billedActiveFilterChips", "billedFilesShownLabel"]) {
+    assert.match(billedFilterPanelBody, new RegExp(requiredText),
+      `Billed Files compact filter panel must include ${requiredText}`);
+  }
+  const billedFilterBindingBody = browserAppSource.match(
+    /function bindBilledFilesFilters[\s\S]*?(?=\nfunction refreshFileResults)/,
+  )?.[0] || "";
+  assert.match(billedFilterBindingBody, /control\.oninput = \(\) => update\(350\)/,
+    "Billed Files global search must use the 350ms debounce");
+  assert.match(billedFilterBindingBody, /setBilledFilterSessionValue\("collapsed"/,
+    "Billed Files filter collapse state must be remembered for the session");
+  const billedChipBindingBody = browserAppSource.match(
+    /function bindBilledFilterChips[\s\S]*?(?=\nfunction updateBilledFilterChrome)/,
+  )?.[0] || "";
+  assert.match(billedChipBindingBody, /data-remove-billed-filter[\s\S]*removeBilledFileFilter/,
+    "Billed Files active filter chips must remove one filter at a time");
   const receivedTableBody = browserAppSource.match(
     /function renderFeeReceivedFileTable[\s\S]*?(?=\nfunction feeReceiptIdForFile)/,
   )?.[0] || "";
