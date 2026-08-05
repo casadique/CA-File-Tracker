@@ -9315,7 +9315,11 @@ function feeCollectionReadOnly(label, value) {
 }
 
 function feeCollectionOriginalValues(data = {}) {
-  const { receipt = {}, file = {}, transaction = {} } = data;
+  const receipt = data.receipt || {};
+  const file = data.file || {};
+  // Receipt-only and legacy fee collections intentionally have no linked
+  // Transactions record. Normalize that API `null` before reading its fields.
+  const transaction = data.transaction || {};
   const discountAmount = Number(receipt.discountAmount || receipt.discount_amount || receipt.discount || 0);
   return {
     billNo: file.billNo || "",

@@ -68,6 +68,10 @@ async function main() {
   assert.equal(editor.file.name, "Editor Test Client");
   assert.equal(editor.otherReceipts.totalReceived, 0);
 
+  const receiptOnlyEditor = await finance.getFeeCollectionEditor("receipt-2");
+  assert.equal(receiptOnlyEditor.receipt.id, "receipt-2");
+  assert.equal(receiptOnlyEditor.transaction, null, "Receipt-only records must load without inventing a transaction");
+
   const partial = await finance.editFeeCollection("receipt-1", {
     billNo: "INV-1", billDate: "2026-08-02", grossBillAmount: 1000,
     discountType: "Fixed Amount", discountAmount: 50, discountReason: "Approved adjustment",
@@ -160,6 +164,8 @@ async function main() {
   for (const text of ["Edit Fee Collection", "Client & File Details", "Invoice Details", "Discount Details", "Receipt Details", "Transaction Details", "Calculation Summary", "Remarks and Audit Information", "Confirm and Save"]) assert.match(appSource, new RegExp(text));
   assert.match(appSource, /loadFeeCollectionEditorFromApi/);
   assert.match(appSource, /updateFeeCollectionInApi/);
+  assert.match(appSource, /const transaction = data\.transaction \|\| \{\}/,
+    "The browser editor must safely normalize a null linked transaction");
   assert.match(routes, /router\.get\("\/fee-receipts\/receipt\/:receiptId\/editor"[\s\S]*?requireRole\(\.\.\.financeRoles\)/);
   assert.match(routes, /router\.patch\("\/fee-receipts\/receipt\/:receiptId"[\s\S]*?requireRole\(\.\.\.financeRoles\)/);
   assert.match(styles, /\.fee-collection-modal-card[\s\S]*?width:\s*min\(1180px, 100%\)/);
