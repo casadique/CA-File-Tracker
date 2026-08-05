@@ -3135,7 +3135,7 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const configuredBillingView = ["", "active", "completed", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
+    const configuredBillingView = ["", "active", "completed", "notChecked", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
       ? configuredFinancialSearchHaystack(file)
@@ -5595,6 +5595,10 @@ function configuredFinancialFilterConfigs() {
     "Completion Date - Newest First", "Completion Date - Oldest First", "Checked Date - Newest First",
     "Checked Date - Oldest First", "Client Name - A to Z", "Service Type", "Done By", "Checked By", "Billing Status",
   ];
+  const notCheckedSort = [
+    "Completion Date - Newest First", "Completion Date - Oldest First", "Client Name - A to Z",
+    "Service Type", "Done By", "Assigned Staff", "Priority",
+  ];
   const activeSort = [
     "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority", "Workflow Status",
@@ -5683,6 +5687,34 @@ function configuredFinancialFilterConfigs() {
       advanced: [common.pan,
         { key: "completedCheckedBy", label: "Checked By", type: "text", placeholder: "Search checker" },
         { key: "priority", label: "File Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+        common.hasRemarks,
+      ],
+    },
+    notChecked: {
+      title: "Search & Filter Not Checked Files",
+      mobileTitle: "Filter Not Checked Files",
+      mainPrimary: [
+        { ...common.search, label: "Global Search", placeholder: "Search client, PAN, service, done by, staff, C/o or remarks" },
+        common.client, common.careOf, common.service,
+        { key: "notCheckedDoneBy", label: "Done By", type: "select", emptyLabel: "All staff", options: () => assignableStaffNames() },
+        { key: "notCheckedEligibility", label: "Checking Eligibility", type: "select", emptyLabel: "All awaiting checks", options: ["Ready for Me to Check", "Another Checker Required"] },
+      ],
+      mainSecondary: [
+        { label: "Completion Date Range", type: "range", controls: [
+          { key: "notCheckedCompletionFrom", label: "Completed From", type: "date" },
+          { key: "notCheckedCompletionTo", label: "Completed To", type: "date" },
+        ] },
+        { label: "Received Date Range", type: "range", controls: [
+          { key: "notCheckedReceivedFrom", label: "Received From", type: "date" },
+          { key: "notCheckedReceivedTo", label: "Received To", type: "date" },
+        ] },
+        { key: "priority", label: "Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+        common.fy,
+        { key: "notCheckedSort", label: "Sort By", type: "select", options: notCheckedSort, defaultValue: notCheckedSort[0] },
+      ],
+      advanced: [common.pan, common.staff,
+        { key: "notCheckedCorrectionHistory", label: "Correction History", type: "select", emptyLabel: "All records", options: ["Has Correction History", "No Correction History"] },
+        { key: "notCheckedMissingCompletionDate", label: "Completion Date", type: "select", emptyLabel: "Available or missing", options: ["Available", "Missing"] },
         common.hasRemarks,
       ],
     },
@@ -6011,6 +6043,21 @@ function configuredFinancialFileMatches(file, listView, filters) {
     if (!configuredFinancialDateInRange(facts.completionDate, filters.completedFrom, filters.completedTo)) return false;
     if (!configuredFinancialDateInRange(facts.checkedDate, filters.completedCheckedFrom, filters.completedCheckedTo)) return false;
     if (filters.completedCheckedBy && !String(file.checkedBy || file.checked_by || "").toLowerCase().includes(filters.completedCheckedBy.toLowerCase())) return false;
+    return true;
+  }
+  if (listView === "notChecked") {
+    const doneBy = String(file.completedBy || file.workDoneBy || file.assignedStaff || "");
+    if (filters.notCheckedDoneBy && !sameStaffName(doneBy, filters.notCheckedDoneBy)) return false;
+    if (filters.priority && String(file.priority || "Medium") !== filters.priority) return false;
+    if (!configuredFinancialDateInRange(facts.completionDate, filters.notCheckedCompletionFrom, filters.notCheckedCompletionTo)) return false;
+    if (!configuredFinancialDateInRange(facts.receivedDate, filters.notCheckedReceivedFrom, filters.notCheckedReceivedTo)) return false;
+    if (filters.notCheckedEligibility === "Ready for Me to Check" && !canCheckFile(file)) return false;
+    if (filters.notCheckedEligibility === "Another Checker Required" && canCheckFile(file)) return false;
+    const hasCorrectionHistory = Boolean(latestCorrectionForFile(file) || file.correctionRemarks || file.returnedDate || file.returnedAt || file.returned_at);
+    if (filters.notCheckedCorrectionHistory === "Has Correction History" && !hasCorrectionHistory) return false;
+    if (filters.notCheckedCorrectionHistory === "No Correction History" && hasCorrectionHistory) return false;
+    if (filters.notCheckedMissingCompletionDate === "Available" && !facts.completionDate) return false;
+    if (filters.notCheckedMissingCompletionDate === "Missing" && facts.completionDate) return false;
     return true;
   }
   if (listView === "nonBilled") {
@@ -6389,7 +6436,7 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
   document.querySelector("#files").innerHTML = `<div class="panel">
     ${renderConfiguredFinancialFilterPanel(files, config)}
     ${billedFilesActionToolbar()}
-    <div id="fileResults">${listView === "" ? renderMasterFileTable(files) : listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : renderStaffFileTable(files, listView)}</div>
+    <div id="fileResults">${listView === "" ? renderMasterFileTable(files) : listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView)}</div>
   </div>`;
   bindConfiguredFinancialFilters(config);
   const exportExcelButton = document.querySelector("#exportFiltered");
@@ -6814,7 +6861,7 @@ function sortConfiguredFinancialFiles(files, listView) {
 }
 
 function sortFilesForDisplay(files) {
-  if (["", "active", "completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
+  if (["", "active", "completed", "notChecked", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -7833,37 +7880,30 @@ function renderFileTable(files) {
   `;
 }
 
-function renderNotCheckedFileTable(files) {
-  const rows = sortFilesByCompletionNewestFirst(files);
-  const managerCheckingColumns = canManageChecking();
-  return `
-    <div class="table-wrap file-table-wrap">
-      <table class="file-table file-table-compact">
-        <thead><tr>
-          <th>SN</th><th>Client Name</th><th>Type of Service</th><th>File Inward Date</th><th>Work Completion Date ↓</th><th>Done By</th><th>Checking Status</th>${managerCheckingColumns ? "<th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map((file, index) => {
-            const checking = checkingStatusOf(file);
-            const correction = latestCorrectionForFile(file);
-            const correctionReason = correction?.correctionReason || correction?.correction_reason || file.correctionRemarks || "";
-            const correctionMeta = correctionReason ? `<span class="subtext correction-reason-line">Correction Reason: ${escapeHtml(correctionReason)}</span><span class="subtext">Returned By: ${escapeHtml(correction?.returnedBy || correction?.returned_by_name || file.returnedBy || "-")} | Returned On: ${escapeHtml(fmt(correction?.returnedAt || correction?.returned_at || file.returnedDate) || "-")}</span>` : "";
-            return `<tr class="file-row file-row-${checking.className || "approval"}">
-              <td>${index + 1}</td>
-              <td class="client-details-cell">${clientDetailsCell(file)}${correctionMeta}</td>
-              <td>${escapeHtml(file.serviceType || "")}</td>
-              <td>${fmt(file.fileReceivedDate)}</td>
-              <td>${fmt(workCompletedDate(file))}</td>
-              <td>${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}</td>
-              <td><span class="badge ${checking.className || "approval"}">${checking.label}</span></td>
-              ${managerCheckingColumns ? `<td>${escapeHtml(file.checkedBy || "-")}</td><td>${file.checkedDate ? fmt(file.checkedDate) : "-"}</td>` : ""}
-              <td><div class="action-row">${notCheckedFileActions(file)}</div></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
+function notCheckedExpandedDetails(file = {}) {
+  const correction = latestCorrectionForFile(file);
+  const correctionReason = correction?.correctionReason || correction?.correction_reason || file.correctionRemarks || "No correction history";
+  const returnedBy = correction?.returnedBy || correction?.returned_by_name || file.returnedBy || "-";
+  const returnedOn = correction?.returnedAt || correction?.returned_at || file.returnedDate || "";
+  return `<div class="not-checked-expanded-grid"><div><span>Received</span><strong>${escapeHtml(displayDate(file.fileReceivedDate) || "-")}</strong></div><div><span>Work Allotted</span><strong>${escapeHtml(displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-")}</strong></div><div><span>Due Date</span><strong>${escapeHtml(displayDate(file.dueDate) || "Not set")}</strong></div><div><span>Assigned Staff</span><strong>${escapeHtml(currentFileAssignee(file).name || "Not Assigned")}</strong></div><div><span>Returned By / On</span><strong>${escapeHtml(returnedBy)}${returnedOn ? ` · ${escapeHtml(displayDate(returnedOn) || fmt(returnedOn))}` : ""}</strong></div><div><span>Correction History</span><strong>${escapeHtml(correctionReason)}</strong></div><div class="not-checked-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div></div>`;
+}
+
+function notCheckedDesktopRows(files = []) {
+  return files.map((file, index) => {
+    const doneBy = file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned";
+    const eligible = canManageChecking() && canCheckFile(file);
+    return `<tr class="not-checked-file-row"><td class="not-checked-sn">${fileSerialNumber(file, index)}</td><td class="not-checked-client"><div class="not-checked-client-line"><button type="button" class="billed-expand-toggle" data-not-checked-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(file)}</div></div></td><td class="not-checked-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")}</span></td><td class="not-checked-completion"><strong>${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</strong><span>Done by ${escapeHtml(doneBy)}</span></td><td class="not-checked-careof">${escapeHtml(file.careOf || "Direct")}</td><td class="not-checked-status"><span class="not-checked-status-badge"><i></i>Awaiting Check</span><small>${eligible ? "Ready for you to check" : canManageChecking() ? "Another checker required" : "Pending authorised review"}</small></td><td class="not-checked-priority"><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></td><td class="not-checked-actions-column"><div class="action-row">${notCheckedFileActions(file)}</div></td></tr><tr class="not-checked-details-row" hidden><td colspan="8">${notCheckedExpandedDetails(file)}</td></tr>`;
+  }).join("");
+}
+
+function notCheckedMobileCard(file = {}, index = 0) {
+  const doneBy = file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned";
+  const eligible = canManageChecking() && canCheckFile(file);
+  return `<article class="not-checked-mobile-card${index % 2 ? " is-alt" : ""}"><div class="not-checked-mobile-head"><button type="button" class="billed-expand-toggle" data-not-checked-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div><div class="not-checked-mobile-summary"><div><span>Completed</span><strong>${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</strong></div><div><span>Done By</span><strong>${escapeHtml(doneBy)}</strong></div><div><span>C/o</span><strong>${escapeHtml(file.careOf || "Direct")}</strong></div><div><span>Checking</span><strong>${eligible ? "Ready to check" : canManageChecking() ? "Another checker required" : "Awaiting review"}</strong></div></div><div class="not-checked-mobile-actions">${notCheckedFileActions(file)}</div><div class="not-checked-mobile-details" hidden>${notCheckedExpandedDetails(file)}</div></article>`;
+}
+
+function renderNotCheckedFileTable(files = []) {
+  return `<div class="table-wrap not-checked-table-wrap"><table class="file-table not-checked-modern-table"><thead><tr><th class="not-checked-sn">SN</th><th class="not-checked-client">Client</th><th>Service</th><th>Completion</th><th>C/o</th><th>Checking</th><th>Priority</th><th class="not-checked-actions-column">Actions</th></tr></thead><tbody>${notCheckedDesktopRows(files)}</tbody></table><div class="not-checked-mobile-list">${files.map(notCheckedMobileCard).join("")}</div></div>`;
 }
 
 function renderFeePendingFileTable(files = []) {
@@ -9124,17 +9164,21 @@ function reverseFeeReceiptLocally(receiptId, reason) {
   saveState();
 }
 
-function notCheckedFileActions(file) {
-  const actions = [`<button class="mini-button" data-edit="${file.id}">${canManageChecking() ? "View" : "Edit"}</button>`];
-  if (canManageChecking()) {
-    if (canCheckFile(file)) {
-      actions.push(`<button class="mini-button success" data-check-file="${file.id}">Check File</button>`);
-    } else {
-      actions.push(`<span class="subtext own-check-blocked">You cannot check a file completed by yourself. This file must be checked by another authorised user.</span>`);
-    }
-    actions.push(`<button class="mini-button danger" data-return-correction="${file.id}">Return for Correction</button>`);
-  }
-  return actions.join("");
+function notCheckedFileActions(file = {}) {
+  const fileId = escapeHtml(file.id || "");
+  const canEdit = Boolean(rolePerm().edit);
+  const canManage = canManageChecking();
+  const checkable = canManage && canCheckFile(file);
+  const menuItems = [];
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (checkable) menuItems.push(billedActionMenuItem({ label: "Check File", icon: "received", attrs: `data-check-file="${fileId}"` }));
+  if (canManage) menuItems.push(billedActionMenuItem({ label: "Return for Correction", icon: "reverse", attrs: `data-return-correction="${fileId}"`, danger: true, divider: true }));
+  const primaryAction = checkable
+    ? `<button type="button" class="billed-primary-action received" data-check-file="${fileId}">${billedActionIcon("received")}<span>Check File</span></button>`
+    : canEdit
+      ? `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`
+      : `<span class="billed-payment-state">Awaiting Check</span>`;
+  return `<div class="billed-actions not-checked-actions" data-billed-actions="${fileId}">${primaryAction}${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}</div>`;
 }
 
 function removeBilledFileLocally(fileId, removalReason) {
@@ -9253,6 +9297,22 @@ function bindFileActions() {
       const details = desktopRow?.nextElementSibling?.classList.contains("fee-received-details-row")
         ? desktopRow.nextElementSibling
         : mobileCard?.querySelector(".fee-received-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
+  document.querySelectorAll("[data-not-checked-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".not-checked-file-row");
+      const mobileCard = button.closest(".not-checked-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("not-checked-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".not-checked-mobile-details");
       if (!details) return;
       const opening = details.hidden;
       details.hidden = !opening;

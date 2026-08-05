@@ -24,7 +24,7 @@ assert.equal(isNonBilled({ billed: true, billingType: "Non-Billable", ready: tru
 
 const configBlock = source.match(/function configuredFinancialFilterConfigs[\s\S]*?(?=\nfunction configuredFinancialRange)/)?.[0] || "";
 for (const required of [
-  "Search & Filter Non-Billed Files", "Search & Filter Fee Pending", "Search & Filter Fee Received",
+  "Search & Filter Not Checked Files", "Search & Filter Non-Billed Files", "Search & Filter Fee Pending", "Search & Filter Fee Received",
   "Billable - Not Yet Billed", "Billing Decision Pending", "Completion Date - Newest First", "Oldest Unbilled First",
   "Not Received", "Partially Received", "Above 90 Days", "Outstanding - Highest First",
   "Cash", "Federal Bank", "TMB", "Not Recorded", "Receipt Date - Newest First", "Received Amount - Highest First",

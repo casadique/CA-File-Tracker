@@ -1281,6 +1281,324 @@ th {
   }
 }
 
+/* Modern Not Checked Files workspace */
+.not-checked-table-wrap {
+  position: relative;
+  overflow: auto;
+  border: 1px solid #cbd9ec;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(30, 64, 175, 0.08);
+}
+
+.not-checked-modern-table {
+  min-width: 1080px;
+  border: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.not-checked-modern-table th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 12px 10px;
+  border-bottom: 1px solid #b9c9df;
+  background: #e8eef7;
+  color: #263a59;
+  font-size: 11px;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.not-checked-modern-table td {
+  padding: 11px 10px;
+  border-right: 1px solid #e1e8f2;
+  border-bottom: 1px solid #dce5f1;
+  vertical-align: middle;
+}
+
+.not-checked-modern-table tbody .not-checked-file-row:nth-of-type(4n + 3) td {
+  background: #f8fafc;
+}
+
+.not-checked-modern-table tbody .not-checked-file-row:hover td {
+  background: #eff6ff;
+}
+
+.not-checked-modern-table .not-checked-sn {
+  width: 48px;
+  min-width: 48px;
+  text-align: center;
+  font-weight: 800;
+}
+
+.not-checked-modern-table .not-checked-client {
+  position: sticky;
+  left: 48px;
+  z-index: 2;
+  width: 235px;
+  min-width: 235px;
+  background: #fff;
+  box-shadow: 1px 0 #cbd9ec;
+}
+
+.not-checked-modern-table thead .not-checked-client {
+  z-index: 6;
+  background: #e8eef7;
+}
+
+.not-checked-client-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.not-checked-client-line .client-name {
+  color: #10244a;
+  font-weight: 800;
+}
+
+.not-checked-client-line .subtext,
+.not-checked-service span,
+.not-checked-completion span {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.not-checked-service {
+  width: 170px;
+  min-width: 170px;
+}
+
+.not-checked-service strong,
+.not-checked-completion strong {
+  display: block;
+  color: #1d2e4b;
+}
+
+.not-checked-completion {
+  width: 145px;
+  min-width: 145px;
+}
+
+.not-checked-careof {
+  width: 105px;
+  min-width: 105px;
+}
+
+.not-checked-status {
+  width: 170px;
+  min-width: 170px;
+}
+
+.not-checked-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 25px;
+  padding: 4px 9px;
+  border: 1px solid #f5c25b;
+  border-radius: 999px;
+  background: #fff8df;
+  color: #9a5b00;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.not-checked-status-badge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+.not-checked-status small {
+  display: block;
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.not-checked-priority {
+  width: 90px;
+  min-width: 90px;
+  text-align: center;
+}
+
+.not-checked-actions-column {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  width: 178px;
+  min-width: 178px;
+  background: #fff;
+  box-shadow: -1px 0 #cbd9ec;
+}
+
+.not-checked-modern-table thead .not-checked-actions-column {
+  z-index: 6;
+  background: #e8eef7;
+}
+
+.not-checked-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.not-checked-actions .billed-primary-action {
+  min-width: 112px;
+  justify-content: center;
+}
+
+.not-checked-details-row td {
+  padding: 0 !important;
+  background: #f0f7ff !important;
+}
+
+.not-checked-expanded-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 12px;
+  padding: 14px 18px 14px 66px;
+}
+
+.not-checked-expanded-grid > div {
+  min-width: 0;
+}
+
+.not-checked-expanded-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.not-checked-expanded-grid strong {
+  color: #1e293b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.not-checked-expanded-remarks {
+  grid-column: 1 / -1;
+}
+
+.not-checked-mobile-list {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .not-checked-table-wrap {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .not-checked-modern-table {
+    display: none;
+  }
+
+  .not-checked-mobile-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .not-checked-mobile-card {
+    padding: 14px;
+    border: 1px solid #cbd9ec;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 7px 20px rgba(30, 64, 175, 0.08);
+  }
+
+  .not-checked-mobile-card.is-alt {
+    background: #f8fafc;
+  }
+
+  .not-checked-mobile-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .not-checked-mobile-head h3 {
+    margin: 0;
+    color: #10244a;
+    font-size: 15px;
+  }
+
+  .not-checked-mobile-head p,
+  .not-checked-mobile-head span {
+    margin: 3px 0 0;
+    color: #536783;
+    font-size: 11px;
+  }
+
+  .not-checked-mobile-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 13px 0;
+  }
+
+  .not-checked-mobile-summary > div {
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid #dbe5f1;
+    border-radius: 10px;
+    background: rgba(248, 250, 252, 0.84);
+  }
+
+  .not-checked-mobile-summary span {
+    display: block;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .not-checked-mobile-summary strong {
+    color: #14213d;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .not-checked-mobile-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 12px;
+    border-top: 1px solid #dbe5f1;
+  }
+
+  .not-checked-mobile-details {
+    margin-top: 12px;
+    border-top: 1px solid #dbe5f1;
+  }
+
+  .not-checked-mobile-details .not-checked-expanded-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 0 0;
+  }
+}
+
+@media (max-width: 430px) {
+  .not-checked-mobile-summary,
+  .not-checked-mobile-details .not-checked-expanded-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .not-checked-expanded-remarks {
+    grid-column: auto;
+  }
+}
+
 /* Compact contextual actions for Non-Billed Files. */
 .non-billed-actions-column {
   position: sticky;

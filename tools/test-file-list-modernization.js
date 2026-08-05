@@ -21,7 +21,7 @@ for (const label of [
 
 assert.match(source, /configuredFinancialFilterConfigs\(\)\[listView \|\| "fileList"\]/,
   "The empty File List view must resolve to its modern filter configuration");
-assert.match(source, /\["", "active", "completed", "nonBilled", "feePending", "feeReceived"\]\.includes\(f\.listView \|\| ""\)/,
+assert.match(source, /\["", "active", "completed", "notChecked", "nonBilled", "feePending", "feeReceived"\]\.includes\(f\.listView \|\| ""\)/,
   "File List filtering must use the configured search haystack");
 
 const matcher = block("function configuredFinancialFileMatches", "\\nfunction renderFilesPage");
@@ -34,7 +34,7 @@ assert.match(matcher, /fileListApproval === "Pending"/);
 
 const sorter = block("function sortConfiguredFinancialFiles", "\\nfunction sortFilesForDisplay");
 assert.match(sorter, /listView \? `\$\{listView\}Sort` : "fileListSort"/);
-assert.match(source, /\["", "active", "completed", "nonBilled", "feePending", "feeReceived"\][\s\S]*?sortConfiguredFinancialFiles/);
+assert.match(source, /\["", "active", "completed", "notChecked", "nonBilled", "feePending", "feeReceived"\][\s\S]*?sortConfiguredFinancialFiles/);
 
 const table = block("function masterFileActions", "\\nfunction activeFileActions");
 for (const heading of ["Client", "Service", "Work Timeline", "C/o", "Status", "Billing", "Assigned Staff", "Actions"]) {
