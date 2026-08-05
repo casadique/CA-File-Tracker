@@ -1474,16 +1474,21 @@ async function refreshApiSession() {
 
 async function saveStateToApi() {
   if (!isSupabaseMode()) return;
+  if (!lastCentralVersion) {
+    console.warn("Central database save skipped until the current data version is loaded.");
+    return;
+  }
   const shared = sharedStateForStorage(state);
   const snapshot = JSON.stringify(shared);
   if (snapshot === lastRemoteSaveSnapshot) return;
   clearTimeout(remoteSaveTimer);
   remoteSaveTimer = setTimeout(async () => {
     try {
-      await apiJson("/api/state", {
+      const payload = await apiJson("/api/state", {
         method: "PUT",
-        body: JSON.stringify({ state: shared }),
+        body: JSON.stringify({ state: shared, expectedUpdatedAt: lastCentralVersion }),
       });
+      lastCentralVersion = payload.updatedAt || lastCentralVersion;
       lastRemoteSaveSnapshot = snapshot;
     } catch (error) {
       console.warn("Central database save failed", error);
@@ -12677,12 +12682,7 @@ function renderStaffDetailsPage() {
     page.innerHTML = `<div class="permission-note">Staff Details is not available for this login.</div>`;
     return;
   }
-  const staffDatesCorrected = applyStaffDateCorrection(state);
   state.staffDetails = normalizeStaffDetails(state.staffDetails || []);
-  if (staffDatesCorrected) {
-    saveState({ skipMerge: true, fullRemote: true });
-    toast("Staff DOB and DOJ corrected by one day");
-  }
   const rows = filteredStaffDetails();
   const activeRows = activeStaffDetails();
   const birthdays = staffBirthdaysThisMonth();
@@ -13619,8 +13619,9 @@ async function persistStaffDetailsImportToApi(importedRecords = []) {
     const snapshot = JSON.stringify(shared);
     const payload = await apiJson("/api/state", {
       method: "PUT",
-      body: JSON.stringify({ state: shared }),
+      body: JSON.stringify({ state: shared, expectedUpdatedAt: lastCentralVersion }),
     });
+    lastCentralVersion = payload.updatedAt || lastCentralVersion;
     const savedStaffDetails = payload?.state?.staffDetails;
     if (!Array.isArray(savedStaffDetails)) {
       throw new Error("The central database did not confirm the imported staff records.");
@@ -15305,8 +15306,9 @@ async function persistImportedStateToApi(expectedFileCount) {
     const snapshot = JSON.stringify(shared);
     const payload = await apiJson("/api/state", {
       method: "PUT",
-      body: JSON.stringify({ state: shared }),
+      body: JSON.stringify({ state: shared, expectedUpdatedAt: lastCentralVersion }),
     });
+    lastCentralVersion = payload.updatedAt || lastCentralVersion;
     const savedFiles = payload?.state?.files;
     if (!Array.isArray(savedFiles)) {
       throw new Error("The central database did not confirm the imported file records.");

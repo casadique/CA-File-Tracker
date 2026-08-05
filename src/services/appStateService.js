@@ -12,6 +12,7 @@ const {
 } = require("./notificationRetentionService");
 
 const APP_STATE_ID = "default";
+const STAFF_DATE_CORRECTION_VERSION = "staff-dob-doj-plus-one-day-2026-08-05";
 const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
 const DISPLAY_NAME_MIGRATIONS = new Map([
   ["Najmunnisa", "Najma"],
@@ -83,11 +84,36 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     .maybeSingle();
   if (error) throw error;
   if (!data) {
-    const conflict = new Error("Central data changed while the reset was being prepared. Reload and try again.");
+    const conflict = new Error("Central data changed while this save was being prepared. Reload and try again.");
     conflict.status = 409;
     throw conflict;
   }
   return { state: data.state, updatedAt: data.updated_at };
+}
+
+function assertSafeStateReplacement(currentState = {}, incomingState = {}) {
+  const protectedCollections = [
+    "files",
+    "staffDetails",
+    "visitors",
+    "expenses",
+    "feeReceipts",
+    "otherCashCollections",
+    "openingBalances",
+    "accountTransfers",
+    "cashReconciliations",
+    "chatMessages",
+    "fileNotifications",
+  ];
+  const erased = protectedCollections.filter((key) =>
+    Array.isArray(currentState[key])
+    && currentState[key].length > 0
+    && (!Array.isArray(incomingState[key]) || incomingState[key].length === 0)
+  );
+  if (!erased.length) return;
+  const error = new Error(`Central save blocked because it would erase existing ${erased.join(", ")}. Reload and try again.`);
+  error.status = 409;
+  throw error;
 }
 
 async function patchAppState(mutator, updatedBy = null) {
@@ -127,6 +153,61 @@ async function migrateNotificationDuplicates() {
     }
   }
   return { changed: false, duplicateGroups: 0, archivedRows: 0 };
+}
+
+function normalizedStaffDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const local = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  if (local) return `${local[3]}-${local[2].padStart(2, "0")}-${local[1].padStart(2, "0")}`;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`;
+}
+
+function shiftStaffDateByOneDay(value) {
+  const normalized = normalizedStaffDate(value);
+  if (!normalized) return "";
+  const [year, month, day] = normalized.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`;
+}
+
+async function migrateStaffDates() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const record = await getAppStateRecord();
+    if (record.state.staffDateCorrectionVersion === STAFF_DATE_CORRECTION_VERSION) return { changed: false, recordsUpdated: 0 };
+    const correctedAt = new Date().toISOString();
+    const staffDetails = (record.state.staffDetails || []).map((row) => ({
+      ...row,
+      dateOfJoining: row.dateOfJoining ? shiftStaffDateByOneDay(row.dateOfJoining) : "",
+      dateOfBirth: row.dateOfBirth ? shiftStaffDateByOneDay(row.dateOfBirth) : "",
+      updatedByUserName: row.updatedByUserName || "System",
+      updatedAt: Date.parse(correctedAt),
+    }));
+    const nextState = {
+      ...record.state,
+      staffDetails,
+      staffDateCorrectionVersion: STAFF_DATE_CORRECTION_VERSION,
+      auditLog: [...(record.state.auditLog || []), {
+        id: crypto.randomUUID(),
+        action: "Staff DOB and DOJ corrected",
+        details: { recordsUpdated: staffDetails.length, adjustment: "+1 calendar day", version: STAFF_DATE_CORRECTION_VERSION },
+        user: "System",
+        role: "System",
+        at: correctedAt,
+      }].slice(-1000),
+    };
+    try {
+      await saveAppStateIfCurrent(nextState, null, record.updatedAt);
+      return { changed: true, recordsUpdated: staffDetails.length };
+    } catch (error) {
+      if (error.status !== 409 || attempt === 1) throw error;
+    }
+  }
+  return { changed: false, recordsUpdated: 0 };
 }
 
 function perfStart() {
@@ -490,6 +571,7 @@ module.exports = {
   getAppStateRecord,
   saveAppState,
   saveAppStateIfCurrent,
+  assertSafeStateReplacement,
   patchAppState,
   backupPayload,
   sortFilesNewestFirst,
@@ -500,4 +582,5 @@ module.exports = {
   migrateServiceTypes,
   migrateNotificationRetention,
   migrateNotificationDuplicates,
+  migrateStaffDates,
 };

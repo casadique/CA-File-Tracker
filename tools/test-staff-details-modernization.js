@@ -22,7 +22,8 @@ const correction = block("function applyStaffDateCorrection", "\\nfunction merge
 assert.match(correction, /dateOfJoining: row\.dateOfJoining \? shiftStaffDateByDays/);
 assert.match(correction, /dateOfBirth: row\.dateOfBirth \? shiftStaffDateByDays/);
 assert.match(correction, /staffDateCorrectionVersion = STAFF_DATE_CORRECTION_VERSION/);
-assert.match(source, /applyStaffDateCorrection\(state\)[\s\S]*?saveState\(\{ skipMerge: true, fullRemote: true \}\)/);
+const staffPage = block("function renderStaffDetailsPage", "\nfunction staffDetailsActions");
+assert.doesNotMatch(staffPage, /applyStaffDateCorrection|fullRemote/);
 
 const reportRows = block("function staffDetailsReportRows", "\\nconst staffReportColumns");
 assert.match(reportRows, /DOJ: dateValue\(row\.dateOfJoining\)/);

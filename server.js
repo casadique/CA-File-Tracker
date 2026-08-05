@@ -11,7 +11,7 @@ const rateLimit = require("express-rate-limit");
 const { env } = require("./src/config/env");
 const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
-const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates } = require("./src/services/appStateService");
+const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates } = require("./src/services/appStateService");
 const { dispatchDueReminders } = require("./src/services/pushNotificationService");
 
 const app = express();
@@ -89,6 +89,8 @@ async function startServer() {
     if (migration.changed) console.log("Staff display-name migration applied.");
     const serviceMigration = await migrateServiceTypes();
     if (serviceMigration.changed) console.log("Service-type migration applied.");
+    const staffDateMigration = await migrateStaffDates();
+    if (staffDateMigration.changed) console.log(`Staff date correction applied to ${staffDateMigration.recordsUpdated} record(s).`);
     const notificationMigration = await migrateNotificationRetention();
     if (notificationMigration.changed) console.log("Seven-day notification retention enabled without deleting valid history.");
     const duplicateMigration = await migrateNotificationDuplicates();

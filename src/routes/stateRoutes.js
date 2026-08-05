@@ -1,6 +1,6 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { getAppState, getAppStateRecord, saveAppState, backupPayload } = require("../services/appStateService");
+const { getAppState, getAppStateRecord, saveAppState, saveAppStateIfCurrent, assertSafeStateReplacement, backupPayload } = require("../services/appStateService");
 const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
 const { calculateDashboardCounts } = require("../services/fileViewRules");
@@ -35,8 +35,11 @@ router.get("/version", requireAuth, async (_req, res, next) => {
 
 router.put("/", requireAuth, requireRole("Admin"), async (req, res, next) => {
   try {
-    const state = await saveAppState(req.body.state || {}, req.user.id);
-    res.json({ ok: true, state });
+    const record = await getAppStateRecord();
+    const incoming = req.body.state || {};
+    assertSafeStateReplacement(record.state, incoming);
+    const saved = await saveAppStateIfCurrent(incoming, req.user.id, req.body.expectedUpdatedAt);
+    res.json({ ok: true, state: saved.state, updatedAt: saved.updatedAt });
   } catch (error) {
     next(error);
   }
