@@ -7783,12 +7783,14 @@ function renderFileTable(files) {
   const compactClass = " file-table-compact";
   const isCompletedView = ["completed", "notChecked"].includes(state.filters.listView);
   const isBilledView = state.filters.listView === "billed";
+  const isNonBilledView = state.filters.listView === "nonBilled";
+  const actionsColumnClass = isBilledView ? "billed-actions-column" : isNonBilledView ? "non-billed-actions-column" : "";
   const dateColumnLabel = isCompletedView ? "Completed Date" : "Due";
   const assignedColumnLabel = isCompletedView ? "Done By" : "Assigned Staff";
   const managerCheckingColumns = canManageChecking() && isCompletedView;
   const headerRow = isCompletedView
     ? `<th>SN</th><th class="completed-client-column">Client Name</th><th class="completed-fy-column">FY</th><th>Service Type</th><th>${dateColumnLabel}</th><th>${assignedColumnLabel}</th>${managerCheckingColumns ? "<th>Checking Status</th><th>Checked By</th><th>Checked Date</th>" : ""}<th>Actions</th>`
-    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th class="${isBilledView ? "billed-actions-column" : ""}">Actions</th>`;
+    : `<th>SN</th><th>Client</th><th>Service</th><th>Received on</th><th>Work Allotted</th><th>C/o</th><th>Priority</th><th>Final Status</th><th>${assignedColumnLabel}</th><th>${dateColumnLabel}</th><th class="${actionsColumnClass}">Actions</th>`;
   return `
     <div class="table-wrap file-table-wrap">
       <table class="file-table${compactClass}${isCompletedView ? " completed-files-table" : ""}${isBilledView ? " billed-files-table" : ""}">
@@ -7809,7 +7811,7 @@ function renderFileTable(files) {
               <td class="completed-doc-cell">${fmt(dateValue)}</td>
               <td class="completed-staff-cell">${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}${receiptInfo}</td>
               ${managerCheckingColumns ? `<td>${renderCheckingStatusBadge(file)}</td><td>${escapeHtml(file.checkedBy || "-")}</td><td>${file.checkedDate ? fmt(file.checkedDate) : "-"}</td>` : ""}
-              <td class="${isBilledView ? "billed-actions-column" : ""}"><div class="action-row">${fileRowActions(file)}</div></td>`;
+              <td class="${actionsColumnClass}"><div class="action-row">${fileRowActions(file)}</div></td>`;
             const activeCells = `
               <td>${fileSerialNumber(file, index)}</td>
               <td><span class="client-name">${escapeHtml(file.name || "")}${isReassignedFile(file) ? ` <span class="reassigned-inline-label">(Re Assigned)</span>` : ""}</span><span class="subtext">${escapeHtml(file.pan || "")}</span></td>
@@ -7821,7 +7823,7 @@ function renderFileTable(files) {
               <td><span class="badge ${status.className}">${status.label}</span>${checking.label ? `<span class="subtext"><span class="badge ${checking.className}">${checking.label}</span></span>` : ""}${receiptInfo}</td>
               <td>${file.assignedStaff}</td>
               <td class="${isOverdue(file) ? "due-date-cell overdue-due-date" : "due-date-cell"}">${fmt(dateValue)}</td>
-              <td class="${isBilledView ? "billed-actions-column" : ""}"><div class="action-row">${fileRowActions(file)}</div></td>`;
+              <td class="${actionsColumnClass}"><div class="action-row">${fileRowActions(file)}</div></td>`;
             return `<tr class="file-row file-row-${status.className}">${isCompletedView ? completedCells : activeCells}</tr>`;
           }).join("")}
         </tbody>
@@ -8660,8 +8662,32 @@ function fileSerialNumber(file, fallbackIndex = 0) {
   return fallbackIndex + 1;
 }
 
+function nonBilledFileActions(file = {}) {
+  const fileId = escapeHtml(file.id || "");
+  const canEdit = Boolean(rolePerm().edit);
+  const canManageBilling = Boolean(rolePerm().assign);
+  const canDelete = Boolean(rolePerm().delete);
+  const isMarkedNonBillable = String(file.billingType || file.billing_type || "").toLowerCase().includes("non");
+  const billingLabel = isMarkedNonBillable ? "Mark Billable" : "Mark Billed";
+  const billingAttribute = isMarkedNonBillable ? `data-billable="${fileId}"` : `data-mark-billed="${fileId}"`;
+  const menuItems = [];
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canManageBilling) menuItems.push(billedActionMenuItem({ label: billingLabel, icon: "received", attrs: billingAttribute }));
+  if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete="${fileId}"`, danger: true, divider: true }));
+  const primaryAction = canManageBilling
+    ? `<button type="button" class="billed-primary-action ${isMarkedNonBillable ? "view-only" : "mark-received"}" ${billingAttribute}>${billedActionIcon("received")}<span>${billingLabel}</span></button>`
+    : canEdit
+      ? `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`
+      : `<span class="billed-payment-state">Non-Billed</span>`;
+  return `<div class="billed-actions non-billed-actions" data-billed-actions="${fileId}">
+    ${primaryAction}
+    ${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}
+  </div>`;
+}
+
 function fileRowActions(file) {
   if (state.filters.listView === "billed" && isBilledFile(file)) return billedFileActions(file);
+  if (state.filters.listView === "nonBilled" && isNonBilledFile(file)) return nonBilledFileActions(file);
   const actions = [`<button class="mini-button" data-edit="${file.id}">Edit</button>`];
   const canManageBilling = rolePerm().assign;
   const canManageFeeReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));

@@ -1281,6 +1281,36 @@ th {
   }
 }
 
+/* Compact contextual actions for Non-Billed Files. */
+.non-billed-actions-column {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  width: 190px;
+  min-width: 190px;
+  background: #ffffff;
+  box-shadow: -1px 0 #cbd9ec;
+}
+
+th.non-billed-actions-column {
+  z-index: 5;
+  background: #e8eef7;
+}
+
+.non-billed-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.non-billed-actions .billed-primary-action {
+  min-width: 126px;
+  justify-content: center;
+}
+
+.file-table tbody tr:hover .non-billed-actions-column {
+  background: #eff6ff;
+}
+
 .staff-selector {
   max-width: 360px;
   margin-bottom: 16px;
