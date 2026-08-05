@@ -7087,6 +7087,7 @@ function selectFilter(key, label, options) {
 function bindFilters() {
   document.querySelectorAll("[data-filter]").forEach((el) => {
     const update = (e) => {
+      resetSharedTableScrollPosition(fileTableScrollKey());
       state.filters[e.target.dataset.filter] = e.target.value;
       saveViewState();
       clearTimeout(filterTimer);
@@ -7105,6 +7106,7 @@ function setBilledFilterLoading(loading) {
 function resetBilledFileFilters() {
   billedFilterRequestId += 1;
   clearTimeout(filterTimer);
+  resetSharedTableScrollPosition("billed");
   BILLED_FILE_FILTERS.forEach(({ key, defaultValue }) => {
     state.filters[key] = defaultValue;
     const control = document.querySelector(`[data-filter='${key}']`);
@@ -7119,6 +7121,7 @@ function removeBilledFileFilter(key) {
   if (!config) return;
   billedFilterRequestId += 1;
   clearTimeout(filterTimer);
+  resetSharedTableScrollPosition("billed");
   state.filters[key] = config.defaultValue;
   const control = document.querySelector(`[data-filter='${key}']`);
   if (control) control.value = config.defaultValue;
@@ -7180,6 +7183,7 @@ function bindBilledFilesFilters() {
   document.querySelectorAll("#billedFilterCard [data-filter]").forEach((control) => {
     const key = control.dataset.filter;
     const update = (delay) => {
+      resetSharedTableScrollPosition("billed");
       state.filters[key] = control.value;
       saveViewState();
       scheduleBilledFilterRefresh(delay);
@@ -7249,6 +7253,7 @@ function setConfiguredFinancialFilterLoading(loading) {
 function resetConfiguredFinancialFilters(config) {
   configuredFilterRequestId += 1;
   clearTimeout(filterTimer);
+  resetSharedTableScrollPosition(fileTableScrollKey());
   configuredFinancialFilterDefinitions(config).forEach((field) => {
     state.filters[field.key] = field.defaultValue || "";
     document.querySelectorAll(`[data-configured-filter='${field.key}']`).forEach((control) => { control.value = field.defaultValue || ""; });
@@ -7262,6 +7267,7 @@ function removeConfiguredFinancialFilter(config, key) {
   if (!field) return;
   configuredFilterRequestId += 1;
   clearTimeout(filterTimer);
+  resetSharedTableScrollPosition(fileTableScrollKey());
   state.filters[key] = field.defaultValue || "";
   document.querySelectorAll(`[data-configured-filter='${key}']`).forEach((control) => { control.value = field.defaultValue || ""; });
   saveViewState();
@@ -7328,6 +7334,7 @@ function bindConfiguredFinancialFilters(config) {
   document.querySelectorAll("#configuredFilterCard [data-configured-filter]").forEach((control) => {
     const key = control.dataset.configuredFilter;
     const update = (delay) => {
+      resetSharedTableScrollPosition(fileTableScrollKey());
       state.filters[key] = control.value;
       saveViewState();
       scheduleConfiguredFinancialFilterRefresh(config, delay);
@@ -7642,15 +7649,69 @@ function billedMobileCard(file, index) {
   </article>`;
 }
 
+const sharedTableScrollPositions = new Map();
+
+function fileTableScrollKey(listView = state.filters.listView) {
+  return listView || "fileList";
+}
+
+function sharedTableScrollRegion(key, label, wrapperClass, tableMarkup, mobileMarkup = "") {
+  const hasMobileCards = Boolean(mobileMarkup);
+  return `<div class="table-wrap ${wrapperClass} shared-table-scroll${hasMobileCards ? " shared-table-scroll-has-cards" : ""}" data-shared-table-scroll="${escapeHtml(key)}" tabindex="0" role="region" aria-label="${escapeHtml(label)} scrollable table">${tableMarkup}${mobileMarkup}</div>`;
+}
+
+function resetSharedTableScrollPosition(key = fileTableScrollKey()) {
+  sharedTableScrollPositions.delete(key);
+  const region = document.querySelector(`[data-shared-table-scroll="${CSS.escape(key)}"]`);
+  if (region) {
+    region.scrollTop = 0;
+    region.scrollLeft = 0;
+  }
+}
+
+function bindSharedTableScrollRegions(scope = document) {
+  scope.querySelectorAll?.("[data-shared-table-scroll]").forEach((region) => {
+    const key = region.dataset.sharedTableScroll;
+    const saved = sharedTableScrollPositions.get(key);
+    if (saved) requestAnimationFrame(() => {
+      region.scrollLeft = Math.min(saved.left, Math.max(0, region.scrollWidth - region.clientWidth));
+      region.scrollTop = Math.min(saved.top, Math.max(0, region.scrollHeight - region.clientHeight));
+    });
+    if (region.dataset.sharedScrollBound === "true") return;
+    region.dataset.sharedScrollBound = "true";
+    let positionFrame = 0;
+    region.addEventListener("scroll", () => {
+      if (positionFrame) return;
+      positionFrame = requestAnimationFrame(() => {
+        positionFrame = 0;
+        sharedTableScrollPositions.set(key, { left: region.scrollLeft, top: region.scrollTop });
+        scheduleBilledActionMenuPosition();
+      });
+    }, { passive: true });
+    region.addEventListener("wheel", (event) => {
+      if (!event.shiftKey || !event.deltaY || region.scrollWidth <= region.clientWidth) return;
+      event.preventDefault();
+      region.scrollLeft += event.deltaY;
+    }, { passive: false });
+    region.addEventListener("keydown", (event) => {
+      if (event.target !== region) return;
+      if (event.key === "Home") {
+        event.preventDefault();
+        region.scrollTo({ top: 0, left: event.ctrlKey ? 0 : region.scrollLeft, behavior: "smooth" });
+      } else if (event.key === "End") {
+        event.preventDefault();
+        region.scrollTo({ top: region.scrollHeight, left: event.ctrlKey ? region.scrollWidth : region.scrollLeft, behavior: "smooth" });
+      }
+    });
+  });
+}
+
 function renderBilledFileTable(files = []) {
   const rows = sortedBilledTableFiles(files);
-  return `<div class="table-wrap billed-table-wrap">
-    <table class="file-table billed-files-table">
+  return sharedTableScrollRegion("billed", "Billed Files", "billed-table-wrap", `<table class="file-table billed-files-table">
       <thead><tr><th class="billed-sn-cell">SN</th><th class="billed-client-cell">${billedSortHeading("Client", "client")}</th><th>${billedSortHeading("Service", "service")}</th><th>${billedSortHeading("Work Timeline", "timeline")}</th><th>C/o</th><th>${billedSortHeading("Billing Details", "billing")}</th><th>${billedSortHeading("Payment", "payment")}</th><th>${billedSortHeading("Assigned Staff", "staff")}</th><th class="billed-actions-column">Actions</th></tr></thead>
       <tbody>${rows.map(billedDesktopRow).join("")}</tbody>
-    </table>
-    <div class="billed-mobile-list">${rows.map(billedMobileCard).join("")}</div>
-  </div>`;
+    </table>`, `<div class="billed-mobile-list">${rows.map(billedMobileCard).join("")}</div>`);
 }
 
 function masterFileActions(file = {}) {
@@ -7751,7 +7812,7 @@ function masterFileMobileCard(file = {}, index = 0) {
 
 function renderMasterFileTable(files = []) {
   if (!files.length) return empty("No files match these filters.");
-  return `<div class="table-wrap master-file-table-wrap"><table class="file-table master-file-table"><thead><tr><th class="master-file-sn">SN</th><th class="master-file-client">Client</th><th>Service</th><th>Work Timeline</th><th>C/o</th><th>Status</th><th>Billing</th><th>Assigned Staff</th><th class="master-file-actions-column">Actions</th></tr></thead><tbody>${masterFileDesktopRows(files)}</tbody></table><div class="master-file-mobile-list">${files.map(masterFileMobileCard).join("")}</div></div>`;
+  return sharedTableScrollRegion("fileList", "File List", "master-file-table-wrap", `<table class="file-table master-file-table"><thead><tr><th class="master-file-sn">SN</th><th class="master-file-client">Client</th><th>Service</th><th>Work Timeline</th><th>C/o</th><th>Status</th><th>Billing</th><th>Assigned Staff</th><th class="master-file-actions-column">Actions</th></tr></thead><tbody>${masterFileDesktopRows(files)}</tbody></table>`, `<div class="master-file-mobile-list">${files.map(masterFileMobileCard).join("")}</div>`);
 }
 
 function activeFileActions(file = {}) {
@@ -7815,7 +7876,7 @@ function activeMobileCard(file = {}, index = 0) {
 }
 
 function renderActiveFileTable(files = []) {
-  return `<div class="table-wrap active-table-wrap"><table class="file-table active-modern-table"><thead><tr><th class="active-sn-cell">SN</th><th class="active-client-cell">Client</th><th>Service</th><th>Work Timeline</th><th>C/o</th><th>Status</th><th>Assigned Staff</th><th class="active-actions-column">Actions</th></tr></thead><tbody>${activeDesktopRows(files)}</tbody></table><div class="active-mobile-list">${files.map(activeMobileCard).join("")}</div></div>`;
+  return sharedTableScrollRegion("active", "Active Files", "active-table-wrap", `<table class="file-table active-modern-table"><thead><tr><th class="active-sn-cell">SN</th><th class="active-client-cell">Client</th><th>Service</th><th>Work Timeline</th><th>C/o</th><th>Status</th><th>Assigned Staff</th><th class="active-actions-column">Actions</th></tr></thead><tbody>${activeDesktopRows(files)}</tbody></table>`, `<div class="active-mobile-list">${files.map(activeMobileCard).join("")}</div>`);
 }
 
 function completedBillingBadge(file = {}) {
@@ -7889,7 +7950,7 @@ function completedMobileCard(file = {}, index = 0) {
 }
 
 function renderCompletedFileTable(files = []) {
-  return `<div class="table-wrap completed-table-wrap"><table class="file-table completed-modern-table"><thead><tr><th class="completed-sn-cell">SN</th><th class="completed-client-cell">Client</th><th>Service</th><th>Completion</th><th>C/o</th><th>Checking</th><th>Billing Status</th><th class="completed-actions-column">Actions</th></tr></thead><tbody>${completedDesktopRows(files)}</tbody></table><div class="completed-mobile-list">${files.map(completedMobileCard).join("")}</div></div>`;
+  return sharedTableScrollRegion("completed", "Completed Files", "completed-table-wrap", `<table class="file-table completed-modern-table"><thead><tr><th class="completed-sn-cell">SN</th><th class="completed-client-cell">Client</th><th>Service</th><th>Completion</th><th>C/o</th><th>Checking</th><th>Billing Status</th><th class="completed-actions-column">Actions</th></tr></thead><tbody>${completedDesktopRows(files)}</tbody></table>`, `<div class="completed-mobile-list">${files.map(completedMobileCard).join("")}</div>`);
 }
 
 function renderFileTable(files) {
@@ -7977,7 +8038,7 @@ function notCheckedMobileCard(file = {}, index = 0) {
 }
 
 function renderNotCheckedFileTable(files = []) {
-  return `<div class="table-wrap not-checked-table-wrap"><table class="file-table not-checked-modern-table"><thead><tr><th class="not-checked-sn">SN</th><th class="not-checked-client">Client</th><th>Service</th><th>Completion</th><th>C/o</th><th>Checking</th><th>Priority</th><th class="not-checked-actions-column">Actions</th></tr></thead><tbody>${notCheckedDesktopRows(files)}</tbody></table><div class="not-checked-mobile-list">${files.map(notCheckedMobileCard).join("")}</div></div>`;
+  return sharedTableScrollRegion("notChecked", "Not Checked Files", "not-checked-table-wrap", `<table class="file-table not-checked-modern-table"><thead><tr><th class="not-checked-sn">SN</th><th class="not-checked-client">Client</th><th>Service</th><th>Completion</th><th>C/o</th><th>Checking</th><th>Priority</th><th class="not-checked-actions-column">Actions</th></tr></thead><tbody>${notCheckedDesktopRows(files)}</tbody></table>`, `<div class="not-checked-mobile-list">${files.map(notCheckedMobileCard).join("")}</div>`);
 }
 
 function renderFeePendingFileTable(files = []) {
@@ -7994,17 +8055,14 @@ function renderFeePendingFileTable(files = []) {
     if (isFeeAmountReportHeader(header)) return "amount-cell fee-pending-amount-column";
     return "fee-pending-text-column";
   };
-  return `
-    <div class="table-wrap file-table-wrap">
-      <table class="file-table file-table-compact fee-pending-report-table">
+  return sharedTableScrollRegion("feePending", "Fee Pending Files", "file-table-wrap fee-pending-table-wrap", `<table class="file-table file-table-compact fee-pending-report-table">
         <thead><tr>${headers.map((header) => `<th class="${columnClass(header)}">${escapeHtml(header)}</th>`).join("")}<th class="fee-pending-actions-column">Actions</th></tr></thead>
         <tbody>${files.map((file, index) => {
           const row = rows[index];
           return `<tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"><div class="action-row">${billedFileActions(file, { context: "feePending" })}</div></td></tr>`;
         }).join("")}</tbody>
         <tfoot><tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(totals[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"></td></tr></tfoot>
-      </table>
-    </div>`;
+      </table>`);
 }
 
 function renderReAssignedFileTable(files) {
@@ -8136,7 +8194,7 @@ function renderFeeReceivedFileTable(files) {
     return result;
   }, { billed: 0, received: 0, balance: 0 });
   if (!displayRows.length) return empty("No active fee receipts match these filters.");
-  return `<div class="table-wrap fee-received-modern-wrap"><table class="file-table fee-received-modern-table"><thead><tr><th class="fee-received-sn">SN</th><th class="fee-received-client">Client</th><th>Service</th><th>Billing Details</th><th>Receipt Details</th><th>Balance</th><th>Transaction</th><th class="fee-received-actions-column">Actions</th></tr></thead><tbody>${displayRows.map(feeReceivedDesktopRow).join("")}</tbody><tfoot><tr><td colspan="3">Active Receipt Totals</td><td class="amount-cell">${rupee(totals.billed)}</td><td class="amount-cell">${rupee(totals.received)}</td><td class="amount-cell">${rupee(totals.balance)}</td><td colspan="2"></td></tr></tfoot></table><div class="fee-received-mobile-list">${displayRows.map(feeReceivedMobileCard).join("")}<div class="fee-received-mobile-totals"><span>Totals</span><strong>Billed ${rupee(totals.billed)} · Received ${rupee(totals.received)} · Balance ${rupee(totals.balance)}</strong></div></div></div>`;
+  return sharedTableScrollRegion("feeReceived", "Fee Received Files", "fee-received-modern-wrap", `<table class="file-table fee-received-modern-table"><thead><tr><th class="fee-received-sn">SN</th><th class="fee-received-client">Client</th><th>Service</th><th>Billing Details</th><th>Receipt Details</th><th>Balance</th><th>Transaction</th><th class="fee-received-actions-column">Actions</th></tr></thead><tbody>${displayRows.map(feeReceivedDesktopRow).join("")}</tbody><tfoot><tr><td colspan="3">Active Receipt Totals</td><td class="amount-cell">${rupee(totals.billed)}</td><td class="amount-cell">${rupee(totals.received)}</td><td class="amount-cell">${rupee(totals.balance)}</td><td colspan="2"></td></tr></tfoot></table>`, `<div class="fee-received-mobile-list">${displayRows.map(feeReceivedMobileCard).join("")}<div class="fee-received-mobile-totals"><span>Totals</span><strong>Billed ${rupee(totals.billed)} · Received ${rupee(totals.received)} · Balance ${rupee(totals.balance)}</strong></div></div>`);
 }
 
 function feeReceiptIdForFile(file = {}) {
@@ -9355,6 +9413,7 @@ async function deleteBilledFileSafely(fileId, button = null) {
 
 function bindFileActions() {
   bindBilledActionMenus();
+  bindSharedTableScrollRegions(document.querySelector("#fileResults") || document);
   document.querySelectorAll("[data-billed-menu-toggle]").forEach((toggle) => {
     toggle.onclick = (event) => {
       event.preventDefault();
@@ -9444,6 +9503,7 @@ function bindFileActions() {
   });
   document.querySelectorAll("[data-billed-sort]").forEach((button) => {
     button.onclick = () => {
+      resetSharedTableScrollPosition("billed");
       const key = button.dataset.billedSort;
       billedTableSort = billedTableSort.key === key
         ? { key, direction: billedTableSort.direction === "asc" ? "desc" : "asc" }

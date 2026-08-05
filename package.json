@@ -14,6 +14,7 @@
     "test:active-files": "node tools/test-active-files-modernization.js",
     "test:active-files-report": "node tools/test-active-files-report-modernization.js",
     "test:staff-details": "node tools/test-staff-details-modernization.js",
+    "test:table-scrolling": "node tools/test-shared-table-scrolling.js",
     "test:completed-files": "node tools/test-completed-files-modernization.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
     "test:fee-received": "node tools/test-fee-received-modernization.js",
