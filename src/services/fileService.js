@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { patchAppState, sortFilesNewestFirst, normalizeFileNotifications } = require("./appStateService");
+const { appendNotificationEvents, createNotificationEvent } = require("./notificationEventService");
 const {
   RETIRED_COMBINED_REGISTRATION,
   canonicalServiceType,
@@ -245,6 +246,7 @@ async function upsertFile(file, userId, profile = {}) {
       : (before?.taskActivityAt || before?.task_activity_at || record.taskActivityAt || record.task_activity_at || record.assignedAt || record.assigned_at || record.workAllotmentDate || record.reAssignedDate || "");
     record.taskActivityAt = taskActivityAt;
     record.task_activity_at = taskActivityAt;
+    applyDueReminderMetadata(record, before, nowIso);
     if (index >= 0) {
       const merged = { ...files[index], ...record };
       if (!merged.createdAt) merged.createdAt = files[index].createdAt || files[index].created_at || new Date(now).toISOString();
@@ -881,28 +883,22 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
     };
     state.correctionHistory = [...(state.correctionHistory || []), correction];
     const correctionEventId = `${fileId}|returned-for-correction|${correction.id || correction.returned_at || correction.returnedAt || correction.returnedDate || now.toISOString()}`;
-    appendUniqueFileNotifications(state, [{
-      id: crypto.randomUUID(),
-      dedupeKey: `${correction.returnedToId || correction.returnedToEmail || correction.returnedTo}|Returned for Correction|${fileId}|${correctionEventId}`,
-      fileId,
-      related_record_id: fileId,
-      event_id: correctionEventId,
-      notification_type: "Returned for Correction",
-      user_id: correction.returnedToId || correction.returnedToEmail || correction.returnedTo || "",
-      fileName: file.name,
+    appendUniqueFileNotifications(state, [createNotificationEvent({
+      eventKey: `correction:${fileId}:${correctionEventId}:${correction.returnedToId || correction.returnedToEmail || correction.returnedTo}`,
+      eventType: "Returned for Correction",
       changeType: "Returned for Correction",
+      fileId,
+      sourceEventId: correctionEventId,
+      fileName: file.name,
       changeText: `Correction Reason: ${correction.correctionReason}`,
       changedBy: correction.returnedBy,
       changedByRole: profile?.role || "",
-      targetUserId: correction.returnedToId,
-      targetUserEmail: correction.returnedToEmail,
-      targetUserName: correction.returnedTo,
-      date: correction.returnedDate,
-      time: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-      createdAt: now.getTime(),
-      created_at: now.toISOString(),
+      recipient: { id: correction.returnedToId, email: correction.returnedToEmail, name: correction.returnedTo },
+      category: "correction",
+      route: `/?page=correction-required-files&file=${encodeURIComponent(fileId)}`,
       tone: "overdue",
-    }], 500);
+      createdAt: now,
+    })], 500);
     state.auditLog = [
       ...(state.auditLog || []),
       {
@@ -949,50 +945,96 @@ function currentFileAssignee(file = {}) {
   };
 }
 
+function indiaDateKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(date);
+}
+
+function normalizedDueDate(value = "") {
+  const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
+function applyDueReminderMetadata(record = {}, before = null, nowIso = new Date().toISOString()) {
+  const dueDate = normalizedDueDate(record.dueDate || record.due_date);
+  const beforeDueDate = normalizedDueDate(before?.dueDate || before?.due_date);
+  const beforeAssignee = currentFileAssignee(before || {});
+  const afterAssignee = currentFileAssignee(record);
+  const assigneeChanged = !before
+    || !sameText(beforeAssignee.id, afterAssignee.id)
+    || !sameText(beforeAssignee.email, afterAssignee.email)
+    || !sameText(beforeAssignee.name, afterAssignee.name);
+  const dueChanged = !before || dueDate !== beforeDueDate;
+  if (!dueChanged && !assigneeChanged) {
+    record.due_date_version = before?.due_date_version || before?.dueDateVersion || record.due_date_version || record.dueDateVersion || "";
+    record.dueDateVersion = record.due_date_version;
+    record.first_due_reminder_at = before?.first_due_reminder_at || before?.firstDueReminderAt || null;
+    record.firstDueReminderAt = record.first_due_reminder_at;
+    return record;
+  }
+  record.due_date_version = dueChanged
+    ? `${dueDate || "no-due"}@${nowIso}`
+    : (before?.due_date_version || before?.dueDateVersion || `${dueDate || "no-due"}@${nowIso}`);
+  record.dueDateVersion = record.due_date_version;
+  const allottedAt = record.task_activity_at || record.taskActivityAt || record.assigned_at || record.assignedAt || nowIso;
+  const sameDay = Boolean(dueDate && indiaDateKey(allottedAt) === dueDate && assigneeChanged);
+  record.first_due_reminder_at = sameDay ? new Date(Date.parse(allottedAt) + (3 * 60 * 60 * 1000)).toISOString() : null;
+  record.firstDueReminderAt = record.first_due_reminder_at;
+  return record;
+}
+
 function appendFileUpdateNotifications(state, before, after, profile = {}, now = new Date()) {
   const change = describeFileChange(before, after);
   if (!change) return;
-  const recipients = change.type === "File Checked" ? checkedNotificationRecipients(state, after) : notificationRecipients(state, after);
+  const assignmentChange = ["File Allotted", "File Reassigned", "Allotment Changed"].includes(change.type);
+  const recipients = change.type === "File Checked"
+    ? checkedNotificationRecipients(state, after)
+    : assignmentChange
+      ? [resolveFileAssignee(state, after)].filter((user) => user?.id || user?.email || user?.name)
+      : notificationRecipients(state, after);
   if (!recipients.length) return;
-  const existingKeys = new Set((state.fileNotifications || []).map((notice) => notice.dedupeKey).filter(Boolean));
-  const date = now.toISOString().slice(0, 10);
-  const time = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
+  const sourceEventId = assignmentChange
+    ? (after.taskActivityAt || after.task_activity_at || after.assignedAt || after.assigned_at || now.toISOString())
+    : change.type === "File Checked"
+      ? (after.checkedAt || after.checked_at || after.checkedDate || now.toISOString())
+      : change.type === "Due Date Changed"
+        ? (after.due_date_version || after.dueDateVersion || change.key)
+        : change.type === "Status Updated"
+          ? (after.status_updated_at || after.statusUpdatedAt || now.toISOString())
+          : `${change.key}:${after.updatedAt || after.updated_at || now.toISOString()}`;
+  const actor = profile?.name || "Team";
+  const service = after.serviceType || after.service_type || "Service";
   const notices = [];
   for (const recipient of recipients) {
-    const changeEventId = `${change.key}|${after.updatedAt || after.updated_at || after.taskActivityAt || after.task_activity_at || after.lastUpdatedDate || now.toISOString()}`;
-    const recipientId = recipient.id || recipient.email || recipient.name || "";
-    const dedupeKey = `${recipientId}|${change.type}|${after.id}|${changeEventId}`;
-    if (existingKeys.has(dedupeKey)) continue;
-    existingKeys.add(dedupeKey);
-    notices.push({
-      id: crypto.randomUUID(),
-      dedupeKey,
-      fileId: after.id,
-      related_record_id: after.id,
-      event_id: changeEventId,
-      notification_type: change.type,
-      user_id: recipientId,
-      fileName: after.name || "File",
+    const prefix = assignmentChange ? "allotment" : change.type === "File Checked" ? "checking" : change.type === "Returned for Correction" ? "correction" : "status_change";
+    notices.push(createNotificationEvent({
+      eventKey: `${prefix}:${after.id}:${sourceEventId}:${recipient.authUserId || recipient.auth_user_id || recipient.id || recipient.email || recipient.name}`,
+      eventType: change.type,
       changeType: change.type,
-      changeText: change.text,
-      changedBy: profile?.name || "Team",
+      fileId: after.id,
+      sourceEventId,
+      fileName: after.name || "File",
+      changeText: assignmentChange
+        ? `${after.name || "File"} - ${service} has been allotted to you by ${actor}.`
+        : change.text,
+      changedBy: actor,
       changedByRole: profile?.role || "",
-      targetUserId: recipient.id || "",
-      targetUserEmail: recipient.email || "",
-      targetUserName: recipient.name || "",
-      recipientRole: recipient.role || "",
-      date,
-      time,
-      createdAt: now.getTime(),
-      created_at: now.toISOString(),
+      recipient,
+      category: assignmentChange ? "assignment" : "announcement",
+      route: assignmentChange ? `/?page=my-task&file=${encodeURIComponent(after.id || "")}` : `/?page=file-list&file=${encodeURIComponent(after.id || "")}`,
       tone: change.tone,
-    });
+      createdAt: now,
+    }));
   }
   if (notices.length) appendUniqueFileNotifications(state, notices);
 }
 
 function appendUniqueFileNotifications(state, notices = [], limit = 800) {
-  state.fileNotifications = normalizeFileNotifications([...(state.fileNotifications || []), ...(notices || [])]).slice(0, limit);
+  appendNotificationEvents(state, notices, { limit });
+  state.fileNotifications = normalizeFileNotifications(state.fileNotifications || []).slice(0, limit);
 }
 
 function describeFileChange(before, after) {
@@ -1033,7 +1075,6 @@ function describeFileChange(before, after) {
   if (beforeStatus !== afterStatus) return { type: "Status Updated", text: `${after.name || "File"} changed from ${beforeStatus} to ${afterStatus}.`, key: `status-${afterStatus}`, tone: afterStatus === "Completed" ? "filed" : "progress" };
   if (!before.billed && after.billed) return { type: "File Billed", text: `${after.name || "File"} was marked as billed.`, key: "billed", tone: "filed" };
   if (!before.feeReceived && after.feeReceived) return { type: "Payment Received", text: `Payment was received for ${after.name || "File"}.`, key: `fee-${after.feeReceivedDate || after.receivedOn || ""}`, tone: "filed" };
-  if (!sameText(before.remarks, after.remarks)) return { type: "Remarks Updated", text: `Important remarks were updated for ${after.name || "File"}.`, key: `remarks-${after.updatedAt || ""}`, tone: "progress" };
   return null;
 }
 
@@ -1215,5 +1256,6 @@ module.exports = {
   deleteFile,
   sortFilesForRequest,
   applyStatusUpdatedTimestamp,
+  applyDueReminderMetadata,
   workflowStatusLabel,
 };

@@ -7,6 +7,8 @@ const {
   saveSubscription,
   deactivateSubscription,
   getActiveDevices,
+  getDeviceDiagnostics,
+  markNotificationEvent,
   getOrganizationSettings,
   saveOrganizationSettings,
   sendToUser,
@@ -42,6 +44,8 @@ router.post("/subscribe", requireAuth, async (req, res, next) => {
     const body = req.body || {};
     const subscription = await saveSubscription(req.user.id, body.subscription, {
       deviceLabel: body.deviceLabel,
+      deviceId: body.deviceId,
+      browserName: body.browserName,
       userAgent: req.get("user-agent"),
     });
     res.json({ ok: true, subscription });
@@ -55,15 +59,36 @@ router.delete("/subscribe", requireAuth, async (req, res, next) => {
 
 router.post("/test", requireAuth, async (req, res, next) => {
   try {
+    const endpoint = String(req.body?.endpoint || "");
+    if (!endpoint) return res.status(400).json({ error: "The current device does not have an active push subscription." });
+    const testEventId = `test-${req.user.id}-${Date.now()}`;
     const result = await sendToUser(req.user.id, {
-      id: `test-${req.user.id}-${Date.now()}`,
+      id: testEventId,
+      eventKey: `test:${testEventId}:${req.user.id}`,
       category: "announcement",
       title: "Desktop notifications enabled",
       body: "CA File Tracker can now send updates to this device.",
       route: "/?page=dashboard",
+      endpoint,
     });
-    res.json({ ok: true, ...result });
+    if (!result.sent) return res.status(409).json({ error: `Test push failed: ${result.reason || "delivery_not_confirmed"}.`, diagnostics: result });
+    res.json({ ok: true, accepted: true, ...result });
   } catch (error) { next(error); }
+});
+
+router.post("/diagnostics", requireAuth, async (req, res, next) => {
+  try { res.json({ ok: true, diagnostics: await getDeviceDiagnostics(req.user.id, String(req.body?.endpoint || "")) }); }
+  catch (error) { next(error); }
+});
+
+router.post("/events/:eventId/open", requireAuth, async (req, res, next) => {
+  try { res.json({ ok: true, updated: await markNotificationEvent(req.user.id, req.params.eventId, "opened") }); }
+  catch (error) { next(error); }
+});
+
+router.post("/events/:eventId/read", requireAuth, async (req, res, next) => {
+  try { res.json({ ok: true, updated: await markNotificationEvent(req.user.id, req.params.eventId, "read") }); }
+  catch (error) { next(error); }
 });
 
 router.get("/admin/status", requireAuth, requireRole("Admin"), async (_req, res, next) => {

@@ -8,6 +8,7 @@ const {
 const {
   archiveExpiredNotificationRows,
   applyInitialNotificationCleanup,
+  applyVerifiedDuplicateCleanup,
 } = require("./notificationRetentionService");
 
 const APP_STATE_ID = "default";
@@ -111,6 +112,21 @@ async function migrateNotificationRetention() {
     }
   }
   return { changed: false };
+}
+
+async function migrateNotificationDuplicates() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const record = await getAppStateRecord();
+    const cleanup = applyVerifiedDuplicateCleanup(record.state, { actor: "System" });
+    if (!cleanup.changed) return { changed: false, duplicateGroups: 0, archivedRows: 0 };
+    try {
+      await saveAppStateIfCurrent(cleanup.state, null, record.updatedAt);
+      return { changed: true, duplicateGroups: cleanup.duplicateGroups, archivedRows: cleanup.archivedRows };
+    } catch (error) {
+      if (error.status !== 409 || attempt === 1) throw error;
+    }
+  }
+  return { changed: false, duplicateGroups: 0, archivedRows: 0 };
 }
 
 function perfStart() {
@@ -483,4 +499,5 @@ module.exports = {
   normalizeServiceTypes,
   migrateServiceTypes,
   migrateNotificationRetention,
+  migrateNotificationDuplicates,
 };

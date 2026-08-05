@@ -34,7 +34,7 @@ self.addEventListener("push", (event) => {
   } catch (_error) {
     payload = { body: event.data?.text() || "You have a new CA File Tracker update." };
   }
-  const id = String(payload.id || payload.eventId || `push-${Date.now()}`);
+  const id = String(payload.eventId || payload.id || payload.eventKey || "push-event-missing-id");
   const notification = {
     id,
     category: payload.category || "announcement",
@@ -60,12 +60,13 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const notification = event.notification.data || {};
-  const route = new URL(notification.route || "/?page=dashboard", self.location.origin).href;
+  const routeUrl = new URL(notification.route || "/?page=dashboard", self.location.origin);
+  if (notification.id) routeUrl.searchParams.set("notificationEvent", notification.id);
+  const route = routeUrl.href;
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
     if (existing) {
-      existing.postMessage({ type: "OPEN_DESKTOP_NOTIFICATION", notification });
       if ("navigate" in existing) await existing.navigate(route);
       return existing.focus();
     }

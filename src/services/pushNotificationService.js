@@ -1,7 +1,8 @@
 const webPush = require("web-push");
 const { env } = require("../config/env");
 const { supabaseAdmin } = require("../config/supabase");
-const { getAppState } = require("./appStateService");
+const { getAppState, patchAppState } = require("./appStateService");
+const { appendNotificationEvents, createNotificationEvent, deterministicNotificationId, notificationLog } = require("./notificationEventService");
 
 const DEFAULT_PREFERENCES = Object.freeze({
   desktop_enabled: false,
@@ -68,18 +69,26 @@ async function saveSubscription(userId, subscription, metadata = {}) {
     throw error;
   }
   const now = new Date().toISOString();
+  const deviceId = cleanText(metadata.deviceId || metadata.deviceLabel, 120);
+  if (deviceId) {
+    const { error: retireError } = await supabaseAdmin.from("push_subscriptions")
+      .update({ is_active: false, updated_at: now }).eq("user_id", userId).eq("device_id", deviceId).neq("endpoint", subscription.endpoint);
+    if (retireError && !isMissingTable(retireError)) throw retireError;
+  }
   const row = {
     user_id: userId,
     endpoint: subscription.endpoint,
     subscription,
     device_label: cleanText(metadata.deviceLabel, 80),
+    device_id: deviceId,
+    browser_name: cleanText(metadata.browserName || browserFromUserAgent(metadata.userAgent), 80),
     user_agent: cleanText(metadata.userAgent, 240),
     is_active: true,
     last_seen_at: now,
     updated_at: now,
   };
   const { data, error } = await supabaseAdmin.from("push_subscriptions")
-    .upsert(row, { onConflict: "endpoint" }).select("id,user_id,endpoint,is_active,device_label,last_seen_at").single();
+    .upsert(row, { onConflict: "endpoint" }).select("id,user_id,is_active,device_label,device_id,browser_name,last_seen_at,last_successful_delivery_at").single();
   if (error) throw error;
   await savePreferences(userId, { desktop_enabled: true });
   return data;
@@ -103,13 +112,105 @@ async function deactivateSubscription(userId, endpoint) {
 
 async function getActiveDevices(userId) {
   const { data, error } = await supabaseAdmin.from("push_subscriptions")
-    .select("id,device_label,user_agent,last_seen_at,created_at")
+    .select("id,device_label,device_id,browser_name,last_seen_at,last_successful_delivery_at,created_at")
     .eq("user_id", userId).eq("is_active", true).order("last_seen_at", { ascending: false });
   if (error) {
     if (isMissingTable(error)) return [];
     throw error;
   }
   return data || [];
+}
+
+async function getDeviceDiagnostics(userId, endpoint = "") {
+  const diagnostics = {
+    serverConfigured: env.webPushConfigured,
+    currentDeviceRegistered: false,
+    pushSubscriptionActive: false,
+    lastSuccessfulPush: null,
+    browserName: "",
+    deviceName: "",
+    lastFailure: "",
+  };
+  if (!endpoint) return diagnostics;
+  const { data: device, error } = await supabaseAdmin.from("push_subscriptions")
+    .select("id,is_active,device_label,browser_name,last_successful_delivery_at")
+    .eq("user_id", userId).eq("endpoint", endpoint).maybeSingle();
+  if (error) {
+    if (isMissingTable(error)) return { ...diagnostics, migrationRequired: true };
+    throw error;
+  }
+  if (!device) return diagnostics;
+  diagnostics.currentDeviceRegistered = true;
+  diagnostics.pushSubscriptionActive = device.is_active === true;
+  diagnostics.lastSuccessfulPush = device.last_successful_delivery_at || null;
+  diagnostics.browserName = device.browser_name || "Browser";
+  diagnostics.deviceName = device.device_label || "Browser device";
+  const { data: failure, error: failureError } = await supabaseAdmin.from("notification_deliveries")
+    .select("error_message,created_at").eq("user_id", userId).eq("subscription_id", device.id)
+    .in("delivery_status", ["failed", "expired"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!failureError && failure) diagnostics.lastFailure = failure.error_message || "Push delivery failed";
+  return diagnostics;
+}
+
+async function markNotificationEvent(userId, eventId, state = "read") {
+  if (!eventId) return false;
+  const now = new Date().toISOString();
+  const updates = state === "opened"
+    ? { desktop_status: "opened", opened_at: now, read_at: now, updated_at: now }
+    : { read_at: now, updated_at: now };
+  const { data, error } = await supabaseAdmin.from("notification_events")
+    .update(updates).eq("recipient_user_id", userId).eq("event_id", eventId).select("event_id").maybeSingle();
+  if (error) {
+    if (isMissingTable(error)) return false;
+    throw error;
+  }
+  if (data) notificationLog("notification_opened", { event_id: eventId, targetUserAuthId: userId }, { channel: state === "opened" ? "desktop" : "in_app", result: state });
+  return Boolean(data);
+}
+
+function browserFromUserAgent(userAgent = "") {
+  const value = String(userAgent || "");
+  if (/Edg\//.test(value)) return "Microsoft Edge";
+  if (/Chrome\//.test(value)) return "Google Chrome";
+  if (/Firefox\//.test(value)) return "Mozilla Firefox";
+  if (/Safari\//.test(value)) return "Safari";
+  return "Browser";
+}
+
+async function ensureNotificationEvent(userId, notification = {}) {
+  const eventKey = String(notification.eventKey || notification.event_key || `${notification.category || "announcement"}:${notification.id}:${userId}`);
+  const eventId = String(notification.id || deterministicNotificationId(eventKey));
+  const row = {
+    event_id: eventId,
+    event_key: eventKey,
+    recipient_user_id: userId,
+    event_type: String(notification.eventType || notification.category || "announcement"),
+    file_id: String(notification.relatedRecordId || ""),
+    payload: {
+      title: cleanText(notification.title || "CA File Tracker", 80),
+      body: cleanText(notification.body || notification.text || "You have a new update."),
+      route: safeRoute(notification.route),
+      category: String(notification.category || "announcement"),
+    },
+    in_app_created_at: notification.inAppCreatedAt || new Date().toISOString(),
+    desktop_status: notification.scheduledFor ? "scheduled" : "queued",
+    scheduled_for: notification.scheduledFor || null,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await supabaseAdmin.from("notification_events")
+    .upsert(row, { onConflict: "event_key", ignoreDuplicates: true }).select("*").maybeSingle();
+  if (error) {
+    if (isMissingTable(error)) return { ...row, migrationRequired: true };
+    throw error;
+  }
+  if (data) {
+    notificationLog("notification_event_created", { ...notification, event_id: eventId, event_key: eventKey }, { result: "created" });
+    return data;
+  }
+  const { data: existing, error: lookupError } = await supabaseAdmin.from("notification_events").select("*").eq("event_key", eventKey).single();
+  if (lookupError) throw lookupError;
+  notificationLog("duplicate_event_blocked", { ...notification, event_id: existing.event_id, event_key: eventKey }, { result: "reused" });
+  return existing;
 }
 
 async function getOrganizationSettings() {
@@ -137,52 +238,96 @@ async function saveOrganizationSettings(actorId, input = {}) {
 }
 
 async function sendToUser(userId, notification = {}) {
-  if (!env.webPushConfigured || !userId || !notification.id) return { sent: 0, skipped: true };
+  if (!env.webPushConfigured) return { sent: 0, skipped: true, reason: "push_not_configured" };
+  if (!userId || !notification.id) return { sent: 0, skipped: true, reason: "invalid_recipient_or_event" };
+  const event = await ensureNotificationEvent(userId, notification);
+  const eventId = event.event_id || notification.id;
+  const eventKey = event.event_key || notification.eventKey || notification.event_key || "";
   const [preferences, settings] = await Promise.all([getPreferences(userId), getOrganizationSettings()]);
   const category = String(notification.category || "announcement").toLowerCase();
-  if (!settings.organization_enabled || settings[categoryColumn(category)] === false) return { sent: 0, skipped: true };
-  if (!preferences.desktop_enabled || preferences[categoryColumn(category)] === false) return { sent: 0, skipped: true };
+  if (!settings.organization_enabled || settings[categoryColumn(category)] === false) return { sent: 0, skipped: true, reason: "organization_preference_disabled", eventId };
+  if (!preferences.desktop_enabled || preferences[categoryColumn(category)] === false) return { sent: 0, skipped: true, reason: "user_preference_disabled", eventId };
 
-  const { data: subscriptions, error } = await supabaseAdmin.from("push_subscriptions")
+  let subscriptionsQuery = supabaseAdmin.from("push_subscriptions")
     .select("id,endpoint,subscription").eq("user_id", userId).eq("is_active", true);
+  if (notification.endpoint) subscriptionsQuery = subscriptionsQuery.eq("endpoint", notification.endpoint);
+  const { data: subscriptions, error } = await subscriptionsQuery;
   if (error) {
-    if (isMissingTable(error)) return { sent: 0, skipped: true, migrationRequired: true };
+    if (isMissingTable(error)) return { sent: 0, skipped: true, migrationRequired: true, reason: "migration_required", eventId };
     throw error;
   }
   const payload = JSON.stringify({
-    id: cleanText(notification.id, 160),
+    id: cleanText(eventId, 160),
+    eventId: cleanText(eventId, 160),
+    eventKey: cleanText(eventKey, 240),
     category,
     title: cleanText(notification.title || "CA File Tracker", 80),
     body: cleanText(notification.body || notification.text || "You have a new update."),
     route: safeRoute(notification.route),
     relatedRecordId: cleanText(notification.relatedRecordId, 160),
-    tag: cleanText(notification.tag || notification.id, 120),
+    tag: cleanText(notification.tag || eventId, 120),
     sound: Boolean(preferences.sound_enabled),
   });
   let sent = 0;
+  let failed = 0;
+  let skipped = 0;
   for (const subscription of subscriptions || []) {
-    const delivery = {
-      user_id: userId,
-      subscription_id: subscription.id,
-      notification_id: notification.id,
-      category,
-      delivery_status: "pending",
-    };
-    const { data: inserted, error: insertError } = await supabaseAdmin.from("notification_deliveries")
-      .insert(delivery).select("id").maybeSingle();
-    if (insertError?.code === "23505") continue;
-    if (insertError) throw insertError;
+    const { data: existingDelivery, error: existingError } = await supabaseAdmin.from("notification_deliveries")
+      .select("id,delivery_status,attempted_at,created_at").eq("user_id", userId).eq("subscription_id", subscription.id).eq("notification_id", eventId).maybeSingle();
+    if (existingError && !isMissingTable(existingError)) throw existingError;
+    if (["delivered", "opened"].includes(existingDelivery?.delivery_status)) {
+      skipped += 1;
+      notificationLog("duplicate_delivery_blocked", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "already_delivered" });
+      continue;
+    }
+    const pendingAttempt = Date.parse(existingDelivery?.attempted_at || existingDelivery?.created_at || "");
+    if (existingDelivery?.delivery_status === "pending" && Number.isFinite(pendingAttempt) && Date.now() - pendingAttempt < 5 * 60 * 1000) {
+      skipped += 1;
+      notificationLog("duplicate_delivery_blocked", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "delivery_in_progress" });
+      continue;
+    }
+    let deliveryId = existingDelivery?.id;
+    if (deliveryId) {
+      const { error: retryError } = await supabaseAdmin.from("notification_deliveries")
+        .update({ delivery_status: "pending", error_message: "", event_key: eventKey, attempted_at: new Date().toISOString() }).eq("id", deliveryId);
+      if (retryError) throw retryError;
+    } else {
+      const { data: inserted, error: insertError } = await supabaseAdmin.from("notification_deliveries")
+        .insert({ user_id: userId, subscription_id: subscription.id, notification_id: eventId, event_key: eventKey, category, delivery_status: "pending", attempted_at: new Date().toISOString() })
+        .select("id").maybeSingle();
+      if (insertError?.code === "23505") {
+        skipped += 1;
+        notificationLog("duplicate_delivery_blocked", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "concurrent_worker" });
+        continue;
+      }
+      if (insertError) throw insertError;
+      deliveryId = inserted.id;
+    }
+    notificationLog("push_queued", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "queued" });
     try {
       await webPush.sendNotification(subscription.subscription, payload, { TTL: 60 * 60 * 24 });
       sent += 1;
-      await supabaseAdmin.from("notification_deliveries").update({ delivery_status: "delivered", delivered_at: new Date().toISOString() }).eq("id", inserted.id);
+      const deliveredAt = new Date().toISOString();
+      await Promise.all([
+        supabaseAdmin.from("notification_deliveries").update({ delivery_status: "delivered", delivered_at: deliveredAt }).eq("id", deliveryId),
+        supabaseAdmin.from("push_subscriptions").update({ last_successful_delivery_at: deliveredAt, last_seen_at: deliveredAt, updated_at: deliveredAt }).eq("id", subscription.id),
+        event.migrationRequired ? Promise.resolve() : supabaseAdmin.from("notification_events").update({ desktop_status: "sent", sent_at: deliveredAt, error_code: "", updated_at: deliveredAt }).eq("event_id", eventId),
+      ]);
+      notificationLog("push_delivered", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "delivered" });
     } catch (pushError) {
+      failed += 1;
       const expired = [404, 410].includes(pushError.statusCode);
       if (expired) await supabaseAdmin.from("push_subscriptions").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", subscription.id);
-      await supabaseAdmin.from("notification_deliveries").update({ delivery_status: expired ? "expired" : "failed", error_message: cleanText(pushError.message, 500) }).eq("id", inserted.id);
+      const failedAt = new Date().toISOString();
+      await Promise.all([
+        supabaseAdmin.from("notification_deliveries").update({ delivery_status: expired ? "expired" : "failed", error_message: cleanText(pushError.message, 500) }).eq("id", deliveryId),
+        event.migrationRequired ? Promise.resolve() : supabaseAdmin.from("notification_events").update({ desktop_status: "failed", failed_at: failedAt, error_code: String(pushError.statusCode || "push_failed"), updated_at: failedAt }).eq("event_id", eventId),
+      ]);
+      notificationLog(expired ? "subscription_expired" : "push_failed", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "failed", errorCode: pushError.statusCode || "push_failed" });
     }
   }
-  return { sent };
+  if (!(subscriptions || []).length) return { sent: 0, failed: 0, skipped: true, reason: notification.endpoint ? "current_device_not_registered" : "no_active_subscription", eventId };
+  return { sent, failed, skipped, eventId };
 }
 
 async function deliverySummary() {
@@ -276,13 +421,15 @@ async function dispatchFileNotifications(state = {}, notifications = []) {
       announcement: "A file status was updated. Open the app to review it.",
     };
     unique.set(key, sendToUser(authUserId, {
-      id: `file-${notice.id}`,
+      id: notice.event_id || notice.eventId || notice.id,
+      eventKey: notice.event_key || notice.eventKey || notice.dedupeKey,
+      eventType: notice.notification_type || notice.changeType,
       category,
-      title: cleanText(notice.fileName || "File update", 80),
-      body: secureBodies[category] || secureBodies.announcement,
+      title: category === "assignment" ? "File Allotted" : cleanText(notice.fileName || "File update", 80),
+      body: category === "assignment" ? cleanText(notice.changeText, 180) : (secureBodies[category] || secureBodies.announcement),
       route: `/?page=${targetPage}&file=${encodeURIComponent(notice.fileId || "")}`,
       relatedRecordId: notice.fileId || "",
-      tag: `file-${notice.fileId || notice.id}`,
+      tag: notice.event_id || notice.eventId || notice.id,
     }));
   }
   return Promise.allSettled(unique.values());
@@ -345,40 +492,103 @@ function fileIsComplete(file = {}) {
 
 async function dispatchDueReminders() {
   if (!env.webPushConfigured) return { sent: 0, skipped: true };
-  const [state, settings] = await Promise.all([getAppState(), getOrganizationSettings()]);
+  const [settings, authProfiles, previewState] = await Promise.all([getOrganizationSettings(), getNotificationAuthProfiles(), getAppState()]);
   if (!settings.organization_enabled || settings.due_enabled === false) return { sent: 0, skipped: true };
-  const today = indiaDateKey();
-  const authProfiles = await getNotificationAuthProfiles();
+  const now = new Date();
+  const today = indiaDateKey(now);
   const reminderDays = new Set((settings.due_reminder_days || [1, 0, -1]).map(Number));
-  const jobs = [];
-  for (const file of state.files || []) {
-    if (fileIsComplete(file) || file.isDeleted || file.deleted || file.removed) continue;
-    const days = daysBetweenIndia(today, file.dueDate || file.due_date);
-    if (days === null || !reminderDays.has(days)) continue;
-    const assignee = findStateUser(state,
+  const existingKeys = new Set((previewState.fileNotifications || []).map((row) => row.event_key || row.eventKey || row.dedupeKey).filter(Boolean));
+  const hasUnsentCandidate = (previewState.files || []).some((file) => {
+    if (fileIsComplete(file) || file.isDeleted || file.deleted || file.removed || file.stages?.["Correction Required"]) return false;
+    const dueDate = file.dueDate || file.due_date;
+    const days = daysBetweenIndia(today, dueDate);
+    const firstReminderAt = file.first_due_reminder_at || file.firstDueReminderAt || "";
+    const sameDayThreeHour = Boolean(firstReminderAt && days === 0);
+    if (sameDayThreeHour && Date.parse(firstReminderAt) > now.getTime()) return false;
+    if (!sameDayThreeHour && (days === null || !reminderDays.has(days))) return false;
+    const assignee = findStateUser(previewState,
       file.reAssignedStaffId, file.reAssignedStaffEmail, file.reAssignedStaff,
       file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff);
     const authUserId = authUserIdForStateUser(assignee) || authUserIdFromProfiles(authProfiles,
       file.reAssignedStaffId, file.reAssignedStaffEmail, file.reAssignedStaff,
       file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff,
       assignee?.id, assignee?.email, assignee?.name);
-    if (!authUserId) continue;
-    const when = days === 0
-      ? "due today"
-      : days < 0
+    if (!authUserId) return false;
+    const dueVersion = file.due_date_version || file.dueDateVersion || dueDate;
+    const stage = sameDayThreeHour ? "same_day_3h" : days === 0 ? "due_today" : days < 0 ? `overdue_${Math.abs(days)}` : `due_in_${days}`;
+    return !existingKeys.has(`due_reminder:${file.id}:${dueVersion}:${authUserId}:${stage}`);
+  });
+  if (!hasUnsentCandidate) return { attempted: 0, cancellations: 0, sent: 0 };
+  const dueEvents = [];
+  let cancellations = 0;
+  const state = await patchAppState((current) => {
+    for (const file of current.files || []) {
+      if (fileIsComplete(file) || file.isDeleted || file.deleted || file.removed || file.stages?.["Correction Required"]) {
+        if (file.first_due_reminder_at || file.firstDueReminderAt) {
+          cancellations += 1;
+          notificationLog("reminder_cancelled", { fileId: file.id, notification_type: "Due Reminder" }, { result: "file_ineligible" });
+        }
+        continue;
+      }
+      const dueDate = file.dueDate || file.due_date;
+      const days = daysBetweenIndia(today, dueDate);
+      const firstReminderAt = file.first_due_reminder_at || file.firstDueReminderAt || "";
+      const sameDayThreeHour = Boolean(firstReminderAt && days === 0);
+      if (sameDayThreeHour && Date.parse(firstReminderAt) > now.getTime()) {
+        notificationLog("reminder_scheduled", { fileId: file.id, notification_type: "Due Reminder", scheduled_for: firstReminderAt }, { result: "waiting" });
+        continue;
+      }
+      if (!sameDayThreeHour && (days === null || !reminderDays.has(days))) continue;
+      const assignee = findStateUser(current,
+        file.reAssignedStaffId, file.reAssignedStaffEmail, file.reAssignedStaff,
+        file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff);
+      const authUserId = authUserIdForStateUser(assignee) || authUserIdFromProfiles(authProfiles,
+        file.reAssignedStaffId, file.reAssignedStaffEmail, file.reAssignedStaff,
+        file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff,
+        assignee?.id, assignee?.email, assignee?.name);
+      if (!authUserId) continue;
+      const dueVersion = file.due_date_version || file.dueDateVersion || dueDate;
+      const stage = sameDayThreeHour ? "same_day_3h" : days === 0 ? "due_today" : days < 0 ? `overdue_${Math.abs(days)}` : `due_in_${days}`;
+      const eventKey = `due_reminder:${file.id}:${dueVersion}:${authUserId}:${stage}`;
+      const when = days === 0 ? "due today" : days < 0
         ? `overdue by ${Math.abs(days)} day${days === -1 ? "" : "s"}`
         : `due in ${days} day${days === 1 ? "" : "s"}`;
-    jobs.push(sendToUser(authUserId, {
-      id: `due-${file.id}-${today}-${days}`,
-      category: "due",
-      title: cleanText(file.name || "File due reminder", 80),
-      body: `${cleanText(file.serviceType || "File", 80)} is ${when}.`,
-      route: `/?page=active-files&file=${encodeURIComponent(file.id || "")}`,
-      tag: `due-${file.id}`,
-    }));
-  }
+      const event = createNotificationEvent({
+        eventKey,
+        eventType: "Due Reminder",
+        changeType: "Due Reminder",
+        fileId: file.id,
+        sourceEventId: `${dueVersion}:${stage}`,
+        fileName: file.name || "File due reminder",
+        changeText: `${file.serviceType || "File"} is ${when}.`,
+        changedBy: "System",
+        recipient: { ...assignee, authUserId },
+        category: "due",
+        route: `/?page=active-files&file=${encodeURIComponent(file.id || "")}`,
+        tone: days < 0 ? "overdue" : "pending",
+        createdAt: now,
+      });
+      const added = appendNotificationEvents(current, [event], { limit: 800 }).created;
+      if (added.length) dueEvents.push({ event, authUserId, file, when });
+    }
+    return current;
+  });
+  void state;
+  const jobs = dueEvents.map(({ event, authUserId, file, when }) => sendToUser(authUserId, {
+    id: event.event_id,
+    eventKey: event.event_key,
+    eventType: "Due Reminder",
+    inAppCreatedAt: event.created_at,
+    category: "due",
+    title: cleanText(file.name || "File due reminder", 80),
+    body: `${cleanText(file.serviceType || "File", 80)} is ${when}.`,
+    route: `/?page=active-files&file=${encodeURIComponent(file.id || "")}`,
+    relatedRecordId: file.id || "",
+    tag: event.event_id,
+  }));
   const results = await Promise.allSettled(jobs);
-  return { attempted: jobs.length, sent: results.filter((row) => row.status === "fulfilled").reduce((sum, row) => sum + (row.value.sent || 0), 0) };
+  dueEvents.forEach(({ event }) => notificationLog("reminder_sent", event, { channel: "desktop", result: "dispatched" }));
+  return { attempted: jobs.length, cancellations, sent: results.filter((row) => row.status === "fulfilled").reduce((sum, row) => sum + (row.value.sent || 0), 0) };
 }
 
 module.exports = {
@@ -388,6 +598,8 @@ module.exports = {
   saveSubscription,
   deactivateSubscription,
   getActiveDevices,
+  getDeviceDiagnostics,
+  markNotificationEvent,
   getOrganizationSettings,
   saveOrganizationSettings,
   sendToUser,

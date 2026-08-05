@@ -353,6 +353,7 @@ let state = loadState();
 let editingId = null;
 let activePage = "dashboard";
 let desktopNotificationConfig = null;
+let desktopNotificationDiagnostics = null;
 let desktopServiceWorkerRegistration = null;
 let desktopNotificationMessageBound = false;
 let desktopNotificationConfigPromise = null;
@@ -1126,9 +1127,13 @@ async function loadDesktopNotificationConfig(force = false) {
       if (subscription && Notification.permission === "granted" && desktopNotificationConfig?.preferences?.desktop_enabled) {
         await apiJson("/api/notifications/subscribe", {
           method: "POST",
-          body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: desktopNotificationDeviceLabel() }),
+          body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: desktopNotificationDeviceLabel(), deviceId: desktopNotificationDeviceId(), browserName: desktopNotificationBrowserName() }),
         });
       }
+      desktopNotificationDiagnostics = (await apiJson("/api/notifications/diagnostics", {
+        method: "POST",
+        body: JSON.stringify({ endpoint: subscription?.endpoint || "" }),
+      })).diagnostics || null;
     } catch (error) {
       console.warn("Desktop notification configuration unavailable", error);
       desktopNotificationConfig = { supported: false, error: error.message };
@@ -1147,6 +1152,24 @@ function desktopNotificationDeviceLabel() {
     localStorage.setItem(DESKTOP_NOTIFICATION_DEVICE_KEY, label);
   }
   return label;
+}
+
+function desktopNotificationDeviceId() {
+  const key = `${DESKTOP_NOTIFICATION_DEVICE_KEY}-id`;
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+function desktopNotificationBrowserName() {
+  if (navigator.userAgent.includes("Edg/")) return "Microsoft Edge";
+  if (navigator.userAgent.includes("Chrome/")) return "Google Chrome";
+  if (navigator.userAgent.includes("Firefox/")) return "Mozilla Firefox";
+  if (navigator.userAgent.includes("Safari/")) return "Safari";
+  return "Browser";
 }
 
 async function enableDesktopNotifications() {
@@ -1170,7 +1193,7 @@ async function enableDesktopNotifications() {
     }
     await apiJson("/api/notifications/subscribe", {
       method: "POST",
-      body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: desktopNotificationDeviceLabel() }),
+      body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: desktopNotificationDeviceLabel(), deviceId: desktopNotificationDeviceId(), browserName: desktopNotificationBrowserName() }),
     });
     await apiJson("/api/notifications/preferences", { method: "PUT", body: JSON.stringify({ desktop_enabled: true }) });
     currentDeviceSubscribed = true;
@@ -1268,6 +1291,9 @@ function openDesktopNotificationTarget(notification = {}) {
     activePage = ["dashboard", "files", "expenses", "visitors", "dailyReport"].includes(page) ? page : "dashboard";
   }
   const notificationId = String(notification.id || "");
+  if (notificationId && isSupabaseMode()) {
+    apiJson(`/api/notifications/events/${encodeURIComponent(notificationId)}/open`, { method: "POST" }).catch(() => {});
+  }
   const related = allNotificationItems().filter((item) =>
     item.id === notificationId || item.id === `file-change-${notificationId.replace(/^file-/, "")}` || (notification.relatedRecordId && item.fileId === notification.relatedRecordId));
   if (related.length) markNotificationItemsRead(related);
@@ -1331,29 +1357,9 @@ function desktopNotificationBelongsToCurrentUser(item = {}) {
 }
 
 function showLocalDesktopNotification(item = {}) {
-  if (!("Notification" in window) || Notification.permission !== "granted") return false;
-  const title = cleanTextForNotification(item.title || item.type || "CA File Tracker", 80);
-  const body = cleanTextForNotification(item.text || "You have a new CA File Tracker update.", 180);
-  const route = desktopNotificationRouteForItem(item);
-  try {
-    const notification = new Notification(title, {
-      body,
-      icon: "/assets/ca-india-logo.png",
-      badge: "/assets/ca-india-logo.png",
-      tag: item.id || `${title}-${body}`,
-      renotify: false,
-      data: { id: item.id || "", route, relatedRecordId: item.fileId || "" },
-    });
-    notification.onclick = () => {
-      window.focus();
-      openDesktopNotificationTarget(notification.data || {});
-      notification.close();
-    };
-    return true;
-  } catch (error) {
-    console.warn("Local desktop notification failed", error);
-    return false;
-  }
+  // Desktop system notifications have one owner: the service worker push handler.
+  // The active page deliberately never calls the Notification constructor.
+  return false;
 }
 
 function cleanTextForNotification(value, max = 180) {
@@ -1361,6 +1367,7 @@ function cleanTextForNotification(value, max = 180) {
 }
 
 function dispatchLocalDesktopNotifications() {
+  if (isSupabaseMode()) return;
   if (!state.session?.loggedIn || !localDesktopAlertsEnabled()) return;
   const baselineKey = localDesktopStorageKey(DESKTOP_LOCAL_BASELINE_KEY);
   let baseline = 0;
@@ -1390,29 +1397,15 @@ function dispatchLocalDesktopNotifications() {
   writeLocalDesktopSentIds(sent);
 }
 
-async function sendLocalDesktopTestNotification() {
-  if (!desktopNotificationsSupported()) {
-    toast("Desktop notifications need HTTPS and a supported browser like Edge or Chrome.");
-    return false;
-  }
-  if (Notification.permission !== "granted") {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      toast(permission === "denied" ? "Notifications are blocked in browser site settings." : "Notification permission was not granted.");
-      return false;
-    }
-  }
-  return showLocalDesktopNotification({
-    id: `local-test-${Date.now()}`,
-    title: "CA File Tracker",
-    text: "Desktop notifications are working on this device.",
-    category: "system",
-    createdAt: Date.now(),
-  });
-}
-
 async function applyDesktopNotificationRouteFromLocation() {
   const params = new URLSearchParams(location.search);
+  const openedEventId = params.get("notificationEvent");
+  if (openedEventId && isSupabaseMode()) {
+    await apiJson(`/api/notifications/events/${encodeURIComponent(openedEventId)}/open`, { method: "POST" }).catch(() => {});
+    params.delete("notificationEvent");
+    const cleanQuery = params.toString();
+    history.replaceState({}, "", `${location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${location.hash}`);
+  }
   if (!params.has("page") && !params.has("chat") && !params.has("file")) return;
   openDesktopNotificationTarget({
     route: `${location.pathname}${location.search}`,
@@ -3646,7 +3639,8 @@ function allNotificationItems() {
       persistedAssignmentFileIds.add(String(notice.fileId));
     }
     items.push({
-      id: `file-change-${notice.id}`,
+      id: notice.event_id || notice.eventId || notice.id,
+      sourceEventId: notice.event_id || notice.eventId || notice.id,
       sourceKey: notice.dedupeKey || notificationDedupeKey(notice),
       type: notice.changeType || "File Update",
       category: notificationCategory(notice.changeType || "File Update"),
@@ -3694,7 +3688,7 @@ function allNotificationItems() {
       });
     });
   }
-  files.forEach((file) => {
+  if (!isSupabaseMode()) files.forEach((file) => {
     const days = daysUntil(file.dueDate);
     const hasPersistedAssignmentNotice = persistedAssignmentFileIds.has(String(file.id));
     if (!hasPersistedAssignmentNotice && (sameStaffName(file.assignedStaff, state.currentUser) || sameStaffName(file.assignedStaff, user?.name) || sameStaffName(file.assignedStaffEmail, user?.email) || sameStaffName(file.assignedStaffId, user?.id)) && file.assignedStaff !== "Not Assigned") {
@@ -10736,6 +10730,7 @@ function receiptSummary(file = {}) {
 }
 
 function queueFileChangeNotification(file, changeText, changeType = "File Update") {
+  if (isSupabaseMode()) return;
   if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return;
   const targetUser = findUserByStaffIdentity(file.assignedStaff)
     || findUserByStaffIdentity(file.assignedStaffEmail)
@@ -10766,6 +10761,7 @@ function queueFileChangeNotification(file, changeText, changeType = "File Update
 }
 
 function queueReassignmentNotifications(file, reassignedFrom = "") {
+  if (isSupabaseMode()) return;
   if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole)) return;
   const fromUser = findUserByStaffIdentity(reassignedFrom);
   const toUser = findUserByStaffIdentity(file.reAssignedStaff)
@@ -10843,6 +10839,7 @@ function fileCheckedNotificationText(file = {}, checkedBy = "", checkedDate = ""
 }
 
 function queueFileCheckedNotification(file, beforeFile = {}) {
+  if (isSupabaseMode()) return;
   if (!["Admin", "Manager", "Staff Manager"].includes(state.currentRole) && !isAuthorisedCheckingStaff()) return;
   if (checkingStatusOf(beforeFile).label === "Checked" || checkingStatusOf(file).label !== "Checked") return;
   const recipients = checkedNotificationRecipients(file);
@@ -10877,6 +10874,7 @@ function queueFileCheckedNotification(file, beforeFile = {}) {
 }
 
 function queueCheckingRequiredNotifications(file) {
+  if (isSupabaseMode()) return;
   const now = new Date();
   const existingKey = `${file.id}|awaiting-check|${file.completionDate || ""}`;
   const existing = new Set((state.fileNotifications || []).map((notice) => notice.dedupeKey).filter(Boolean));
@@ -22163,6 +22161,11 @@ function renderDesktopNotificationSettings() {
   const organization = desktopNotificationConfig?.organization || {};
   const devices = Array.isArray(desktopNotificationConfig?.devices) ? desktopNotificationConfig.devices : [];
   const enabled = status.label === "Enabled";
+  const diagnostics = desktopNotificationDiagnostics || {};
+  const permissionLabel = !desktopNotificationsSupported() ? "Not Supported" : Notification.permission === "granted" ? "Allowed" : Notification.permission === "denied" ? "Blocked" : "Not Requested";
+  const workerLabel = desktopServiceWorkerRegistration?.active ? "Active" : "Not Active";
+  const subscriptionLabel = currentDeviceSubscribed && diagnostics.pushSubscriptionActive !== false ? "Active" : "Not Active";
+  const workingLabel = diagnostics.lastSuccessfulPush ? "Working" : "Not Confirmed";
   const admin = state.currentRole === "Admin";
   return `
     <details class="desktop-notification-settings">
@@ -22172,9 +22175,21 @@ function renderDesktopNotificationSettings() {
       </summary>
       <div class="desktop-notification-settings-body">
         <div class="desktop-notification-actions">
-          ${enabled
-            ? `<button class="mini-button desktop-test-button" id="testDesktopNotifications" type="button">Send Test</button><button class="mini-button desktop-disable-button" id="disableDesktopNotifications" type="button">Disable on This Device</button>`
-            : `<button class="mini-button desktop-enable-button" id="enableDesktopNotifications" type="button" ${desktopNotificationsSupported() && Notification.permission !== "denied" ? "" : "disabled"}>Enable Desktop Notifications</button>`}
+          ${!enabled ? `<button class="mini-button desktop-enable-button" id="enableDesktopNotifications" type="button" ${desktopNotificationsSupported() && Notification.permission !== "denied" ? "" : "disabled"}>Enable Desktop Notifications</button>` : ""}
+          <button class="mini-button desktop-test-button" id="testDesktopNotifications" type="button" ${enabled ? "" : "disabled"}>Send Test Notification</button>
+          <button class="mini-button" id="reconnectDesktopNotifications" type="button" ${desktopNotificationsSupported() && Notification.permission !== "denied" ? "" : "disabled"}>Reconnect Notifications</button>
+          <button class="mini-button desktop-disable-button" id="disableDesktopNotifications" type="button" ${currentDeviceSubscribed || diagnostics.currentDeviceRegistered ? "" : "disabled"}>Remove This Device</button>
+        </div>
+        <div class="desktop-device-list desktop-diagnostics" aria-label="Desktop notification diagnostics">
+          <span><strong>Browser Permission:</strong> ${permissionLabel}</span>
+          <span><strong>Service Worker:</strong> ${workerLabel}</span>
+          <span><strong>Push Subscription:</strong> ${subscriptionLabel}</span>
+          <span><strong>Desktop Notifications:</strong> ${workingLabel}</span>
+          <span><strong>Last Successful Push:</strong> ${escapeHtml(diagnostics.lastSuccessfulPush ? new Date(diagnostics.lastSuccessfulPush).toLocaleString("en-IN") : "Never")}</span>
+          <span><strong>Current Device Registered:</strong> ${diagnostics.currentDeviceRegistered ? "Yes" : "No"}</span>
+          <span><strong>Browser/Device Name:</strong> ${escapeHtml(`${diagnostics.browserName || desktopNotificationBrowserName()} / ${diagnostics.deviceName || desktopNotificationDeviceLabel()}`)}</span>
+          ${diagnostics.lastFailure ? `<span class="danger"><strong>Last failure:</strong> ${escapeHtml(diagnostics.lastFailure)}</span>` : ""}
+          ${Notification.permission === "denied" ? `<span>Open this site's browser settings, set Notifications to Allow, reload the app, then click Reconnect Notifications.</span>` : ""}
         </div>
         ${devices.length ? `<div class="desktop-device-list"><strong>${devices.length} active device${devices.length === 1 ? "" : "s"}</strong>${devices.map((device) => `<span>${escapeHtml(device.device_label || "Browser device")}</span>`).join("")}</div>` : ""}
         ${desktopNotificationConfig?.supported ? `
@@ -22221,17 +22236,27 @@ function bindDesktopNotificationSettings(panel) {
   panel.querySelector("#desktopNotificationHeaderAction")?.addEventListener("click", enableDesktopNotifications);
   panel.querySelector("#enableDesktopNotifications")?.addEventListener("click", enableDesktopNotifications);
   panel.querySelector("#disableDesktopNotifications")?.addEventListener("click", disableDesktopNotifications);
+  panel.querySelector("#reconnectDesktopNotifications")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      await deactivateDesktopSubscription({ unsubscribe: true });
+      desktopNotificationConfig = null;
+      await enableDesktopNotifications();
+    } finally { event.currentTarget.disabled = false; }
+  });
   panel.querySelector("#testDesktopNotifications")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    let localShown = false;
     try {
-      localShown = await sendLocalDesktopTestNotification();
-      const result = await apiJson("/api/notifications/test", { method: "POST" });
-      if (result.sent) toast(localShown ? "Desktop test shown and server test sent." : "Server test notification sent.");
-      else toast(localShown ? "Desktop test shown. Server push has no active device." : "No active desktop device was available.");
+      const registration = await registerDesktopNotificationWorker();
+      const subscription = await registration?.pushManager?.getSubscription();
+      if (!subscription) throw new Error("Push Subscription is not active. Use Reconnect Notifications.");
+      const result = await apiJson("/api/notifications/test", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+      if (!result.accepted || !result.sent) throw new Error(result.reason || "The push service did not accept the test notification.");
+      await loadDesktopNotificationConfig(true);
+      toast("Test notification sent successfully.");
     } catch (error) {
-      toast(localShown ? "Desktop test shown. Server push test could not be completed." : (error.message || "Unable to send the test notification."));
+      toast(error.message || "Unable to send the test notification.");
     }
     finally { button.disabled = false; }
   });
@@ -22360,6 +22385,11 @@ function markNotificationItemsRead(items = []) {
   state.readNotifications = [...new Set([...(state.readNotifications || []), ...ids])];
   const chatIds = items.filter((item) => item.chatId).map((item) => item.chatId);
   if (chatIds.length) markChatMessagesRead(chatIds);
+  if (isSupabaseMode()) {
+    items.map((item) => item.sourceEventId || item.id).filter(Boolean).forEach((eventId) => {
+      apiJson(`/api/notifications/events/${encodeURIComponent(eventId)}/read`, { method: "POST" }).catch(() => {});
+    });
+  }
   saveState({ skipMerge: true });
 }
 

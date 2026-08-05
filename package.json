@@ -29,6 +29,7 @@
     "test:fee-pending-pdf": "node tools/test-fee-pending-pdf.js",
     "test:filters": "node tools/test-financial-file-filters.js",
     "test:notifications": "node tools/test-notification-retention.js",
+    "test:notification-pipeline": "node tools/test-notification-pipeline.js",
     "generate:vapid": "web-push generate-vapid-keys --json",
     "import:backup": "node tools/import-backup-to-supabase.js data/site-data.json",
     "repair:collection-types": "node tools/repair-collection-types.js",

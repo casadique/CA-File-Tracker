@@ -24,16 +24,16 @@ const cleanup = applyInitialNotificationCleanup({
 
 assert.equal(cleanup.changed, true);
 assert.equal(cleanup.state.notificationRetention.cleanupVersion, NOTIFICATION_CLEANUP_VERSION);
-assert.equal(cleanup.state.fileNotifications.every((row) => row.isArchived), true);
-assert.equal(cleanup.state.fileNotifications.every((row) => row.archiveReason === "initial_admin_cleanup"), true);
-assert.match(cleanup.state.auditLog.at(-1).message, /cleared by Admin/);
-assert.deepEqual(activeNotificationRows(cleanup.state.fileNotifications, cleanup.state, now.getTime()), []);
+assert.equal(cleanup.state.fileNotifications.find((row) => row.id === "old").archiveReason, "older_than_7_days");
+assert.equal(cleanup.state.fileNotifications.find((row) => row.id === "recent").isArchived, undefined);
+assert.match(cleanup.state.auditLog.at(-1).message, /retention was enabled by Admin/);
+assert.deepEqual(activeNotificationRows(cleanup.state.fileNotifications, cleanup.state, now.getTime()).map((row) => row.id), ["recent"]);
 
 const newNotice = { id: "new", createdAt: "2026-08-03T12:01:00.000Z" };
 assert.deepEqual(
   activeNotificationRows([...cleanup.state.fileNotifications, newNotice], cleanup.state, now.getTime() + 60_000)
     .map((row) => row.id),
-  ["new"]
+  ["new", "recent"]
 );
 
 const repeatedCleanup = applyInitialNotificationCleanup(cleanup.state, {
