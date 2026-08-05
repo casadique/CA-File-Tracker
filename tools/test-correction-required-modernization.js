@@ -73,6 +73,12 @@ for (const selector of [
   "@media (max-width: 760px)",
 ]) assert.match(styles, new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 assert.match(styles, /\.correction-required-client\s*\{[\s\S]*?position:\s*sticky/);
+assert.match(styles, /\.correction-required-client\s*\{[\s\S]*?width:\s*195px/,
+  "The Client column should use compact width");
+assert.match(styles, /\.correction-required-row-toggle\s*\{[\s\S]*?position:\s*absolute[\s\S]*?right:\s*-19px/,
+  "The row expand control should sit on the left Client-column border");
+assert.match(table, /correction-required-sn-cell[\s\S]*?data-correction-row-toggle[\s\S]*?<td class="correction-required-client">/,
+  "The desktop expand control should be anchored from the SN side of the Client border");
 assert.match(styles, /\.correction-required-actions-column\s*\{[\s\S]*?position:\s*sticky[\s\S]*?right:\s*0/);
 assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.correction-required-modern-table\s*\{\s*display:\s*none[\s\S]*?\.correction-required-mobile-list\s*\{\s*display:\s*grid/);
 

@@ -1541,18 +1541,41 @@ th {
   position: sticky;
   left: 0;
   z-index: 3;
-  width: 48px;
+  width: 54px;
   text-align: center !important;
   font-weight: 800;
+}
+
+.correction-required-modern-table td.correction-required-sn {
+  overflow: visible;
+  padding: 10px 4px;
+}
+
+.correction-required-sn-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+}
+
+.correction-required-row-toggle {
+  position: absolute;
+  top: 50%;
+  right: -19px;
+  z-index: 8;
+  transform: translateY(-50%);
+  box-shadow: 0 2px 6px rgba(15, 42, 95, .12);
 }
 
 .correction-required-modern-table thead .correction-required-sn { z-index: 7; background: #e8eef7; }
 
 .correction-required-client {
   position: sticky;
-  left: 48px;
+  left: 54px;
   z-index: 3;
-  width: 230px;
+  width: 195px;
+  padding-left: 24px !important;
   box-shadow: 1px 0 0 #cbd8ea;
 }
 

@@ -10436,8 +10436,8 @@ function correctionRequiredDesktopRows(files = []) {
   return files.map((file, index) => {
     const details = correctionRequiredDetails(file);
     return `<tr class="correction-required-file-row" data-correction-row-file="${escapeHtml(file.id || "")}">
-      <td class="correction-required-sn">${fileSerialNumber(file, index)}</td>
-      <td class="correction-required-client"><div class="correction-required-client-line"><button type="button" class="billed-expand-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(file)}</div></div></td>
+      <td class="correction-required-sn"><div class="correction-required-sn-cell"><span>${fileSerialNumber(file, index)}</span><button type="button" class="billed-expand-toggle correction-required-row-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">&#8250;</span></button></div></td>
+      <td class="correction-required-client"><div class="correction-required-client-line"><div>${clientDetailsCell(file)}</div></div></td>
       <td class="correction-required-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")} · C/o ${escapeHtml(file.careOf || "Direct")}</span></td>
       <td class="correction-required-summary"><strong>${escapeHtml(details.reason)}</strong><span>Returned ${escapeHtml(displayDate(details.returnedOn) || "-")} by ${escapeHtml(details.returnedBy)}</span></td>
       <td class="correction-required-staff"><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong><span>Completed ${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</span></td>
