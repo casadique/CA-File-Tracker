@@ -13,6 +13,7 @@
     "test:file-list": "node tools/test-file-list-modernization.js",
     "test:active-files": "node tools/test-active-files-modernization.js",
     "test:active-files-report": "node tools/test-active-files-report-modernization.js",
+    "test:staff-details": "node tools/test-staff-details-modernization.js",
     "test:completed-files": "node tools/test-completed-files-modernization.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
     "test:fee-received": "node tools/test-fee-received-modernization.js",

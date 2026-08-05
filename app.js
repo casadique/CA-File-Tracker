@@ -10,6 +10,7 @@ const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
 const COMPLETED_FILES_CHECKED_VERSION = "completed-files-checked-by-chindu-2026-07-14";
 const ACTIVE_FILE_DATES_CLEAR_VERSION = "active-file-dates-cleared-2026-07-14";
 const MASTER_LIST_RESET_VERSION = "approved-master-users-2026-07-13";
+const STAFF_DATE_CORRECTION_VERSION = "staff-dob-doj-plus-one-day-2026-08-05";
 const MS_DAY = 86400000;
 const DESKTOP_NOTIFICATION_DEVICE_KEY = `${STORAGE_KEY}-desktop-notification-device`;
 const DESKTOP_LOCAL_BASELINE_KEY = `${STORAGE_KEY}-desktop-local-baseline`;
@@ -2146,6 +2147,43 @@ function normalizeStaffDetails(rows = [], users = state.users || []) {
     if (!old || staffDetailChangeTime(normalized) >= staffDetailChangeTime(old)) seen.set(key, normalized);
   });
   return [...seen.values()].sort((a, b) => staffDetailChangeTime(b) - staffDetailChangeTime(a));
+}
+
+function shiftStaffDateByDays(value, days = 1) {
+  const normalized = normalizeImportDate(value);
+  if (!normalized) return "";
+  const [year, month, day] = normalized.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`;
+}
+
+function applyStaffDateCorrection(appState = state) {
+  if (appState.staffDateCorrectionVersion === STAFF_DATE_CORRECTION_VERSION) return false;
+  const correctedAt = Date.now();
+  appState.staffDetails = (appState.staffDetails || []).map((row) => ({
+    ...row,
+    dateOfJoining: row.dateOfJoining ? shiftStaffDateByDays(row.dateOfJoining) : "",
+    dateOfBirth: row.dateOfBirth ? shiftStaffDateByDays(row.dateOfBirth) : "",
+    updatedByUserName: appState.currentUser || row.updatedByUserName || "System",
+    updatedAt: correctedAt,
+  }));
+  appState.staffDateCorrectionVersion = STAFF_DATE_CORRECTION_VERSION;
+  appState.auditLog = [
+    ...(appState.auditLog || []),
+    {
+      id: crypto.randomUUID(),
+      action: "Staff DOB and DOJ corrected",
+      details: {
+        recordsUpdated: appState.staffDetails.length,
+        adjustment: "+1 calendar day",
+        version: STAFF_DATE_CORRECTION_VERSION,
+      },
+      user: appState.currentUser || "System",
+      role: appState.currentRole || "",
+      at: new Date(correctedAt).toISOString(),
+    },
+  ].slice(-1000);
+  return true;
 }
 
 function mergeStaffDetailsByLatestChange(existingRows, currentRows) {
@@ -12076,7 +12114,12 @@ function renderStaffDetailsPage() {
     page.innerHTML = `<div class="permission-note">Staff Details is not available for this login.</div>`;
     return;
   }
+  const staffDatesCorrected = applyStaffDateCorrection(state);
   state.staffDetails = normalizeStaffDetails(state.staffDetails || []);
+  if (staffDatesCorrected) {
+    saveState({ skipMerge: true, fullRemote: true });
+    toast("Staff DOB and DOJ corrected by one day");
+  }
   const rows = filteredStaffDetails();
   const activeRows = activeStaffDetails();
   const birthdays = staffBirthdaysThisMonth();
@@ -12106,6 +12149,10 @@ function renderStaffDetailsPage() {
       </div>
       ${renderStaffDetailsForm()}
       <section class="panel staff-details-panel">
+        <div class="staff-filter-heading">
+          <div><span class="dashboard-eyebrow">Directory Filters</span><h3>Search &amp; Filter Staff</h3><p>Find employees by identity, employment details, dates or status.</p></div>
+          <span class="staff-record-count">${rows.length} Staff Shown</span>
+        </div>
         <div class="staff-details-filter-grid">
           ${staffFilterInput("staffSearch", "Search", "Search by staff name, email, employee ID or position")}
           ${staffFilterSelect("staffDepartment", "Department", uniqueStaffValues("department"))}
@@ -12119,7 +12166,6 @@ function renderStaffDetailsPage() {
         </div>
         <div class="action-row staff-details-filter-actions">
           <button class="secondary-button" id="clearStaffFilters">Clear Filters</button>
-          <strong>${rows.length} staff record(s)</strong>
         </div>
         ${renderStaffDetailsTable(rows)}
       </section>
@@ -12289,22 +12335,26 @@ function compareStaffEmployeeId(a = {}, b = {}) {
 
 function renderStaffDetailsTable(rows) {
   if (!rows.length) return empty("No staff records found.");
-  const headers = ["SN", "Staff Name", "EMP ID", "Position", "Department", "EMP TYPE", "DOJ", "DOB", "Contact", "Email ID", "BG", "Status", "Actions"];
-  return `<div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
-    <td>${index + 1}</td>
-    <td><div class="staff-name-cell">${staffAvatar(row)}<strong>${escapeHtml(row.staffName)}</strong></div></td>
-    <td>${escapeHtml(row.staffCode || "")}</td>
-    <td>${escapeHtml(row.position || "")}</td>
-    <td>${escapeHtml(row.department || "")}</td>
-    <td>${escapeHtml(row.employmentType || "")}</td>
-    <td>${displayDate(row.dateOfJoining)}</td>
-    <td>${displayDate(row.dateOfBirth)}</td>
-    <td>${escapeHtml(row.mobile || "")}</td>
-    <td>${escapeHtml(row.email || "")}</td>
-    <td>${escapeHtml(row.bloodGroup || "Not Known")}</td>
-    <td><span class="staff-status status-${String(row.employmentStatus || "Active").toLowerCase().replaceAll(" ", "-")}">${escapeHtml(row.employmentStatus || "Active")}</span></td>
-    <td class="action-col"><button class="mini-button" data-view-staff="${row.id}">View</button>${canManageStaffDetails() ? `<button class="mini-button" data-edit-staff="${row.id}">Edit</button><button class="mini-button" data-toggle-staff="${row.id}">${["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "Reactivate" : "Deactivate"}</button><button class="mini-button danger" data-delete-staff="${row.id}">Delete</button>` : ""}</td>
-  </tr>`).join("")}</tbody></table></div>`;
+  const headers = ["SN", "Staff", "Employment", "EMP Type / Status", "DOJ / DOB", "Contact", "BG / Gender", "Actions"];
+  return `<div class="staff-directory-desktop"><div class="table-wrap staff-details-table-wrap"><table class="file-table staff-details-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr>
+    <td class="staff-sn">${index + 1}</td>
+    <td class="staff-identity-cell"><div class="staff-name-cell">${staffAvatar(row)}<div><strong>${escapeHtml(row.staffName)}</strong><span>EMP ID: ${escapeHtml(row.staffCode || "Not recorded")}</span></div></div></td>
+    <td class="staff-employment-cell"><strong>${escapeHtml(row.position || "Not recorded")}</strong><span>${escapeHtml(row.department || "Department not recorded")}</span></td>
+    <td class="staff-type-cell"><strong>${escapeHtml(row.employmentType || "Not recorded")}</strong><span class="staff-status status-${String(row.employmentStatus || "Active").toLowerCase().replaceAll(" ", "-")}">${escapeHtml(row.employmentStatus || "Active")}</span></td>
+    <td class="staff-dates-cell"><span><b>DOJ</b>${escapeHtml(displayDate(row.dateOfJoining) || "-")}</span><span><b>DOB</b>${escapeHtml(displayDate(row.dateOfBirth) || "-")}</span></td>
+    <td class="staff-contact-cell"><strong>${escapeHtml(row.mobile || "No contact")}</strong><span>${escapeHtml(row.email || "No email")}</span></td>
+    <td class="staff-personal-cell"><strong>${escapeHtml(row.bloodGroup || "Not Known")}</strong><span>${escapeHtml(row.gender || "Not recorded")}</span></td>
+    <td class="staff-actions-cell">${staffDetailsActions(row)}</td>
+  </tr>`).join("")}</tbody></table></div></div><div class="staff-directory-mobile">${rows.map((row, index) => staffDetailsMobileCard(row, index)).join("")}</div>`;
+}
+
+function staffDetailsActions(row) {
+  const inactive = ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus);
+  return `<div class="staff-row-actions"><button type="button" class="staff-primary-action" data-view-staff="${row.id}">View Profile</button>${canManageStaffDetails() ? `<details class="staff-action-menu"><summary aria-label="Open actions for ${escapeHtml(row.staffName)}" title="More actions">⋮</summary><div role="menu"><button type="button" role="menuitem" data-edit-staff="${row.id}">Edit</button><button type="button" role="menuitem" data-toggle-staff="${row.id}">${inactive ? "Reactivate" : "Deactivate"}</button><button type="button" role="menuitem" class="danger" data-delete-staff="${row.id}">Delete</button></div></details>` : ""}</div>`;
+}
+
+function staffDetailsMobileCard(row, index) {
+  return `<article class="staff-mobile-card${index % 2 ? " is-alt" : ""}"><header>${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "Position not recorded")} · ${escapeHtml(row.department || "Department not recorded")}</p><span>EMP ID: ${escapeHtml(row.staffCode || "Not recorded")}</span></div></header><div class="staff-mobile-summary"><div><span>EMP Type</span><strong>${escapeHtml(row.employmentType || "-")}</strong></div><div><span>Status</span><strong><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></strong></div><div><span>DOJ</span><strong>${escapeHtml(displayDate(row.dateOfJoining) || "-")}</strong></div><div><span>DOB</span><strong>${escapeHtml(displayDate(row.dateOfBirth) || "-")}</strong></div><div><span>Contact</span><strong>${escapeHtml(row.mobile || "-")}</strong></div><div><span>BG</span><strong>${escapeHtml(row.bloodGroup || "Not Known")}</strong></div></div><p class="staff-mobile-email">${escapeHtml(row.email || "No email recorded")}</p>${staffDetailsActions(row)}</article>`;
 }
 
 function staffAvatar(row) {
@@ -12339,6 +12389,15 @@ function staffProfileBlock(title, rows) {
 }
 
 function bindStaffDetailsPage() {
+  const staffPage = document.querySelector("#staffDetails");
+  staffPage?.addEventListener("click", (event) => {
+    if (event.target.closest(".staff-action-menu")) return;
+    staffPage.querySelectorAll(".staff-action-menu[open]").forEach((menu) => { menu.open = false; });
+  });
+  staffPage?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    staffPage.querySelectorAll(".staff-action-menu[open]").forEach((menu) => { menu.open = false; });
+  });
   document.querySelector("#showStaffForm")?.addEventListener("click", () => {
     staffDetailsFormOpen = true;
     state.filters.staffEditingId = "";
@@ -12390,6 +12449,14 @@ function bindStaffDetailsPage() {
   }));
   document.querySelectorAll("[data-toggle-staff]").forEach((btn) => btn.addEventListener("click", () => toggleStaffStatus(btn.dataset.toggleStaff)));
   document.querySelectorAll("[data-delete-staff]").forEach((btn) => btn.addEventListener("click", () => deleteStaffDetail(btn.dataset.deleteStaff)));
+  document.querySelectorAll(".staff-action-menu").forEach((menu) => menu.addEventListener("toggle", () => {
+    if (!menu.open) return;
+    document.querySelectorAll(".staff-action-menu[open]").forEach((other) => { if (other !== menu) other.open = false; });
+  }));
+  document.querySelectorAll(".staff-action-menu button").forEach((button) => button.addEventListener("click", () => {
+    const menu = button.closest(".staff-action-menu");
+    if (menu) menu.open = false;
+  }));
   document.querySelector("#staffDetailsExcel")?.addEventListener("click", exportStaffDetailsExcel);
   document.querySelector("#staffDetailsPdf")?.addEventListener("click", exportStaffDetailsPdf);
   document.querySelector("#staffDetailsPrint")?.addEventListener("click", printStaffDetailsReport);
@@ -12556,29 +12623,31 @@ function deleteStaffDetail(id) {
   renderStaffDetailsPage();
 }
 
-function staffDetailsReportRows(rows = filteredStaffDetails()) {
-  return rows.map((row) => ({
+function staffDetailsReportRows(rows = filteredStaffDetails(), format = "display") {
+  const dateValue = (value) => format === "excel" ? staffExcelDate(value) : (displayDate(value) || "");
+  return rows.map((row, index) => ({
+    SN: index + 1,
     "Staff Name": row.staffName,
-    "Employee ID": row.staffCode,
-    "App User Email": state.users.find((user) => user.id === row.linkedUserId || user.authUserId === row.linkedUserId)?.email || "",
+    "EMP ID": row.staffCode,
     Position: row.position,
     Department: row.department,
-    "Employment Type": row.employmentType,
-    "Date of Joining": staffExcelDate(row.dateOfJoining),
-    "Employment Status": row.employmentStatus,
-    "Date of Birth": staffExcelDate(row.dateOfBirth),
+    "EMP TYPE": row.employmentType,
+    DOJ: dateValue(row.dateOfJoining),
+    Status: row.employmentStatus,
+    DOB: dateValue(row.dateOfBirth),
     Gender: row.gender,
-    "Blood Group": row.bloodGroup || "Not Known",
-    "Mobile Number": row.mobile,
+    BG: row.bloodGroup || "Not Known",
+    Contact: row.mobile,
     "Email ID": row.email,
-    Address: row.address,
-    "Emergency Contact Person": row.emergencyContactName,
-    "Emergency Contact Number": row.emergencyContactNumber,
-    Relationship: row.emergencyContactRelationship,
     Qualification: row.qualifications,
     Remarks: row.remarks,
   }));
 }
+
+const staffReportColumns = [
+  "SN", "Staff Name", "EMP ID", "Position", "Department", "EMP TYPE", "DOJ", "Status",
+  "DOB", "Gender", "BG", "Contact", "Email ID", "Qualification", "Remarks",
+];
 
 const staffWorkbookColumns = [
   "Staff Name", "Employee ID", "App User Email", "Position", "Department", "Employment Type",
@@ -12630,11 +12699,55 @@ async function exportStaffDetailsWorkbook(name, rows, sheetName = "Staff Details
   try {
     await loadSheetJs();
     const XLSX = window.XLSX;
-    const sheet = XLSX.utils.json_to_sheet(rows, { header: staffWorkbookColumns, cellDates: true });
-    styleStaffWorksheet(sheet, rows.length);
+    const generatedBy = loggedInUser()?.name || state.currentUser || "Not Recorded";
+    const dataRows = rows.map((row) => staffReportColumns.map((heading) => row[heading] ?? ""));
+    const dataStartRow = 9;
+    const dataEndRow = Math.max(dataStartRow, dataStartRow + rows.length - 1);
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["Muhammad & Associates"], ["Chartered Accountants"], ["STAFF DETAILS REPORT"],
+      [`Generated: ${fileExportDateTime()} | Records: ${rows.length} | Generated by: ${generatedBy}`], [],
+      ["TOTAL STAFF", "", "", "", "ACTIVE", "", "", "", "INACTIVE / EXITED", "", "", "", "DEPARTMENTS", "", ""],
+      ["", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+      staffReportColumns, ...dataRows,
+    ], { cellDates: true });
+    sheet["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 14 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 14 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 14 } }, { s: { r: 3, c: 0 }, e: { r: 3, c: 14 } },
+      { s: { r: 5, c: 0 }, e: { r: 5, c: 3 } }, { s: { r: 5, c: 4 }, e: { r: 5, c: 7 } },
+      { s: { r: 5, c: 8 }, e: { r: 5, c: 11 } }, { s: { r: 5, c: 12 }, e: { r: 5, c: 14 } },
+      { s: { r: 6, c: 0 }, e: { r: 6, c: 3 } }, { s: { r: 6, c: 4 }, e: { r: 6, c: 7 } },
+      { s: { r: 6, c: 8 }, e: { r: 6, c: 11 } }, { s: { r: 6, c: 12 }, e: { r: 6, c: 14 } },
+    ];
+    sheet.A7 = { t: "n", f: `COUNTA(B${dataStartRow}:B${dataEndRow})` };
+    sheet.E7 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${dataEndRow},"Active")` };
+    sheet.I7 = { t: "n", f: `COUNTA(B${dataStartRow}:B${dataEndRow})-COUNTIF(H${dataStartRow}:H${dataEndRow},"Active")` };
+    sheet.M7 = { t: "n", f: `COUNTA(UNIQUE(E${dataStartRow}:E${dataEndRow}))` };
+    sheet["!cols"] = [{ wch: 7 }, { wch: 25 }, { wch: 14 }, { wch: 17 }, { wch: 22 }, { wch: 17 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 13 }, { wch: 10 }, { wch: 17 }, { wch: 27 }, { wch: 24 }, { wch: 32 }];
+    sheet["!rows"] = [{ hpt: 25 }, { hpt: 18 }, { hpt: 27 }, { hpt: 22 }, { hpt: 8 }, { hpt: 20 }, { hpt: 25 }, { hpt: 25 }, ...rows.map(() => ({ hpt: 30 }))];
+    sheet["!autofilter"] = { ref: `A8:O${dataEndRow}` };
+    sheet["!freeze"] = { xSplit: 0, ySplit: 8, topLeftCell: "A9", activePane: "bottomLeft", state: "frozen" };
+    const titleStyle = { font: { bold: true, color: { rgb: "173568" }, sz: 16 }, alignment: { horizontal: "center", vertical: "center" } };
+    const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" } }, fill: { fgColor: { rgb: "173568" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { bottom: { style: "thin", color: { rgb: "9DB3D3" } } } };
+    const cardLabelStyle = { font: { bold: true, color: { rgb: "5B6B82" } }, fill: { fgColor: { rgb: "EAF2FF" } }, alignment: { horizontal: "center", vertical: "center" } };
+    const cardValueStyle = { font: { bold: true, color: { rgb: "2563EB" }, sz: 14 }, fill: { fgColor: { rgb: "F7FAFF" } }, alignment: { horizontal: "center", vertical: "center" } };
+    sheet.A1.s = titleStyle; sheet.A2.s = { font: { color: { rgb: "64748B" }, sz: 10 }, alignment: { horizontal: "center" } }; sheet.A3.s = titleStyle;
+    sheet.A4.s = { font: { color: { rgb: "475569" }, sz: 9 }, fill: { fgColor: { rgb: "EAF2FF" } }, alignment: { horizontal: "left", vertical: "center" } };
+    ["A6", "E6", "I6", "M6"].forEach((address) => { sheet[address].s = cardLabelStyle; });
+    ["A7", "E7", "I7", "M7"].forEach((address) => { sheet[address].s = cardValueStyle; });
+    staffReportColumns.forEach((_, index) => { const cell = sheet[XLSX.utils.encode_cell({ r: 7, c: index })]; if (cell) cell.s = headerStyle; });
+    for (let row = dataStartRow; row <= dataEndRow; row += 1) {
+      const alternate = row % 2 === 0 ? "F4F7FB" : "FFFFFF";
+      for (let col = 0; col < staffReportColumns.length; col += 1) {
+        const cell = sheet[XLSX.utils.encode_cell({ r: row - 1, c: col })];
+        if (!cell) continue;
+        cell.s = { fill: { fgColor: { rgb: alternate } }, font: { color: { rgb: "1E293B" } }, alignment: { vertical: "center", wrapText: col >= 13 }, border: { bottom: { style: "thin", color: { rgb: "D8E2F0" } } } };
+      }
+      ["G", "I"].forEach((column) => { const cell = sheet[`${column}${row}`]; if (cell) cell.z = "dd-mm-yyyy"; });
+      ["A", "G", "H", "I", "J", "K"].forEach((column) => { const cell = sheet[`${column}${row}`]; if (cell) cell.s.alignment.horizontal = "center"; });
+    }
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
-    XLSX.writeFile(workbook, `${name}-${todayDate()}.xlsx`, { cellDates: true });
+    XLSX.writeFile(workbook, `${name}-${todayDate()}.xlsx`, { cellDates: true, cellStyles: true });
     toast("Excel file downloaded");
   } catch (error) {
     console.error(error);
@@ -12962,8 +13075,106 @@ async function persistStaffDetailsImportToApi(importedRecords = []) {
   }
 }
 
-function exportStaffDetailsExcel() { exportStaffDetailsWorkbook("staff-details-register", staffDetailsReportRows(), "Staff Details"); }
-async function exportStaffDetailsPdf() { await downloadPdfRows("staff-details-register", staffDetailsReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Staff Details Register"]); }
+function exportStaffDetailsExcel() { return exportStaffDetailsWorkbook("staff-details-register", staffDetailsReportRows(filteredStaffDetails(), "excel"), "Staff Details"); }
+
+function staffDetailsPdfSummary(rows = []) {
+  return {
+    total: rows.length,
+    active: rows.filter((row) => row.employmentStatus === "Active").length,
+    onLeave: rows.filter((row) => row.employmentStatus === "On Leave").length,
+    inactive: rows.filter((row) => ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus)).length,
+    departments: new Set(rows.map((row) => row.department).filter(Boolean)).size,
+    employmentTypes: new Set(rows.map((row) => row.employmentType).filter(Boolean)).size,
+  };
+}
+
+async function createStaffDetailsPdfDocument(rows = filteredStaffDetails()) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const summary = staffDetailsPdfSummary(rows);
+  const generatedAt = fileExportDateTime();
+  const generatedBy = loggedInUser()?.name || state.currentUser || "Not Recorded";
+  const drawHeader = (compact = false) => {
+    if (compact) {
+      doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(8.2);
+      doc.text("Muhammad & Associates", 30, 24); doc.text("Staff Details Report", pageWidth / 2, 24, { align: "center" });
+      doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.5); doc.setTextColor(...BILLED_PDF_COLORS.muted); doc.text(generatedAt, pageWidth - 30, 24, { align: "right" });
+      doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.line(30, 40, pageWidth - 30, 40);
+      return;
+    }
+    try { doc.addImage(assets.logo, "PNG", 30, 20, 35, 35); } catch { /* Branded text remains visible. */ }
+    doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(14); doc.text("Muhammad & Associates", 73, 31);
+    doc.setFont("DejaVuSans", "normal"); doc.setFontSize(8.2); doc.text("Chartered Accountants", 73, 46);
+    doc.setFont("DejaVuSans", "bold"); doc.setFontSize(15); doc.text("STAFF DETAILS REPORT", pageWidth / 2, 62, { align: "center" });
+    doc.setDrawColor(...BILLED_PDF_COLORS.blue); doc.setLineWidth(1.5); doc.line(pageWidth / 2 - 73, 69, pageWidth / 2 + 73, 69);
+    doc.setFillColor(...BILLED_PDF_COLORS.lightBlue); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(30, 78, pageWidth - 60, 25, 3, 3, "FD");
+    doc.setTextColor(...BILLED_PDF_COLORS.text); doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.8);
+    doc.text(`Generated: ${generatedAt}  |  Records: ${rows.length}  |  Generated by: ${generatedBy}`, 38, 93);
+    drawBilledPdfCards(doc, [
+      ["Total Staff", String(summary.total), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+      ["Active", String(summary.active), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+      ["On Leave", String(summary.onLeave), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+      ["Inactive / Exited", String(summary.inactive), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+      ["Departments", String(summary.departments), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+      ["EMP Types", String(summary.employmentTypes), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ], 30, 112, pageWidth - 60, 6);
+  };
+  const body = rows.map((row, index) => ({
+    sn: index + 1,
+    staff: `${row.staffName || "-"}\nEMP ID: ${row.staffCode || "Not Recorded"}`,
+    employment: `${row.position || "-"}\n${row.department || "-"}`,
+    type: row.employmentType || "-",
+    doj: displayDate(row.dateOfJoining) || "-",
+    dob: displayDate(row.dateOfBirth) || "-",
+    contact: row.mobile || "-",
+    email: row.email || "-",
+    bg: row.bloodGroup || "Not Known",
+    status: row.employmentStatus || "Active",
+    qualification: row.qualifications || "-",
+    remarks: row.remarks || "-",
+  }));
+  doc.autoTable({
+    startY: 164,
+    columns: [
+      { header: "SN", dataKey: "sn" }, { header: "Staff Details", dataKey: "staff" }, { header: "Position / Department", dataKey: "employment" },
+      { header: "EMP Type", dataKey: "type" }, { header: "DOJ", dataKey: "doj" }, { header: "DOB", dataKey: "dob" },
+      { header: "Contact", dataKey: "contact" }, { header: "Email ID", dataKey: "email" }, { header: "BG", dataKey: "bg" },
+      { header: "Status", dataKey: "status" }, { header: "Qualification", dataKey: "qualification" }, { header: "Remarks", dataKey: "remarks" },
+    ],
+    body, theme: "grid", showHead: "everyPage", rowPageBreak: "avoid", margin: { left: 30, right: 30, top: 50, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 6.2, cellPadding: { top: 3.5, right: 2.5, bottom: 3.5, left: 2.5 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.3, minCellHeight: 27 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 6.6, fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255], halign: "center", minCellHeight: 25 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { sn: { halign: "center", cellWidth: 22 }, staff: { cellWidth: 105, fontStyle: "bold" }, employment: { cellWidth: 85 }, type: { cellWidth: 55 }, doj: { halign: "center", cellWidth: 52 }, dob: { halign: "center", cellWidth: 52 }, contact: { cellWidth: 65 }, email: { cellWidth: 105 }, bg: { halign: "center", cellWidth: 30 }, status: { halign: "center", cellWidth: 54 }, qualification: { cellWidth: 75 }, remarks: { cellWidth: 83 } },
+    willDrawPage: () => drawHeader(doc.internal.getCurrentPageInfo().pageNumber > 1),
+    didParseCell: (data) => {
+      if (data.section !== "body" || data.column.dataKey !== "status") return;
+      const status = String(body[data.row.index]?.status || "");
+      if (status === "Active") { data.cell.styles.textColor = BILLED_PDF_COLORS.green; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightGreen; }
+      else if (status === "On Leave") { data.cell.styles.textColor = BILLED_PDF_COLORS.amber; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightAmber; }
+      else { data.cell.styles.textColor = BILLED_PDF_COLORS.red; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightRed; }
+      data.cell.styles.fontStyle = "bold";
+    },
+  });
+  drawBilledPdfFooters(doc);
+  return doc;
+}
+
+async function exportStaffDetailsPdf() {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  try {
+    const doc = await createStaffDetailsPdfDocument(filteredStaffDetails());
+    doc.save(`staff-details-register-${todayDate()}.pdf`);
+    toast("Staff Details PDF downloaded");
+  } catch (error) {
+    console.error(error);
+    toast("Unable to generate the Staff Details PDF.");
+  }
+}
 function printStaffDetailsReport() {
   printStructuredReport({ title: "Staff Details Register", sections: [{ title: "Staff Details", rows: staffDetailsReportRows() }], format: "print" });
 }
