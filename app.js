@@ -7732,17 +7732,6 @@ function sortedBilledTableFiles(files = []) {
   });
 }
 
-function billedWorkflowHistory(file = {}) {
-  const stagesForDisplay = ["Received", "Allotted", "WIP", "Work Done", "Shared", "Report Prepared", "Approved", "Completed", "Billed"];
-  const normalized = normalizeStages(file);
-  const completed = new Set(Object.entries(normalized).filter(([, value]) => Boolean(value)).map(([key]) => key));
-  if (file.workAllotmentDate) completed.add("Allotted");
-  if (file.fileReceivedDate) completed.add("Received");
-  if (file.billed) completed.add("Billed");
-  const labels = stagesForDisplay.filter((stage) => completed.has(stage));
-  return labels.length ? labels.join(" → ") : statusOf(file).label;
-}
-
 function billedExpandedDetails(file = {}, payment = billedPaymentDetails(file)) {
   const receipts = payment.summary.receipts.slice(0, 4);
   const billNo = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || file.billReference || "-";
@@ -7757,9 +7746,9 @@ function billedExpandedDetails(file = {}, payment = billedPaymentDetails(file)) 
     }).join("")
     : `<li><span>No active receipt history</span></li>`;
   return `<div class="billed-expanded-grid">
-    <section><h4>Work dates</h4><dl><div><dt>Received</dt><dd>${displayDate(file.fileReceivedDate) || "-"}</dd></div><div><dt>Work allotted</dt><dd>${displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-"}</dd></div><div><dt>Due date</dt><dd class="${payment.paymentOverdue ? "overdue-text" : ""}">${displayDate(file.dueDate) || "-"}</dd></div><div><dt>Priority</dt><dd>${escapeHtml(file.priority || "Medium")}</dd></div></dl></section>
-    <section><h4>Workflow history</h4><p>${escapeHtml(billedWorkflowHistory(file))}</p><h4>Remarks</h4><p>${escapeHtml(file.remarks || file.billingRemarks || file.feeRemarks || "No remarks")}</p></section>
-    <section><h4>Billing history</h4><p>Bill ${escapeHtml(billNo)} · ${displayDate(billDate) || "-"}<br><strong>${rupee(payment.summary.billedAmount)}</strong> billed · <strong>${rupee(payment.summary.totalReceived)}</strong> received</p><h4>Receipt history</h4><ul class="billed-receipt-history">${history}</ul></section>
+    <section class="billed-expanded-bill-history"><h4>Bill History</h4><p>Bill ${escapeHtml(billNo)} · ${displayDate(billDate) || "-"}<br><strong>${rupee(payment.summary.billedAmount)}</strong> billed</p></section>
+    <section class="billed-expanded-receipt-history"><h4>Receipt History</h4><ul class="billed-receipt-history">${history}</ul></section>
+    <section class="billed-expanded-remarks"><h4>Remarks</h4><p>${escapeHtml(file.remarks || file.billingRemarks || file.feeRemarks || "No remarks")}</p></section>
   </div>`;
 }
 

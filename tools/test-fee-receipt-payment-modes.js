@@ -385,6 +385,14 @@ async function main() {
     "Billed Files timeline must use the completed date instead of the due date");
   assert.match(billedLayoutBody, /data-billed-row-toggle/,
     "Billed Files client must provide expandable row details");
+  const billedExpandedBody = billedLayoutBody.match(/function billedExpandedDetails[\s\S]*?(?=\nfunction billedDesktopRow)/)?.[0] || "";
+  for (const heading of ["Bill History", "Receipt History", "Remarks"]) {
+    assert.match(billedExpandedBody, new RegExp(heading), `Billed Files expanded view must include ${heading}`);
+  }
+  assert.doesNotMatch(billedExpandedBody, /Workflow history|Work dates/,
+    "Billed Files expanded view must exclude workflow and work-date history");
+  assert.match(appStyles, /\.billed-expanded-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/,
+    "Bill history, receipt history and remarks must stay in one desktop row");
   assert.match(billedLayoutBody, /billedMobileCard/,
     "Billed Files must render a dedicated mobile card layout");
   assert.match(billedLayoutBody, /billedFileActions\(file\)/,
