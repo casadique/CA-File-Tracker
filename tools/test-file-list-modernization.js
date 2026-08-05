@@ -75,7 +75,11 @@ assert.doesNotMatch(expandedDetails, /escapeHtml\(rupee/,
 for (const css of [
   ".master-file-table-wrap", ".master-file-table", ".master-file-actions-column",
   ".master-file-mobile-card", ".master-billing-badge", ".master-file-expanded-grid",
+  ".master-file-expanded-contact", ".master-file-expanded-email", ".master-file-expanded-remarks",
   "@media (max-width: 760px)",
 ]) assert.match(styles, new RegExp(css.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+assert.match(styles, /\.master-file-expanded-contact,[\s\S]*?\.master-file-expanded-email,[\s\S]*?\.master-file-expanded-remarks\s*\{\s*grid-column:\s*span 2;/,
+  "Contact, email and remarks must share one desktop row");
 
 console.log("File List filters, responsive layout, actions and expanded details checks passed.");
