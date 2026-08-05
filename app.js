@@ -3201,7 +3201,7 @@ function isRemovedFileRecord(file = {}) {
 function filteredFiles() {
   const f = state.filters;
   return visibleFiles().filter((file) => {
-    const configuredBillingView = ["", "active", "completed", "notChecked", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
+    const configuredBillingView = ["", "active", "completed", "notChecked", "correctionRequired", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
       ? configuredFinancialSearchHaystack(file)
@@ -4459,6 +4459,7 @@ function renderAll() {
   if (activePage === "files" && state.filters.listView === "active") titles.files[0] = "Active Files";
   if (activePage === "files" && state.filters.listView === "completed") titles.files[0] = "Completed Files";
   if (activePage === "files" && state.filters.listView === "notChecked") titles.files[0] = "Not Checked Files";
+  if (activePage === "files" && (state.filters.listView === "correctionRequired" || state.filters.dashboardKind === "correctionRequired")) titles.files[0] = "Correction Required Files";
   if (activePage === "files" && state.filters.listView === "reAssigned") titles.files[0] = "Re Assigned Files";
   if (activePage === "files" && state.filters.listView === "nonBilled") titles.files[0] = "Non-Billed Files";
   if (activePage === "files" && state.filters.listView === "billed") titles.files[0] = "Billed Files";
@@ -5665,6 +5666,10 @@ function configuredFinancialFilterConfigs() {
     "Completion Date - Newest First", "Completion Date - Oldest First", "Client Name - A to Z",
     "Service Type", "Done By", "Assigned Staff", "Priority",
   ];
+  const correctionRequiredSort = [
+    "Returned Date - Newest First", "Returned Date - Oldest First", "Oldest Correction First",
+    "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority",
+  ];
   const activeSort = [
     "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority", "Workflow Status",
@@ -5781,6 +5786,33 @@ function configuredFinancialFilterConfigs() {
       advanced: [common.pan, common.staff,
         { key: "notCheckedCorrectionHistory", label: "Correction History", type: "select", emptyLabel: "All records", options: ["Has Correction History", "No Correction History"] },
         { key: "notCheckedMissingCompletionDate", label: "Completion Date", type: "select", emptyLabel: "Available or missing", options: ["Available", "Missing"] },
+        common.hasRemarks,
+      ],
+    },
+    correctionRequired: {
+      title: "Search & Filter Correction Required Files",
+      mobileTitle: "Filter Correction Required Files",
+      mainPrimary: [
+        { ...common.search, placeholder: "Search client, PAN, service, staff, returned by, reason or remarks" },
+        common.client, common.careOf, common.service, common.staff,
+        { key: "priority", label: "Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
+      ],
+      mainSecondary: [
+        { label: "Returned Date Range", type: "range", controls: [
+          { key: "correctionReturnedFrom", label: "Returned From", type: "date" },
+          { key: "correctionReturnedTo", label: "Returned To", type: "date" },
+        ] },
+        { label: "Completion Date Range", type: "range", controls: [
+          { key: "correctionCompletedFrom", label: "Completed From", type: "date" },
+          { key: "correctionCompletedTo", label: "Completed To", type: "date" },
+        ] },
+        { key: "correctionAging", label: "Correction Aging", type: "select", emptyLabel: "All aging", options: ["0-7 Days", "8-15 Days", "16-30 Days", "Above 30 Days"] },
+        common.fy,
+        { key: "correctionRequiredSort", label: "Sort By", type: "select", options: correctionRequiredSort, defaultValue: correctionRequiredSort[0] },
+      ],
+      advanced: [common.pan,
+        { key: "correctionReturnedBy", label: "Returned By", type: "text", placeholder: "Search reviewer" },
+        { key: "correctionExpectedDate", label: "Expected Date", type: "select", emptyLabel: "Available or missing", options: ["Available", "Missing"] },
         common.hasRemarks,
       ],
     },
@@ -6010,6 +6042,7 @@ function configuredFinancialFacts(file = {}) {
   const transactionReferences = [...receipts, ...linkedCollections].map((row) => row.referenceNumber || row.reference_number || row.transactionReference || row.transaction_reference || row.refNo || row.ref_no || "").filter(Boolean);
   const receivedBy = receipts.map((receipt) => receipt.receivedBy || receipt.received_by || "").filter(Boolean);
   const billDate = normalizeImportDate(file.billDate || file.bill_date || file.billedDate || "");
+  const correction = latestCorrectionForFile(file) || {};
   return {
     summary, pdfRecord, receipts, allReceipts, linkedCollections, receiptModes, paymentModes, transactionReferences,
     receivedBy: receivedBy.length ? receivedBy : [file.feeReceivedBy || file.receivedBy || file.received_by || ""].filter(Boolean),
@@ -6019,6 +6052,10 @@ function configuredFinancialFacts(file = {}) {
     completionDate: fileActualCompletionDate(file),
     receivedDate: normalizeImportDate(file.fileReceivedDate || file.receivedDate || file.received_date || ""),
     dueDate: normalizeImportDate(file.dueDate || file.due_date || ""),
+    correctionReturnedDate: normalizeImportDate(correction.returnedAt || correction.returned_at || file.returnedAt || file.returned_at || file.returnedDate || ""),
+    correctionExpectedDate: normalizeImportDate(correction.expectedCorrectionDate || correction.expected_correction_date || file.expectedCorrectionDate || ""),
+    correctionReturnedBy: String(correction.returnedBy || correction.returned_by_name || file.returnedBy || ""),
+    correctionReason: String(correction.correctionReason || correction.correction_reason || file.correctionRemarks || ""),
     billNumber: String(file.billNumber || file.billNo || file.bill_no || file.invoiceNumber || file.invoice_no || ""),
     contact: String(file.mobileNumber || file.mobile || file.contactNumber || file.contact || file.phone || ""),
     remarks: String(file.remarks || file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || ""),
@@ -6029,6 +6066,7 @@ function configuredFinancialSearchHaystack(file = {}) {
   const facts = configuredFinancialFacts(file);
   return [file.name, fileRegistrationNumber(file), file.pan, facts.contact, file.serviceType, file.careOf, file.assignedStaff,
     file.reAssignedStaff, file.completedBy, file.workDoneBy, file.checkedBy, file.billingType, facts.billNumber, facts.remarks, ...facts.receivedBy, ...facts.transactionReferences,
+    facts.correctionReason, facts.correctionReturnedBy, facts.correctionExpectedDate,
     ...facts.paymentModes, ...facts.receiptModes].filter(Boolean).join(" ").toLowerCase();
 }
 
@@ -6125,6 +6163,20 @@ function configuredFinancialFileMatches(file, listView, filters) {
     if (filters.notCheckedMissingCompletionDate === "Available" && !facts.completionDate) return false;
     if (filters.notCheckedMissingCompletionDate === "Missing" && facts.completionDate) return false;
     return true;
+  }
+  if (listView === "correctionRequired") {
+    if (filters.priority && String(file.priority || "Medium") !== filters.priority) return false;
+    if (!configuredFinancialDateInRange(facts.correctionReturnedDate, filters.correctionReturnedFrom, filters.correctionReturnedTo)) return false;
+    if (!configuredFinancialDateInRange(facts.completionDate, filters.correctionCompletedFrom, filters.correctionCompletedTo)) return false;
+    if (filters.correctionReturnedBy && !facts.correctionReturnedBy.toLowerCase().includes(filters.correctionReturnedBy.toLowerCase())) return false;
+    if (filters.correctionExpectedDate === "Available" && !facts.correctionExpectedDate) return false;
+    if (filters.correctionExpectedDate === "Missing" && facts.correctionExpectedDate) return false;
+    const age = correctionRequiredAgeDays(file);
+    if (filters.correctionAging === "0-7 Days" && !(age >= 0 && age <= 7)) return false;
+    if (filters.correctionAging === "8-15 Days" && !(age >= 8 && age <= 15)) return false;
+    if (filters.correctionAging === "16-30 Days" && !(age >= 16 && age <= 30)) return false;
+    if (filters.correctionAging === "Above 30 Days" && age <= 30) return false;
+    return hasOpenCorrection(file);
   }
   if (listView === "nonBilled") {
     const billingType = String(file.billingType || file.billing_type || "").toLowerCase();
@@ -6287,6 +6339,9 @@ function renderFilesPage() {
         }
         if ((state.filters.listView || state.filters.dashboardKind) === "notChecked") {
           return exportNotCheckedFilesExcel(sourceFiles);
+        }
+        if ((state.filters.listView || state.filters.dashboardKind) === "correctionRequired") {
+          return exportCorrectionRequiredFilesExcel(sourceFiles);
         }
         const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
@@ -6511,20 +6566,21 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
   document.querySelector("#files").innerHTML = `<div class="panel">
     ${renderConfiguredFinancialFilterPanel(files, config)}
     ${billedFilesActionToolbar()}
-    <div id="fileResults">${listView === "" ? renderMasterFileTable(files) : listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView)}</div>
+    <div id="fileResults">${listView === "" ? renderMasterFileTable(files) : listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : listView === "notChecked" ? renderNotCheckedFileTable(files) : listView === "correctionRequired" ? renderCorrectionRequiredTable(files) : renderStaffFileTable(files, listView)}</div>
   </div>`;
   bindConfiguredFinancialFilters(config);
   const exportExcelButton = document.querySelector("#exportFiltered");
   if (exportExcelButton) exportExcelButton.onclick = async () => {
     const reportFiles = sortFilesForDisplay(filteredFiles());
     if (listView === "notChecked") return exportNotCheckedFilesExcel(reportFiles);
+    if (listView === "correctionRequired") return exportCorrectionRequiredFilesExcel(reportFiles);
     if (listView !== "completed") return exportStaffPageExcel(listView, reportFiles);
     const rows = fileListReportRows(reportFiles, { format: "excel" });
     await downloadXlsxRows(fileListPdfFileName(fileListSectionTitle()), rows, completedFilesReportHeading(reportFiles));
     toast("Excel file downloaded");
   };
   const exportPdfButton = document.querySelector("#exportFilteredPdf");
-  if (exportPdfButton) exportPdfButton.onclick = () => ["completed", "notChecked"].includes(listView)
+  if (exportPdfButton) exportPdfButton.onclick = () => ["completed", "notChecked", "correctionRequired"].includes(listView)
     ? exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportPdfButton)
     : exportStaffPagePdf(listView, sortFilesForDisplay(filteredFiles()));
   bindFileActions();
@@ -6874,6 +6930,20 @@ function sortCorrectionHistory(rows = []) {
   return [...rows].sort((a, b) => correctionTime(b) - correctionTime(a));
 }
 
+function correctionRequiredAgeDays(file = {}) {
+  const correction = latestCorrectionForFile(file) || {};
+  const returned = normalizeImportDate(correction.returnedAt || correction.returned_at || file.returnedAt || file.returned_at || file.returnedDate || "");
+  if (!returned) return -1;
+  const start = Date.parse(`${returned}T00:00:00`);
+  const end = Date.parse(`${todayDate()}T00:00:00`);
+  return Number.isFinite(start) && Number.isFinite(end) ? Math.max(Math.floor((end - start) / 86400000), 0) : -1;
+}
+
+function correctionRequiredAgeLabel(file = {}) {
+  const days = correctionRequiredAgeDays(file);
+  return days < 0 ? "Date not recorded" : `${days} day${days === 1 ? "" : "s"}`;
+}
+
 function correctionTime(row = {}) {
   return Date.parse(row.returnedAt || row.returned_at || row.createdAt || row.created_at || row.returnedDate || "") || 0;
 }
@@ -6906,6 +6976,8 @@ function sortConfiguredFinancialFiles(files, listView) {
     else if (sortLabel === "Completion Date - Oldest First" || sortLabel === "Oldest Unbilled First") result = dateCompare(left.completionDate, right.completionDate, "asc");
     else if (sortLabel === "Checked Date - Newest First") result = dateCompare(left.checkedDate, right.checkedDate);
     else if (sortLabel === "Checked Date - Oldest First") result = dateCompare(left.checkedDate, right.checkedDate, "asc");
+    else if (sortLabel === "Returned Date - Newest First") result = dateCompare(left.correctionReturnedDate, right.correctionReturnedDate);
+    else if (sortLabel === "Returned Date - Oldest First" || sortLabel === "Oldest Correction First") result = dateCompare(left.correctionReturnedDate, right.correctionReturnedDate, "asc");
     else if (sortLabel === "Bill Date - Newest First") result = dateCompare(left.billDate, right.billDate);
     else if (sortLabel === "Bill Date - Oldest First" || sortLabel === "Oldest Pending First") result = dateCompare(left.billDate, right.billDate, "asc");
     else if (sortLabel === "Receipt Date - Newest First") result = dateCompare(left.receiptDate, right.receiptDate);
@@ -6937,7 +7009,7 @@ function sortConfiguredFinancialFiles(files, listView) {
 }
 
 function sortFilesForDisplay(files) {
-  if (["", "active", "completed", "notChecked", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
+  if (["", "active", "completed", "notChecked", "correctionRequired", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -7436,6 +7508,7 @@ async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   if (listView === "active") return exportActiveFilesModernExcel(reportFiles);
   if (listView === "notChecked") return exportNotCheckedFilesExcel(reportFiles);
+  if (listView === "correctionRequired") return exportCorrectionRequiredFilesExcel(reportFiles);
   if (listView === "feeReceived") return exportFeeReceivedFilesExcel(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
@@ -7454,6 +7527,7 @@ async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   if (listView === "active") return exportActiveFilesModernPdf(reportFiles);
   if (listView === "notChecked") return exportNotCheckedFilesPdf(reportFiles);
+  if (listView === "correctionRequired") return exportCorrectionRequiredFilesPdf(reportFiles);
   if (listView === "feeReceived") return exportFeeReceivedFilesPdf(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
@@ -7984,6 +8058,7 @@ function renderFileTable(files) {
   if (state.filters.listView === "feeReceived") return renderFeeReceivedFileTable(files);
   if (state.filters.listView === "feePending") return renderFeePendingFileTable(files);
   if (state.filters.listView === "notChecked") return renderNotCheckedFileTable(files);
+  if (state.filters.listView === "correctionRequired") return renderCorrectionRequiredTable(files);
   if (state.filters.listView === "billed") return renderBilledFileTable(files);
   if (state.filters.listView === "active") return renderActiveFileTable(files);
   if (state.filters.listView === "completed") return renderCompletedFileTable(files);
@@ -9773,6 +9848,33 @@ function bindFileActions() {
       button.classList.toggle("expanded", opening);
     };
   });
+  document.querySelectorAll("[data-correction-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".correction-required-file-row");
+      const mobileCard = button.closest(".correction-required-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("correction-required-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".correction-required-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
+  document.querySelectorAll("[data-view-correction-details]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const fileId = button.dataset.viewCorrectionDetails;
+      closeBilledActionMenus();
+      const visibleToggle = [...document.querySelectorAll(`[data-correction-row-file="${CSS.escape(fileId)}"] [data-correction-row-toggle]`)]
+        .find((toggle) => toggle.offsetParent !== null) || document.querySelector(`[data-correction-row-file="${CSS.escape(fileId)}"] [data-correction-row-toggle]`);
+      visibleToggle?.click();
+    };
+  });
   document.querySelectorAll("[data-completed-row-toggle]").forEach((button) => {
     button.onclick = (event) => {
       event.preventDefault();
@@ -10239,44 +10341,75 @@ async function returnFileForCorrection(fileId) {
   renderAll();
 }
 
-function renderCorrectionRequiredTable(files) {
-  const rows = sortFilesByCorrectionNewestFirst(files);
-  const compactStaffCorrectionView = !["Admin", "Manager"].includes(state.currentRole);
+function correctionRequiredDetails(file = {}) {
+  const correction = latestCorrectionForFile(file) || {};
+  return {
+    returnedOn: correction.returnedAt || correction.returned_at || file.returnedAt || file.returned_at || file.returnedDate || "",
+    returnedBy: correction.returnedBy || correction.returned_by_name || file.returnedBy || "Not Recorded",
+    returnedTo: correction.returnedTo || correction.returned_to_name || file.returnedTo || file.assignedStaff || "Not Assigned",
+    reason: correction.correctionReason || correction.correction_reason || file.correctionRemarks || "No correction reason recorded",
+    expected: correction.expectedCorrectionDate || correction.expected_correction_date || file.expectedCorrectionDate || "",
+    response: correction.response || correction.correctionResponse || correction.correction_response || file.correctionResponse || "",
+    status: file.correctionStatus || correction.status || "Correction Required",
+  };
+}
+
+function correctionRequiredFileActions(file = {}) {
+  const fileId = escapeHtml(file.id || "");
+  const canEdit = Boolean(rolePerm().edit);
+  const canDelete = Boolean(rolePerm().delete);
+  const items = [billedActionMenuItem({ label: "View Correction Details", icon: "transaction", attrs: `data-view-correction-details="${fileId}"` })];
+  if (canEdit) items.unshift(billedActionMenuItem({ label: "Edit File", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canDelete) items.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete="${fileId}"`, danger: true, divider: true }));
+  const primary = canEdit
+    ? `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>Update File</span></button>`
+    : `<button type="button" class="billed-primary-action view-only" data-view-correction-details="${fileId}">${billedActionIcon("transaction")}<span>View Details</span></button>`;
+  return `<div class="billed-actions correction-required-actions" data-billed-actions="${fileId}">${primary}<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${items.join("")}</div></div>`;
+}
+
+function correctionRequiredExpandedDetails(file = {}) {
+  const details = correctionRequiredDetails(file);
+  return `<div class="correction-required-expanded-grid">
+    <div><span>File Received</span><strong>${escapeHtml(displayDate(file.fileReceivedDate) || "-")}</strong></div>
+    <div><span>Completed</span><strong>${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</strong></div>
+    <div><span>Returned By</span><strong>${escapeHtml(details.returnedBy)}</strong></div>
+    <div><span>Returned To</span><strong>${escapeHtml(details.returnedTo)}</strong></div>
+    <div><span>Expected Correction Date</span><strong>${escapeHtml(displayDate(details.expected) || "Not set")}</strong></div>
+    <div><span>Last Updated</span><strong>${escapeHtml(displayDate(file.lastUpdatedDate || file.updated_at || file.updatedAt) || "-")}</strong></div>
+    <div class="correction-required-expanded-reason"><span>Correction Required</span><strong>${escapeHtml(details.reason)}</strong></div>
+    <div class="correction-required-expanded-response"><span>Response / Remarks</span><strong>${escapeHtml(details.response || file.remarks || "No response recorded")}</strong></div>
+  </div>`;
+}
+
+function correctionRequiredDesktopRows(files = []) {
+  return files.map((file, index) => {
+    const details = correctionRequiredDetails(file);
+    return `<tr class="correction-required-file-row" data-correction-row-file="${escapeHtml(file.id || "")}">
+      <td class="correction-required-sn">${fileSerialNumber(file, index)}</td>
+      <td class="correction-required-client"><div class="correction-required-client-line"><button type="button" class="billed-expand-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div>${clientDetailsCell(file)}</div></div></td>
+      <td class="correction-required-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")} · C/o ${escapeHtml(file.careOf || "Direct")}</span></td>
+      <td class="correction-required-summary"><strong>${escapeHtml(details.reason)}</strong><span>Returned ${escapeHtml(displayDate(details.returnedOn) || "-")} by ${escapeHtml(details.returnedBy)}</span></td>
+      <td class="correction-required-staff"><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong><span>Completed ${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</span></td>
+      <td class="correction-required-status"><span class="badge overdue">${escapeHtml(details.status)}</span><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span><small>${escapeHtml(correctionRequiredAgeLabel(file))}</small></td>
+      <td class="correction-required-actions-column"><div class="action-row">${correctionRequiredFileActions(file)}</div></td>
+    </tr><tr class="correction-required-details-row" hidden><td colspan="7">${correctionRequiredExpandedDetails(file)}</td></tr>`;
+  }).join("");
+}
+
+function correctionRequiredMobileCard(file = {}, index = 0) {
+  const details = correctionRequiredDetails(file);
+  return `<article class="correction-required-mobile-card${index % 2 ? " is-alt" : ""}" data-correction-row-file="${escapeHtml(file.id || "")}">
+    <div class="correction-required-mobile-head"><button type="button" class="billed-expand-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
+    <div class="correction-required-mobile-summary"><div><span>Returned On</span><strong>${escapeHtml(displayDate(details.returnedOn) || "-")}</strong></div><div><span>Returned By</span><strong>${escapeHtml(details.returnedBy)}</strong></div><div><span>Assigned Staff</span><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong></div><div><span>Aging</span><strong>${escapeHtml(correctionRequiredAgeLabel(file))}</strong></div></div>
+    <div class="correction-required-mobile-reason"><span>Correction Required</span><strong>${escapeHtml(details.reason)}</strong></div>
+    <div class="correction-required-mobile-actions">${correctionRequiredFileActions(file)}</div><div class="correction-required-mobile-details" hidden>${correctionRequiredExpandedDetails(file)}</div>
+  </article>`;
+}
+
+function renderCorrectionRequiredTable(files = []) {
+  const rows = sortConfiguredFinancialFiles(files, "correctionRequired");
   if (!rows.length) return empty("No correction-required files found.");
-  return `
-    <div class="table-wrap file-table-wrap">
-      <table class="file-table file-table-compact correction-required-table">
-        <thead><tr>
-          <th>SN</th><th>Client Name</th><th>CR No.</th><th>Service Type</th>${compactStaffCorrectionView ? "" : "<th>File Received Date</th><th>Assigned Staff</th>"}<th>Completed Date</th><th>Returned On</th><th>Required By</th><th>Correction Reason</th><th>Status</th><th>Priority</th>${compactStaffCorrectionView ? "" : "<th>Expected Date</th><th>Aging</th><th>Last Updated</th>"}<th>Actions</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map((file, index) => {
-            const correction = latestCorrectionForFile(file) || {};
-            const returnedOn = correction.returnedAt || correction.returned_at || file.returnedAt || file.returned_at || file.returnedDate || "";
-            const reason = correction.correctionReason || correction.correction_reason || file.correctionRemarks || "";
-            const requiredBy = correction.returnedBy || correction.returned_by_name || file.returnedBy || "-";
-            const expected = correction.expectedCorrectionDate || correction.expected_correction_date || file.expectedCorrectionDate || "";
-            const status = file.correctionStatus || correction.status || "Correction Required";
-            return `<tr class="file-row file-row-overdue">
-              <td>${index + 1}</td>
-              <td class="client-details-cell">${clientDetailsCell(file)}</td>
-              <td>${escapeHtml(file.crNo || file.cr_no || file.pan || "-")}</td>
-              <td>${escapeHtml(file.serviceType || "")}</td>
-              ${compactStaffCorrectionView ? "" : `<td>${fmt(file.fileReceivedDate)}</td><td>${escapeHtml(file.assignedStaff || file.returnedTo || "Not Assigned")}</td>`}
-              <td>${fmt(workCompletedDate(file))}</td>
-              <td>${escapeHtml(fmt(returnedOn) || "-")}</td>
-              <td>${escapeHtml(requiredBy)}</td>
-              <td class="correction-reason-cell">${escapeHtml(reason || "-")}</td>
-              <td><span class="badge overdue">${escapeHtml(status)}</span></td>
-              <td><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span></td>
-              ${compactStaffCorrectionView ? "" : `<td>${fmt(expected)}</td><td>${returnedOn ? agingText(returnedOn) : "-"}</td><td>${fmt(file.lastUpdatedDate || file.updated_at || file.updatedAt)}</td>`}
-              <td><div class="action-row"><button class="mini-button" data-edit="${file.id}">View File</button></div></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
+  return sharedTableScrollRegion("correctionRequired", "Correction Required Files", "correction-required-table-wrap", `<table class="file-table correction-required-modern-table"><thead><tr><th class="correction-required-sn">SN</th><th class="correction-required-client">Client</th><th>Service</th><th>Correction Details</th><th>Assigned Staff</th><th>Status</th><th class="correction-required-actions-column">Actions</th></tr></thead><tbody>${correctionRequiredDesktopRows(rows)}</tbody></table>`, `<div class="correction-required-mobile-list">${rows.map(correctionRequiredMobileCard).join("")}</div>`);
 }
 
 function openMarkReceivedModal(fileId) {
@@ -19762,6 +19895,115 @@ async function exportNotCheckedFilesPdf(sourceFiles = []) {
   toast("Not Checked Files PDF downloaded");
 }
 
+function correctionRequiredPdfFilterSummary() {
+  const config = configuredFinancialFilterConfig("correctionRequired");
+  const active = config ? configuredFinancialActiveFilters(config) : [];
+  return active.length ? active.map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`).join(" | ") : "No filters applied";
+}
+
+function correctionRequiredReportRecords(sourceFiles = []) {
+  return sortConfiguredFinancialFiles(sourceFiles || [], "correctionRequired").map((file, index) => {
+    const details = correctionRequiredDetails(file);
+    const ageDays = correctionRequiredAgeDays(file);
+    return {
+      index: index + 1, file,
+      client: `${filePdfText(file.name, "-")}\n${filePdfText(fileRegistrationNumber(file), "Regn No. Not Available")} · FY ${filePdfText(fileFy(file), "NA")}`,
+      service: `${filePdfText(file.serviceType, "-")}\nC/o: ${filePdfText(file.careOf, "Direct")}`,
+      work: `${filePdfDate(workCompletedDate(file)) || "-"}\nAssigned: ${filePdfText(currentFileAssignee(file).name || details.returnedTo, "Not Assigned")}`,
+      returned: `${filePdfDate(details.returnedOn) || "-"}\nBy: ${filePdfText(details.returnedBy, "Not Recorded")}`,
+      correction: `${filePdfText(details.reason, "-")}\nExpected: ${filePdfDate(details.expected) || "Not set"}`,
+      aging: correctionRequiredAgeLabel(file), ageDays,
+      status: `${filePdfText(details.status, "Correction Required")}\n${filePdfText(file.priority, "Medium")}`,
+      priority: filePdfText(file.priority, "Medium"), expectedDate: filePdfDate(details.expected) || "",
+      remarks: filePdfText(details.response || file.remarks, "-"),
+    };
+  });
+}
+
+function correctionRequiredReportSummary(records = []) {
+  return records.reduce((summary, record) => {
+    summary.total += 1;
+    if (record.ageDays >= 0 && record.ageDays <= 7) summary.within7 += 1;
+    else if (record.ageDays >= 8 && record.ageDays <= 15) summary.eightTo15 += 1;
+    else if (record.ageDays > 15) summary.above15 += 1;
+    if (["High", "Urgent"].includes(record.priority)) summary.highPriority += 1;
+    if (!record.expectedDate) summary.missingExpected += 1;
+    return summary;
+  }, { total: 0, within7: 0, eightTo15: 0, above15: 0, highPriority: 0, missingExpected: 0 });
+}
+
+function drawCorrectionRequiredPdfFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, generatedBy, filterSummary, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* Branded text remains available. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(14); doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(8.2); doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(15); doc.text("CORRECTION REQUIRED FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.red); doc.setLineWidth(1.5); doc.line(pageWidth / 2 - 120, 69, pageWidth / 2 + 120, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightRed); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text); doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${summary.total}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 145)}  |  Sort: ${state.filters.correctionRequiredSort || "Returned Date - Newest First"}`, margin + 8, 103);
+  drawBilledPdfCards(doc, [
+    ["Correction Required", String(summary.total), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["0-7 Days", String(summary.within7), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["8-15 Days", String(summary.eightTo15), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Above 15 Days", String(summary.above15), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["High / Urgent", String(summary.highPriority), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Expected Date Missing", String(summary.missingExpected), BILLED_PDF_COLORS.muted, BILLED_PDF_COLORS.alternate],
+  ], margin, 121, pageWidth - margin * 2, 6);
+}
+
+function drawCorrectionRequiredPdfCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24); doc.text("Correction Required Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.5); doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" }); doc.text(`Filters: ${billedPdfShortText(filterSummary, 120)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.line(30, 46, pageWidth - 30, 46);
+}
+
+async function createCorrectionRequiredFilesPdfDocument(sourceFiles = []) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = correctionRequiredReportRecords(sourceFiles);
+  const summary = correctionRequiredReportSummary(records);
+  const context = { doc, assets, records, summary, generatedAt: fileExportDateTime(), generatedBy: state.currentUser || loggedInUser()?.name || "Not Recorded", filterSummary: correctionRequiredPdfFilterSummary(), pageWidth: doc.internal.pageSize.getWidth(), pageHeight: doc.internal.pageSize.getHeight() };
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "index" }, { header: "Client Details", dataKey: "client" }, { header: "Service / C/o", dataKey: "service" },
+      { header: "Work Details", dataKey: "work" }, { header: "Returned", dataKey: "returned" }, { header: "Correction Required", dataKey: "correction" },
+      { header: "Aging", dataKey: "aging" }, { header: "Status / Priority", dataKey: "status" }, { header: "Remarks", dataKey: "remarks" },
+    ],
+    body: records, theme: "grid", showHead: "everyPage", rowPageBreak: "avoid", margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 6.45, cellPadding: { top: 3.7, right: 2.5, bottom: 3.7, left: 2.5 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: .3, minCellHeight: 31 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 6.8, fillColor: BILLED_PDF_COLORS.navy, textColor: [255,255,255], halign: "center", minCellHeight: 27 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { index: { halign: "center", cellWidth: 22 }, client: { cellWidth: 125, fontStyle: "bold" }, service: { cellWidth: 85 }, work: { cellWidth: 90 }, returned: { cellWidth: 80 }, correction: { cellWidth: 170 }, aging: { halign: "center", cellWidth: 55 }, status: { halign: "center", cellWidth: 75 }, remarks: { cellWidth: 80 } },
+    willDrawPage: (data) => { if (data.pageNumber === 1) drawCorrectionRequiredPdfFirstHeader(doc, context); else drawCorrectionRequiredPdfCompactHeader(doc, context); },
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      const record = records[data.row.index];
+      if (data.column.dataKey === "aging" && record.ageDays > 15) { data.cell.styles.fontStyle = "bold"; data.cell.styles.textColor = BILLED_PDF_COLORS.red; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightRed; }
+      if (data.column.dataKey === "status") { data.cell.styles.fontStyle = "bold"; data.cell.styles.textColor = ["High", "Urgent"].includes(record.priority) ? BILLED_PDF_COLORS.red : BILLED_PDF_COLORS.amber; }
+    },
+  });
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
+async function exportCorrectionRequiredFilesPdf(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const { doc, records } = await createCorrectionRequiredFilesPdfDocument(sourceFiles);
+  if (!records.length) return toast("No correction-required files available for the selected filters.");
+  doc.save(`${fileListPdfFileName("Correction Required Files")}.pdf`);
+  toast("Correction Required Files PDF downloaded");
+}
+
 function completedPdfFilterSummary() {
   const config = configuredFinancialFilterConfig("completed");
   const active = config ? configuredFinancialActiveFilters(config) : [];
@@ -21128,6 +21370,77 @@ async function exportNotCheckedFilesExcel(sourceFiles = []) {
   toast("Not Checked Files Excel downloaded");
 }
 
+async function exportCorrectionRequiredFilesExcel(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  await loadSheetJs();
+  const records = correctionRequiredReportRecords(sourceFiles);
+  if (!records.length) return toast("No correction-required files available for the selected filters.");
+  const headers = ["SN", "Client Details", "Service / C/o", "Completion Date", "Returned On", "Returned By", "Assigned Staff", "Correction Required", "Expected Date", "Aging", "Status / Priority", "Remarks"];
+  const dataStartRow = 11;
+  const dataRows = records.map((record) => {
+    const details = correctionRequiredDetails(record.file);
+    return [record.index, record.client, record.service, excelDateValue(workCompletedDate(record.file)), excelDateValue(details.returnedOn), details.returnedBy,
+      currentFileAssignee(record.file).name || details.returnedTo, details.reason, excelDateValue(details.expected), record.ageDays >= 0 ? record.ageDays : "", record.status, record.remarks];
+  });
+  const lastDataRow = dataStartRow + dataRows.length - 1;
+  const rows = [
+    ["Muhammad & Associates"], ["Chartered Accountants"], ["CORRECTION REQUIRED FILES REPORT"],
+    [`Generated: ${fileExportDateTime()} | Records: ${records.length} | Generated by: ${loggedInUser()?.name || state.currentUser || "Not Recorded"}`],
+    [`Filters: ${correctionRequiredPdfFilterSummary()} | Sort: ${state.filters.correctionRequiredSort || "Returned Date - Newest First"}`],
+    ["TOTAL CORRECTIONS", "", "0-7 DAYS", "", "8-15 DAYS", "", "ABOVE 15 DAYS", "", "HIGH / URGENT", "", "EXPECTED DATE MISSING", ""],
+    ["", "", "", "", "", "", "", "", "", "", "", ""], [], [], headers, ...dataRows,
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+  worksheet["!merges"] = [
+    XLSX.utils.decode_range("A1:L1"), XLSX.utils.decode_range("A2:L2"), XLSX.utils.decode_range("A3:L3"), XLSX.utils.decode_range("A4:L4"), XLSX.utils.decode_range("A5:L5"),
+    ...["A6:B6", "C6:D6", "E6:F6", "G6:H6", "I6:J6", "K6:L6", "A7:B7", "C7:D7", "E7:F7", "G7:H7", "I7:J7", "K7:L7"].map(XLSX.utils.decode_range),
+  ];
+  worksheet.A7 = { t: "n", f: `COUNTA(A${dataStartRow}:A${lastDataRow})` };
+  worksheet.C7 = { t: "n", f: `COUNTIFS(J${dataStartRow}:J${lastDataRow},">=0",J${dataStartRow}:J${lastDataRow},"<=7")` };
+  worksheet.E7 = { t: "n", f: `COUNTIFS(J${dataStartRow}:J${lastDataRow},">=8",J${dataStartRow}:J${lastDataRow},"<=15")` };
+  worksheet.G7 = { t: "n", f: `COUNTIF(J${dataStartRow}:J${lastDataRow},">15")` };
+  worksheet.I7 = { t: "n", f: `COUNTIF(K${dataStartRow}:K${lastDataRow},"*High*")+COUNTIF(K${dataStartRow}:K${lastDataRow},"*Urgent*")` };
+  worksheet.K7 = { t: "n", f: `COUNTBLANK(I${dataStartRow}:I${lastDataRow})` };
+  const border = { style: "thin", color: { rgb: "CBD5E1" } };
+  const applyStyle = (rangeAddress, style) => {
+    const range = XLSX.utils.decode_range(rangeAddress);
+    for (let row = range.s.r; row <= range.e.r; row += 1) for (let column = range.s.c; column <= range.e.c; column += 1) {
+      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      worksheet[address] ||= { t: "s", v: "" };
+      worksheet[address].s = style;
+    }
+  };
+  applyStyle("A1:L1", { font: { name: "Aptos Display", sz: 16, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center", vertical: "center" } });
+  applyStyle("A2:L2", { font: { name: "Aptos", sz: 10, color: { rgb: "475569" } }, alignment: { horizontal: "center" } });
+  applyStyle("A3:L3", { font: { name: "Aptos Display", sz: 14, bold: true, color: { rgb: "B91C1C" } }, alignment: { horizontal: "center" }, border: { bottom: { style: "medium", color: { rgb: "EF4444" } } } });
+  applyStyle("A4:L5", { fill: { patternType: "solid", fgColor: { rgb: "FEF2F2" } }, font: { name: "Aptos", sz: 9, color: { rgb: "334155" } }, alignment: { horizontal: "left", vertical: "center", wrapText: true }, border: { top: border, bottom: border } });
+  ["A6:B6", "C6:D6", "E6:F6", "G6:H6", "I6:J6", "K6:L6"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "FFF7F7" } }, font: { name: "Aptos", sz: 8.3, bold: true, color: { rgb: "64748B" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } }));
+  ["A7:B7", "C7:D7", "E7:F7", "G7:H7", "I7:J7", "K7:L7"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, font: { name: "Aptos Display", sz: 12, bold: true, color: { rgb: "B91C1C" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: border, bottom: border, left: border, right: border } }));
+  applyStyle("A10:L10", { fill: { patternType: "solid", fgColor: { rgb: "0F2A5F" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } });
+  for (let rowNumber = dataStartRow; rowNumber <= lastDataRow; rowNumber += 1) {
+    const fill = rowNumber % 2 ? "FFFFFF" : "F8FAFC";
+    applyStyle(`A${rowNumber}:L${rowNumber}`, { fill: { patternType: "solid", fgColor: { rgb: fill } }, font: { name: "Aptos", sz: 9, color: { rgb: "0F172A" } }, alignment: { vertical: "center", wrapText: true }, border: { bottom: border } });
+    [3, 4, 8].forEach((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: column })];
+      if (cell) { cell.z = "dd-mm-yyyy"; cell.s.alignment = { horizontal: "center", vertical: "center" }; }
+    });
+    const record = records[rowNumber - dataStartRow];
+    const agingCell = worksheet[`J${rowNumber}`];
+    if (agingCell) agingCell.z = `0 "days"`;
+    if (agingCell && record.ageDays > 15) agingCell.s = { ...agingCell.s, fill: { patternType: "solid", fgColor: { rgb: "FEF2F2" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "B91C1C" } }, alignment: { horizontal: "center", vertical: "center" } };
+    const statusCell = worksheet[`K${rowNumber}`];
+    if (statusCell) statusCell.s = { ...statusCell.s, fill: { patternType: "solid", fgColor: { rgb: "FFFBEB" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: ["High", "Urgent"].includes(record.priority) ? "B91C1C" : "B45309" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true } };
+  }
+  worksheet["!autofilter"] = { ref: `A10:L${lastDataRow}` };
+  worksheet["!freeze"] = { xSplit: 0, ySplit: 10, topLeftCell: "A11", activePane: "bottomLeft", state: "frozen" };
+  worksheet["!cols"] = [6, 30, 24, 14, 14, 18, 18, 38, 16, 12, 22, 34].map((wch) => ({ wch }));
+  worksheet["!rows"] = rows.map((_, index) => ({ hpt: index === 0 ? 26 : index === 2 ? 24 : index === 9 ? 28 : index >= 10 ? 40 : 20 }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Correction Required");
+  XLSX.writeFile(workbook, `${fileListPdfFileName("Correction Required Files")}.xlsx`, { cellDates: true, cellStyles: true });
+  toast("Correction Required Files Excel downloaded");
+}
+
 function feeReceivedReportPaymentMode(receipt = {}, file = {}) {
   const rawMode = String(
     receipt.paymentMode || receipt.payment_mode || receipt.paymentMethod || receipt.payment_method || receipt.mode
@@ -21592,6 +21905,7 @@ async function exportFilteredFilesPdf(files, button) {
   const billedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "billed";
   const completedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "completed";
   const notCheckedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "notChecked";
+  const correctionRequiredFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "correctionRequired";
   const feeReceivedPdf = (state.filters.listView || state.filters.dashboardKind) === "feeReceived";
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
@@ -21632,6 +21946,16 @@ async function exportFilteredFilesPdf(files, button) {
       }
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
       toast("Not Checked Files PDF downloaded");
+      return;
+    }
+    if (correctionRequiredFilesPdf) {
+      const { doc, records } = await createCorrectionRequiredFilesPdfDocument(sourceFiles);
+      if (!records.length) {
+        toast("No correction-required files available for the selected filters.");
+        return;
+      }
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Correction Required Files PDF downloaded");
       return;
     }
     if (feePendingPdf) {

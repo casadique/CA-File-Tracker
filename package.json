@@ -23,6 +23,7 @@
     "test:non-billed-actions": "node tools/test-non-billed-actions-modernization.js",
     "test:client-master": "node tools/test-client-master-modernization.js",
     "test:not-checked": "node tools/test-not-checked-modernization.js",
+    "test:correction-required": "node tools/test-correction-required-modernization.js",
     "test:service-types": "node tools/test-service-type-updates.js",
     "test:fee-pending-pdf": "node tools/test-fee-pending-pdf.js",
     "test:filters": "node tools/test-financial-file-filters.js",
