@@ -67,4 +67,34 @@ assert.match(styles, /\.not-checked-modern-table \.not-checked-client\s*\{[\s\S]
 assert.match(styles, /\.not-checked-actions-column\s*\{[\s\S]*?position:\s*sticky[\s\S]*?right:\s*0/);
 assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.not-checked-modern-table\s*\{\s*display:\s*none[\s\S]*?\.not-checked-mobile-list\s*\{\s*display:\s*grid/);
 
-console.log("Not Checked Files filters, responsive layout, checking actions and expanded details checks passed.");
+const report = source.match(/function notCheckedCheckedByText[\s\S]*?(?=\nconst BILLED_PDF_DISCOUNT_KEYS)/)?.[0] || "";
+for (const requirement of [
+  /function notCheckedReportRecords/,
+  /function notCheckedReportSummary/,
+  /function createNotCheckedFilesPdfDocument/,
+  /function exportNotCheckedFilesPdf/,
+  /NOT CHECKED FILES REPORT/,
+  /header: "Checked By"/,
+  /checkedDate \|\| file\.checkedAt \|\| file\.checked_at/,
+  /return `\$\{checkedBy\}\\n\$\{checkedDate\}`/,
+  /drawBilledPdfCards/,
+  /drawBilledPdfFooters/,
+]) assert.match(report, requirement);
+
+const excel = source.match(/async function exportNotCheckedFilesExcel[\s\S]*?(?=\nfunction feeReceivedReportPaymentMode)/)?.[0] || "";
+for (const requirement of [
+  /"Checked By"/,
+  /record\.checkedBy/,
+  /dd-mm-yyyy/,
+  /!autofilter/,
+  /!freeze/,
+  /cellStyles: true/,
+  /NOT CHECKED FILES REPORT/,
+]) assert.match(excel, requirement);
+
+assert.match(source, /=== "notChecked"\) \{\s*return exportNotCheckedFilesExcel\(sourceFiles\);/);
+assert.match(source, /if \(notCheckedFilesPdf\) \{[\s\S]*?createNotCheckedFilesPdfDocument\(sourceFiles\)/);
+assert.match(source, /if \(listView === "notChecked"\) return exportNotCheckedFilesExcel\(reportFiles\);/);
+assert.match(source, /if \(listView === "notChecked"\) return exportNotCheckedFilesPdf\(reportFiles\);/);
+
+console.log("Not Checked Files filters, responsive layout, actions, modern PDF and Excel report checks passed.");

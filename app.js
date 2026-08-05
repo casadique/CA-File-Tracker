@@ -6285,6 +6285,9 @@ function renderFilesPage() {
         if ((state.filters.listView || state.filters.dashboardKind) === "feeReceived") {
           return exportFeeReceivedFilesExcel(sourceFiles);
         }
+        if ((state.filters.listView || state.filters.dashboardKind) === "notChecked") {
+          return exportNotCheckedFilesExcel(sourceFiles);
+        }
         const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
         const exactDatedName = ["completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView);
@@ -6514,13 +6517,14 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
   const exportExcelButton = document.querySelector("#exportFiltered");
   if (exportExcelButton) exportExcelButton.onclick = async () => {
     const reportFiles = sortFilesForDisplay(filteredFiles());
+    if (listView === "notChecked") return exportNotCheckedFilesExcel(reportFiles);
     if (listView !== "completed") return exportStaffPageExcel(listView, reportFiles);
     const rows = fileListReportRows(reportFiles, { format: "excel" });
     await downloadXlsxRows(fileListPdfFileName(fileListSectionTitle()), rows, completedFilesReportHeading(reportFiles));
     toast("Excel file downloaded");
   };
   const exportPdfButton = document.querySelector("#exportFilteredPdf");
-  if (exportPdfButton) exportPdfButton.onclick = () => listView === "completed"
+  if (exportPdfButton) exportPdfButton.onclick = () => ["completed", "notChecked"].includes(listView)
     ? exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportPdfButton)
     : exportStaffPagePdf(listView, sortFilesForDisplay(filteredFiles()));
   bindFileActions();
@@ -7431,6 +7435,7 @@ async function exportActiveFilesExcel(files = filteredFiles()) {
 async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   if (listView === "active") return exportActiveFilesModernExcel(reportFiles);
+  if (listView === "notChecked") return exportNotCheckedFilesExcel(reportFiles);
   if (listView === "feeReceived") return exportFeeReceivedFilesExcel(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
@@ -7448,6 +7453,7 @@ async function exportStaffPageExcel(listView, files) {
 async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
   if (listView === "active") return exportActiveFilesModernPdf(reportFiles);
+  if (listView === "notChecked") return exportNotCheckedFilesPdf(reportFiles);
   if (listView === "feeReceived") return exportFeeReceivedFilesPdf(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
@@ -19579,6 +19585,7 @@ function fileListReportRows(files, options = {}) {
         "Assigned Staff": base["Assigned Staff"],
         "Completion Date": filePdfCompletionDate(file),
         "Submitted for Checking": filePdfDate(file.submittedForCheckingDate || file.submitted_at || fileActualCompletionDate(file)),
+        "Checked By": notCheckedCheckedByText(file),
         "Checking Status": filePdfText(checkingStatusOf(file).label, "-"),
         "Correction Status": filePdfText(file.correctionStatus || checkingStatusOf(file).label, "-"),
         "Correction Reason": filePdfText(file.correctionReason || file.checkingRemarks || file.remarks),
@@ -19628,6 +19635,131 @@ function completedFilesReportHeading(files = []) {
     `Generated: ${fileExportDateTime()} | Records: ${files.length} | Filters: ${completedPdfFilterSummary()}`,
     "COMPLETED FILES REPORT",
   ];
+}
+
+function notCheckedCheckedByText(file = {}) {
+  const checkedBy = filePdfText(file.checkedBy || file.checked_by || file.checkerName, "Not Checked");
+  const checkedDate = filePdfDate(file.checkedDate || file.checkedAt || file.checked_at) || "-";
+  return `${checkedBy}\n${checkedDate}`;
+}
+
+function notCheckedPdfFilterSummary() {
+  const config = configuredFinancialFilterConfig("notChecked");
+  const active = config ? configuredFinancialActiveFilters(config) : [];
+  return active.length
+    ? active.map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`).join(" | ")
+    : "No filters applied";
+}
+
+function notCheckedReportRecords(sourceFiles = []) {
+  return sortFilesByCompletionNewestFirst(sourceFiles || []).map((file, index) => {
+    const completedDate = filePdfCompletionDate(file) || "-";
+    const submittedDate = filePdfDate(file.submittedForCheckingDate || file.submitted_at || fileActualCompletionDate(file)) || "-";
+    const assignedStaff = filePdfText(currentFileAssignee(file).name || file.assignedStaff, "Not Assigned");
+    const readyForCurrentChecker = canCheckFile(file);
+    const eligibility = readyForCurrentChecker
+      ? "Ready for you to check"
+      : canManageChecking() ? "Another checker required" : "Pending authorised review";
+    const correctionReason = filePdfText(file.correctionReason || file.checkingRemarks, "-");
+    const correctionStatus = filePdfText(file.correctionStatus, correctionReason === "-" ? "No correction history" : "Correction recorded");
+    return {
+      index: index + 1,
+      file,
+      client: `${filePdfText(file.name, "-")}\n${filePdfText(fileRegistrationNumber(file), "Regn No. Not Available")} · FY ${filePdfText(fileFy(file), "NA")}`,
+      service: `${filePdfText(file.serviceType, "-")}\nC/o: ${filePdfText(file.careOf, "Direct")}`,
+      completedDate,
+      submittedDate,
+      assignedStaff,
+      checkedBy: notCheckedCheckedByText(file),
+      checking: `Awaiting Check\n${eligibility}`,
+      eligibility,
+      correction: correctionReason === "-" ? correctionStatus : `${correctionStatus}\n${correctionReason}`,
+      hasCorrectionHistory: correctionReason !== "-" || /correction/i.test(String(file.correctionStatus || "")),
+      remarks: filePdfText(file.remarks, "-"),
+    };
+  });
+}
+
+function notCheckedReportSummary(records = []) {
+  return records.reduce((summary, record) => {
+    summary.total += 1;
+    if (record.eligibility === "Ready for you to check") summary.ready += 1;
+    else summary.otherChecker += 1;
+    if (record.hasCorrectionHistory) summary.correction += 1;
+    if (record.completedDate === "-") summary.missingCompletion += 1;
+    return summary;
+  }, { total: 0, ready: 0, otherChecker: 0, correction: 0, missingCompletion: 0 });
+}
+
+function drawNotCheckedPdfFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, generatedBy, filterSummary, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* Branded text remains available. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(14); doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(8.2); doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(15); doc.text("NOT CHECKED FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.blue); doc.setLineWidth(1.5); doc.line(pageWidth / 2 - 92, 69, pageWidth / 2 + 92, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text); doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${summary.total}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 150)}  |  Sort: ${state.filters.notCheckedSort || "Completion Date - Newest First"}`, margin + 8, 103);
+  drawBilledPdfCards(doc, [
+    ["Awaiting Check", String(summary.total), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+    ["Ready for You", String(summary.ready), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Another Checker", String(summary.otherChecker), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Correction History", String(summary.correction), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Missing Completion Date", String(summary.missingCompletion), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+  ], margin, 121, pageWidth - margin * 2, 5);
+}
+
+function drawNotCheckedPdfCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24); doc.text("Not Checked Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.5); doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" }); doc.text(`Filters: ${billedPdfShortText(filterSummary, 120)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.line(30, 46, pageWidth - 30, 46);
+}
+
+async function createNotCheckedFilesPdfDocument(sourceFiles = []) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = notCheckedReportRecords(sourceFiles);
+  const summary = notCheckedReportSummary(records);
+  const context = { doc, assets, records, summary, generatedAt: fileExportDateTime(), generatedBy: state.currentUser || loggedInUser()?.name || "Not Recorded", filterSummary: notCheckedPdfFilterSummary(), pageWidth: doc.internal.pageSize.getWidth(), pageHeight: doc.internal.pageSize.getHeight() };
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "index" }, { header: "Client Details", dataKey: "client" }, { header: "Service / C/o", dataKey: "service" },
+      { header: "Completed", dataKey: "completedDate" }, { header: "Submitted", dataKey: "submittedDate" }, { header: "Assigned Staff", dataKey: "assignedStaff" },
+      { header: "Checked By", dataKey: "checkedBy" }, { header: "Checking", dataKey: "checking" }, { header: "Correction", dataKey: "correction" }, { header: "Remarks", dataKey: "remarks" },
+    ],
+    body: records, theme: "grid", showHead: "everyPage", rowPageBreak: "avoid", margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 6.55, cellPadding: { top: 3.7, right: 2.5, bottom: 3.7, left: 2.5 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: .3, minCellHeight: 30 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 6.8, fillColor: BILLED_PDF_COLORS.navy, textColor: [255,255,255], halign: "center", minCellHeight: 27 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { index: { halign: "center", cellWidth: 22 }, client: { cellWidth: 130, fontStyle: "bold" }, service: { cellWidth: 90 }, completedDate: { halign: "center", cellWidth: 60 }, submittedDate: { halign: "center", cellWidth: 68 }, assignedStaff: { cellWidth: 70 }, checkedBy: { cellWidth: 85 }, checking: { cellWidth: 85 }, correction: { cellWidth: 90 }, remarks: { cellWidth: 82 } },
+    willDrawPage: (data) => { if (data.pageNumber === 1) drawNotCheckedPdfFirstHeader(doc, context); else drawNotCheckedPdfCompactHeader(doc, context); },
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      if (data.column.dataKey === "checking") { data.cell.styles.fontStyle = "bold"; data.cell.styles.textColor = BILLED_PDF_COLORS.amber; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightAmber; }
+      if (data.column.dataKey === "checkedBy") { data.cell.styles.textColor = BILLED_PDF_COLORS.muted; }
+    },
+  });
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
+async function exportNotCheckedFilesPdf(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const { doc, records } = await createNotCheckedFilesPdfDocument(sourceFiles);
+  if (!records.length) return toast("No not-checked files available for the selected filters.");
+  doc.save(`${fileListPdfFileName("Not Checked Files")}.pdf`);
+  toast("Not Checked Files PDF downloaded");
 }
 
 function completedPdfFilterSummary() {
@@ -20924,6 +21056,78 @@ async function exportActiveFilesModernExcel(sourceFiles = []) {
   toast("Active Files Excel downloaded");
 }
 
+async function exportNotCheckedFilesExcel(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  await loadSheetJs();
+  const records = notCheckedReportRecords(sourceFiles);
+  if (!records.length) return toast("No not-checked files available for the selected filters.");
+  const headers = ["SN", "Client Details", "Service / C/o", "Completion Date", "Submitted for Checking", "Assigned Staff", "Checked By", "Checking Status", "Correction Details", "Remarks"];
+  const dataStartRow = 11;
+  const dataRows = records.map((record) => [
+    record.index, record.client, record.service,
+    excelDateValue(record.file.completionDate || record.file.completedAt || record.file.completed_at || fileActualCompletionDate(record.file)),
+    excelDateValue(record.file.submittedForCheckingDate || record.file.submitted_at || fileActualCompletionDate(record.file)),
+    record.assignedStaff, record.checkedBy, record.checking, record.correction, record.remarks,
+  ]);
+  const lastDataRow = dataStartRow + dataRows.length - 1;
+  const rows = [
+    ["Muhammad & Associates"], ["Chartered Accountants"], ["NOT CHECKED FILES REPORT"],
+    [`Generated: ${fileExportDateTime()} | Records: ${records.length} | Generated by: ${loggedInUser()?.name || state.currentUser || "Not Recorded"}`],
+    [`Filters: ${notCheckedPdfFilterSummary()} | Sort: ${state.filters.notCheckedSort || "Completion Date - Newest First"}`],
+    ["AWAITING CHECK", "", "READY FOR YOU", "", "ANOTHER CHECKER", "", "CORRECTION HISTORY", "", "MISSING COMPLETION DATE", ""],
+    ["", "", "", "", "", "", "", "", "", ""],
+    [], [], headers, ...dataRows,
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+  worksheet["!merges"] = [
+    XLSX.utils.decode_range("A1:J1"), XLSX.utils.decode_range("A2:J2"), XLSX.utils.decode_range("A3:J3"), XLSX.utils.decode_range("A4:J4"), XLSX.utils.decode_range("A5:J5"),
+    ...["A6:B6", "C6:D6", "E6:F6", "G6:H6", "I6:J6", "A7:B7", "C7:D7", "E7:F7", "G7:H7", "I7:J7"].map(XLSX.utils.decode_range),
+  ];
+  worksheet.A7 = { t: "n", f: `COUNTA(A${dataStartRow}:A${lastDataRow})` };
+  worksheet.C7 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"*Ready for you*")` };
+  worksheet.E7 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"*Another checker*")+COUNTIF(H${dataStartRow}:H${lastDataRow},"*Pending authorised*")` };
+  worksheet.G7 = { t: "n", f: `COUNTIF(I${dataStartRow}:I${lastDataRow},"<>No correction history")` };
+  worksheet.I7 = { t: "n", f: `COUNTBLANK(D${dataStartRow}:D${lastDataRow})` };
+  const border = { style: "thin", color: { rgb: "CBD5E1" } };
+  const applyStyle = (rangeAddress, style) => {
+    const range = XLSX.utils.decode_range(rangeAddress);
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      for (let column = range.s.c; column <= range.e.c; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        worksheet[address] ||= { t: "s", v: "" };
+        worksheet[address].s = style;
+      }
+    }
+  };
+  applyStyle("A1:J1", { font: { name: "Aptos Display", sz: 16, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center", vertical: "center" } });
+  applyStyle("A2:J2", { font: { name: "Aptos", sz: 10, color: { rgb: "475569" } }, alignment: { horizontal: "center" } });
+  applyStyle("A3:J3", { font: { name: "Aptos Display", sz: 14, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center" }, border: { bottom: { style: "medium", color: { rgb: "2563EB" } } } });
+  applyStyle("A4:J5", { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 9, color: { rgb: "334155" } }, alignment: { horizontal: "left", vertical: "center", wrapText: true }, border: { top: border, bottom: border } });
+  ["A6:B6", "C6:D6", "E6:F6", "G6:H6", "I6:J6"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 8.5, bold: true, color: { rgb: "64748B" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } }));
+  ["A7:B7", "C7:D7", "E7:F7", "G7:H7", "I7:J7"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "F8FAFC" } }, font: { name: "Aptos Display", sz: 12, bold: true, color: { rgb: "2563EB" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: border, bottom: border, left: border, right: border } }));
+  applyStyle("A10:J10", { fill: { patternType: "solid", fgColor: { rgb: "0F2A5F" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } });
+  for (let rowNumber = dataStartRow; rowNumber <= lastDataRow; rowNumber += 1) {
+    const fill = rowNumber % 2 ? "FFFFFF" : "F8FAFC";
+    applyStyle(`A${rowNumber}:J${rowNumber}`, { fill: { patternType: "solid", fgColor: { rgb: fill } }, font: { name: "Aptos", sz: 9, color: { rgb: "0F172A" } }, alignment: { vertical: "center", wrapText: true }, border: { bottom: border } });
+    [3, 4].forEach((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: column })];
+      if (cell) { cell.z = "dd-mm-yyyy"; cell.s.alignment = { horizontal: "center", vertical: "center" }; }
+    });
+    const checkedByCell = worksheet[`G${rowNumber}`];
+    if (checkedByCell) checkedByCell.s = { ...checkedByCell.s, alignment: { horizontal: "center", vertical: "center", wrapText: true }, font: { name: "Aptos", sz: 9, color: { rgb: "475569" } } };
+    const checkingCell = worksheet[`H${rowNumber}`];
+    if (checkingCell) checkingCell.s = { ...checkingCell.s, fill: { patternType: "solid", fgColor: { rgb: "FFFBEB" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "B45309" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true } };
+  }
+  worksheet["!autofilter"] = { ref: `A10:J${lastDataRow}` };
+  worksheet["!freeze"] = { xSplit: 0, ySplit: 10, topLeftCell: "A11", activePane: "bottomLeft", state: "frozen" };
+  worksheet["!cols"] = [6, 32, 25, 15, 18, 20, 20, 24, 28, 36].map((wch) => ({ wch }));
+  worksheet["!rows"] = rows.map((_, index) => ({ hpt: index === 0 ? 26 : index === 2 ? 24 : index === 9 ? 28 : index >= 10 ? 38 : 20 }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Not Checked Files");
+  XLSX.writeFile(workbook, `${fileListPdfFileName("Not Checked Files")}.xlsx`, { cellDates: true, cellStyles: true });
+  toast("Not Checked Files Excel downloaded");
+}
+
 function feeReceivedReportPaymentMode(receipt = {}, file = {}) {
   const rawMode = String(
     receipt.paymentMode || receipt.payment_mode || receipt.paymentMethod || receipt.payment_method || receipt.mode
@@ -21387,6 +21591,7 @@ async function exportFilteredFilesPdf(files, button) {
   const activeFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "active";
   const billedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "billed";
   const completedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "completed";
+  const notCheckedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "notChecked";
   const feeReceivedPdf = (state.filters.listView || state.filters.dashboardKind) === "feeReceived";
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
@@ -21417,6 +21622,16 @@ async function exportFilteredFilesPdf(files, button) {
       const { doc } = await createCompletedFilesPdfDocument(sourceFiles);
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
       toast("Completed Files PDF downloaded");
+      return;
+    }
+    if (notCheckedFilesPdf) {
+      const { doc, records } = await createNotCheckedFilesPdfDocument(sourceFiles);
+      if (!records.length) {
+        toast("No not-checked files available for the selected filters.");
+        return;
+      }
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Not Checked Files PDF downloaded");
       return;
     }
     if (feePendingPdf) {
