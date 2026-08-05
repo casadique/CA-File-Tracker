@@ -8188,11 +8188,15 @@ function renderFeePendingFileTable(files = []) {
     if (isFeeAmountReportHeader(header)) return "amount-cell fee-pending-amount-column";
     return "fee-pending-text-column";
   };
+  const remarksForFile = (file = {}) => file.billingRemarks || file.invoiceRemarks || file.invoice_remarks || file.feeRemarks || file.remarks || "No billing remarks recorded";
   return sharedTableScrollRegion("feePending", "Fee Pending Files", "file-table-wrap fee-pending-table-wrap", `<table class="file-table file-table-compact fee-pending-report-table">
         <thead><tr>${headers.map((header) => `<th class="${columnClass(header)}">${escapeHtml(header)}</th>`).join("")}<th class="fee-pending-actions-column">Actions</th></tr></thead>
         <tbody>${files.map((file, index) => {
           const row = rows[index];
-          return `<tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(row[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"><div class="action-row">${billedFileActions(file, { context: "feePending" })}</div></td></tr>`;
+          const cells = headers.map((header) => header === "Client Name"
+            ? `<td class="${columnClass(header)}"><div class="fee-pending-client-line"><button type="button" class="billed-expand-toggle" data-fee-pending-row-toggle aria-label="Expand remarks for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><strong>${escapeHtml(row[header] ?? "")}</strong></div></td>`
+            : `<td class="${columnClass(header)}">${escapeHtml(row[header] ?? "")}</td>`).join("");
+          return `<tr class="fee-pending-file-row">${cells}<td class="fee-pending-actions-column"><div class="action-row">${billedFileActions(file, { context: "feePending" })}</div></td></tr><tr class="fee-pending-details-row" hidden><td colspan="${headers.length + 1}"><div class="fee-pending-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(remarksForFile(file))}</strong></div></td></tr>`;
         }).join("")}</tbody>
         <tfoot><tr>${headers.map((header) => `<td class="${columnClass(header)}">${escapeHtml(totals[header] ?? "")}</td>`).join("")}<td class="fee-pending-actions-column"></td></tr></tfoot>
       </table>`);
@@ -9863,6 +9867,19 @@ function bindFileActions() {
       const details = desktopRow?.nextElementSibling?.classList.contains("fee-received-details-row")
         ? desktopRow.nextElementSibling
         : mobileCard?.querySelector(".fee-received-mobile-details");
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
+  document.querySelectorAll("[data-fee-pending-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const row = button.closest(".fee-pending-file-row");
+      const details = row?.nextElementSibling?.classList.contains("fee-pending-details-row") ? row.nextElementSibling : null;
       if (!details) return;
       const opening = details.hidden;
       details.hidden = !opening;

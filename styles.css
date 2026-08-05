@@ -7268,6 +7268,56 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.fee-pending-client-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fee-pending-client-line strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fee-pending-details-row[hidden] {
+  display: none !important;
+}
+
+.fee-pending-details-row td {
+  padding: 10px 14px !important;
+  border-bottom: 1px solid #cbd8e8;
+  background: #f3f7fc !important;
+  white-space: normal !important;
+}
+
+.fee-pending-expanded-remarks {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 11px 13px;
+  border: 1px solid #d5e1ef;
+  border-left: 3px solid #2563eb;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.fee-pending-expanded-remarks span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.fee-pending-expanded-remarks strong {
+  color: #17345d;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .fee-pending-report-table .fee-pending-service-column {
   width: auto;
   min-width: 120px;
@@ -7754,6 +7804,11 @@ textarea {
   .fee-pending-table-wrap .fee-pending-client-column {
     position: static;
     box-shadow: none;
+  }
+
+  .fee-pending-expanded-remarks {
+    grid-template-columns: 1fr;
+    gap: 5px;
   }
 }
 

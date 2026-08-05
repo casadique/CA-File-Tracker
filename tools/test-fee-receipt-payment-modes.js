@@ -358,6 +358,16 @@ async function main() {
   )?.[0] || "";
   assert.match(feePendingTableBody, /billedFileActions\(file, \{ context: "feePending" \}\)/,
     "Fee Pending must reuse the working Billed Files actions component");
+  assert.match(feePendingTableBody, /data-fee-pending-row-toggle/,
+    "Fee Pending rows must provide an accessible expansion button");
+  assert.match(feePendingTableBody, /fee-pending-details-row/,
+    "Fee Pending rows must provide an expanded details row");
+  assert.match(feePendingTableBody, /file\.billingRemarks \|\| file\.invoiceRemarks[\s\S]*?file\.remarks/,
+    "Fee Pending expanded remarks must prefer remarks entered during billing");
+  assert.match(browserAppSource, /document\.querySelectorAll\("\[data-fee-pending-row-toggle\]"\)/,
+    "Fee Pending expansion buttons must be wired to their details row");
+  assert.match(appStyles, /\.fee-pending-expanded-remarks\s*\{/,
+    "Fee Pending expanded remarks must have a dedicated responsive layout");
   assert.match(billedActionsBody, /Receive Balance/,
     "Partially received Fee Pending records must offer Receive Balance");
   const receiptModalBody = browserAppSource.match(
