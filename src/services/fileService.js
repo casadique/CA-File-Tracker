@@ -34,7 +34,11 @@ const WORKFLOW_STAGES = [
 ];
 
 async function listFiles(state, options = {}) {
-  return sortFilesForRequest(state.files || [], options);
+  const sorted = sortFilesForRequest(state.files || [], options);
+  const pageSize = Math.max(0, Number.parseInt(options.pageSize || options.limit || "0", 10) || 0);
+  if (!pageSize) return sorted;
+  const page = Math.max(1, Number.parseInt(options.page || "1", 10) || 1);
+  return sorted.slice((page - 1) * pageSize, page * pageSize);
 }
 
 function sortFilesForRequest(files, options = {}) {
@@ -50,6 +54,7 @@ function sortFilesForRequest(files, options = {}) {
   if (listView === "notChecked") rows = rows.filter(isNotCheckedFile);
   if (listView === "feeReceived") rows = rows.filter((file) => file.feeReceived);
   if (sortField === "assigned_at") return sortFilesByDate(rows, fileAssignmentDateValue, direction, fileReceivedDateValue);
+  if (sortField === "status_updated_at" || sortField === "last_status_changed_at") return sortFilesByDate(rows, fileStatusUpdatedTime, direction, fileCreatedTime);
   if (sortField === "returned_for_correction_at") return sortFilesByDate(rows, fileCorrectionDateValue, direction, fileCreatedTime);
   if (sortField === "file_received_date") return sortFilesByDate(rows, fileReceivedDateValue, direction, fileCreatedTime);
   if (sortField === "completed_date") return [...rows].sort((a, b) => direction === "asc" ? sortCompletedFilesAsc(a, b) : sortCompletedFilesDesc(a, b));
@@ -98,7 +103,12 @@ function fileCorrectionDateValue(file = {}) {
 }
 
 function fileCreatedTime(file = {}) {
-  return dateOrNumber(file.created_at || file.createdAt || file.updated_at || file.updatedAt || file.lastUpdatedDate);
+  return dateOrNumber(file.created_at || file.createdAt);
+}
+
+function fileStatusUpdatedTime(file = {}) {
+  return dateOrNumber(file.status_updated_at || file.statusUpdatedAt || file.last_status_changed_at || file.lastStatusChangedAt)
+    || fileCreatedTime(file);
 }
 
 function feeReceivedTime(file = {}) {
@@ -229,6 +239,7 @@ async function upsertFile(file, userId, profile = {}) {
     const nowIso = new Date(now).toISOString();
     applyFeeReceivedTimestamp(record, before, nowIso);
     applyCompletionTimestamps(record, before, nowIso);
+    applyStatusUpdatedTimestamp(record, before, nowIso);
     const taskActivityAt = shouldBumpTaskActivity(before, record, profile)
       ? new Date(now).toISOString()
       : (before?.taskActivityAt || before?.task_activity_at || record.taskActivityAt || record.task_activity_at || record.assignedAt || record.assigned_at || record.workAllotmentDate || record.reAssignedDate || "");
@@ -341,6 +352,8 @@ async function removeFile(fileId, payload, userId, profile = {}) {
       removalHistory: [...(before.removalHistory || []), removalEvent],
       lastUpdatedDate: date,
       updatedAt: now.getTime(),
+      status_updated_at: nowIso,
+      statusUpdatedAt: nowIso,
     };
     state.auditLog = [...(state.auditLog || []), {
       id: crypto.randomUUID(),
@@ -483,6 +496,8 @@ async function removeBilledFileSafely(fileId, payload, userId, profile = {}) {
       removalHistory: [...(before.removalHistory || []), removalEvent],
       lastUpdatedDate: date,
       updatedAt: now.getTime(),
+      status_updated_at: nowIso,
+      statusUpdatedAt: nowIso,
     };
     state.auditLog = [...(state.auditLog || []), {
       id: crypto.randomUUID(),
@@ -566,6 +581,8 @@ async function restoreRemovedFile(fileId, userId, profile = {}) {
       removalHistory: history,
       lastUpdatedDate: date,
       updatedAt: now.getTime(),
+      status_updated_at: nowIso,
+      statusUpdatedAt: nowIso,
     };
     state.auditLog = [...(state.auditLog || []), {
       id: crypto.randomUUID(),
@@ -783,6 +800,16 @@ function applyCompletionTimestamps(record = {}, before = {}, fallbackIso = new D
   return record;
 }
 
+function applyStatusUpdatedTimestamp(record = {}, before = null, fallbackIso = new Date().toISOString()) {
+  const createdAt = record.created_at || record.createdAt || before?.created_at || before?.createdAt || fallbackIso;
+  const existing = before?.status_updated_at || before?.statusUpdatedAt || before?.last_status_changed_at || before?.lastStatusChangedAt || before?.created_at || before?.createdAt || createdAt;
+  const statusChanged = Boolean(before) && workflowStatusLabel(before) !== workflowStatusLabel(record);
+  const timestamp = before ? (statusChanged ? fallbackIso : existing) : createdAt;
+  record.status_updated_at = timestamp;
+  record.statusUpdatedAt = timestamp;
+  return record;
+}
+
 async function returnFileForCorrection(fileId, payload, userId, profile) {
   return patchAppState((state) => {
     const files = state.files || [];
@@ -849,6 +876,8 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       updatedAt: now.getTime(),
       taskActivityAt: now.toISOString(),
       task_activity_at: now.toISOString(),
+      status_updated_at: now.toISOString(),
+      statusUpdatedAt: now.toISOString(),
     };
     state.correctionHistory = [...(state.correctionHistory || []), correction];
     const correctionEventId = `${fileId}|returned-for-correction|${correction.id || correction.returned_at || correction.returnedAt || correction.returnedDate || now.toISOString()}`;
@@ -1087,6 +1116,24 @@ function statusLabel(file = {}) {
   return "Received";
 }
 
+function workflowStatusLabel(file = {}) {
+  const stages = file.stages || {};
+  if (isRemovedFile(file)) return "Removed";
+  if (stages["Correction Required"]) return "Correction Required";
+  if (stages["Corrected & Completed"] || isCorrectedCompleted(file)) return "Corrected & Completed";
+  for (let index = WORKFLOW_STAGES.length - 1; index >= 0; index -= 1) {
+    const stage = WORKFLOW_STAGES[index];
+    if (stages[stage]) return stage;
+  }
+  if (file.filed) return "Completed";
+  if (file.approved) return "Approved";
+  if (file.shared) return "Approval Pending";
+  if (file.workDone) return "Work Done";
+  if (hasAssignedStaffValue(currentFileAssignee(file).name)) return "Allotted";
+  const explicit = String(file.workflowStatus || file.status || "").trim();
+  return explicit && explicit.toLowerCase() !== "active" ? explicit : "Received";
+}
+
 function hasAssignedStaffValue(value) {
   const clean = String(value || "").trim().toLowerCase();
   return Boolean(clean && clean !== "not assigned");
@@ -1167,4 +1214,6 @@ module.exports = {
   restoreRemovedFile,
   deleteFile,
   sortFilesForRequest,
+  applyStatusUpdatedTimestamp,
+  workflowStatusLabel,
 };

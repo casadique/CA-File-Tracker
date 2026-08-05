@@ -5671,11 +5671,11 @@ function configuredFinancialFilterConfigs() {
     "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority",
   ];
   const activeSort = [
-    "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
+    "Newest First", "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority", "Workflow Status",
   ];
   const fileListSort = [
-    "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
+    "Newest First", "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Completion Date - Newest First", "Client Name - A to Z",
     "Service Type", "Assigned Staff", "Priority", "Workflow Status", "Billing Status",
   ];
@@ -6706,6 +6706,21 @@ function fileUpdatedSortTime(file = {}) {
     || fileCreatedSortTime(file);
 }
 
+function fileStatusUpdatedSortTime(file = {}) {
+  return Date.parse(file.status_updated_at || file.statusUpdatedAt || "")
+    || fileCreatedSortTime(file);
+}
+
+function sortFilesByStatusNewestFirst(files = []) {
+  return [...files].sort((a, b) => {
+    const statusChanged = fileStatusUpdatedSortTime(b) - fileStatusUpdatedSortTime(a);
+    if (statusChanged) return statusChanged;
+    const created = fileCreatedSortTime(b) - fileCreatedSortTime(a);
+    if (created) return created;
+    return stableFileIdSortDesc(a, b);
+  });
+}
+
 function fileActualCompletionDate(file = {}) {
   return normalizeImportDate(file.completionDate || file.completedDate || file.workCompletedDate || file.work_completed_date || file.completed_at || file.completedAt || "") || "";
 }
@@ -6822,6 +6837,16 @@ function applyCompletionTimestamps(record = {}, before = {}, fallbackIso = new D
     record.final_completed_at = finalCompletedAt;
     record.finalCompletedAt = finalCompletedAt;
   }
+  return record;
+}
+
+function applyStatusUpdatedTimestamp(record = {}, before = null, fallbackIso = new Date().toISOString()) {
+  const createdAt = record.created_at || record.createdAt || before?.created_at || before?.createdAt || fallbackIso;
+  const existing = before?.status_updated_at || before?.statusUpdatedAt || before?.created_at || before?.createdAt || createdAt;
+  const statusChanged = Boolean(before) && currentWorkflowStage(before) !== currentWorkflowStage(record);
+  const timestamp = before ? (statusChanged ? fallbackIso : existing) : createdAt;
+  record.status_updated_at = timestamp;
+  record.statusUpdatedAt = timestamp;
   return record;
 }
 
@@ -6958,6 +6983,7 @@ function financeNewestFirst(a = {}, b = {}) {
 function sortConfiguredFinancialFiles(files, listView) {
   const sortLabel = state.filters[listView ? `${listView}Sort` : "fileListSort"] || "";
   const rows = [...files];
+  if (sortLabel === "Newest First" && ["", "active"].includes(listView)) return sortFilesByStatusNewestFirst(rows);
   const factsByFile = new Map(rows.map((file) => [file, configuredFinancialFacts(file)]));
   const dateCompare = (left, right, direction = "desc") => {
     const a = fileDateSortValue(left);
@@ -10318,6 +10344,8 @@ async function returnFileForCorrection(fileId) {
     updatedAt: Date.now(),
     taskActivityAt: correction.returnedAt,
     task_activity_at: correction.returnedAt,
+    statusUpdatedAt: correction.returnedAt,
+    status_updated_at: correction.returnedAt,
   };
   state.files[index] = updated;
   state.correctionHistory = [...(state.correctionHistory || []), correction];
@@ -12323,6 +12351,7 @@ async function saveFileFromDrawer() {
   const saveTimestamp = new Date().toISOString();
   applyFeeReceivedTimestamp(record, existingFile, saveTimestamp);
   applyCompletionTimestamps(record, existingFile, saveTimestamp);
+  applyStatusUpdatedTimestamp(record, existingFile, saveTimestamp);
   const existingAssignmentHistory = assignmentHistory(existingFile || {});
   if (assignedChanged && hasAssignedStaffValue(reAssignedStaff)) {
     const reassignedAtIso = new Date().toISOString();

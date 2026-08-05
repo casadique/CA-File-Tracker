@@ -152,9 +152,10 @@ function emptyState() {
 
 function normalizeServerState(state) {
   const displayNormalizedState = normalizeServiceTypes(normalizeDisplayNames(state));
+  const filesWithStatusTimestamps = (displayNormalizedState.files || []).map(ensureFileStatusTimestamp);
   return {
     ...displayNormalizedState,
-    files: sortFilesNewestFirst(displayNormalizedState.files || []),
+    files: sortFilesNewestFirst(filesWithStatusTimestamps),
     visitors: sortVisitorsNewestFirst(displayNormalizedState.visitors || []),
     expenses: sortFinanceRows(displayNormalizedState.expenses || []),
     feeReceipts: sortFinanceRows(displayNormalizedState.feeReceipts || []),
@@ -339,9 +340,9 @@ function sortStaffDetailsNewestFirst(rows) {
 
 function sortFilesNewestFirst(files) {
   return [...files].sort((a, b) => {
-    const leftReceived = fileSortDate(a);
-    const rightReceived = fileSortDate(b);
-    if (rightReceived !== leftReceived) return rightReceived - leftReceived;
+    const leftStatus = fileStatusUpdatedTime(a);
+    const rightStatus = fileStatusUpdatedTime(b);
+    if (rightStatus !== leftStatus) return rightStatus - leftStatus;
     const leftCreated = fileCreatedTime(a);
     const rightCreated = fileCreatedTime(b);
     if (rightCreated !== leftCreated) return rightCreated - leftCreated;
@@ -349,12 +350,30 @@ function sortFilesNewestFirst(files) {
   });
 }
 
+function ensureFileStatusTimestamp(file = {}) {
+  const value = file.status_updated_at || file.statusUpdatedAt || file.last_status_changed_at || file.lastStatusChangedAt
+    || file.created_at || file.createdAt
+    || file.updated_at || file.updatedAt || file.lastUpdatedDate || "";
+  const parsed = dateOrNumber(value);
+  const timestamp = parsed ? new Date(parsed).toISOString() : "";
+  return {
+    ...file,
+    status_updated_at: timestamp,
+    statusUpdatedAt: timestamp,
+  };
+}
+
+function fileStatusUpdatedTime(file = {}) {
+  return dateOrNumber(file.status_updated_at || file.statusUpdatedAt || file.last_status_changed_at || file.lastStatusChangedAt)
+    || fileCreatedTime(file);
+}
+
 function fileSortDate(file = {}) {
   return dateOrNumber(file.file_received_date || file.fileReceivedDate || file.receivedDate || file.received_on);
 }
 
 function fileCreatedTime(file = {}) {
-  return dateOrNumber(file.created_at || file.createdAt || file.updated_at || file.updatedAt || file.lastUpdatedDate);
+  return dateOrNumber(file.created_at || file.createdAt);
 }
 
 function sortMessagesOldestFirst(messages) {
