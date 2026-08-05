@@ -6223,6 +6223,9 @@ function renderFilesPage() {
     exportFiltered.onclick = async () => {
       const sourceFiles = sortFilesForDisplay(filteredFiles());
       if (state.filters.listView || state.filters.dashboardKind) {
+        if ((state.filters.listView || state.filters.dashboardKind) === "active") {
+          return exportActiveFilesModernExcel(sourceFiles);
+        }
         if ((state.filters.listView || state.filters.dashboardKind) === "feeReceived") {
           return exportFeeReceivedFilesExcel(sourceFiles);
         }
@@ -7359,13 +7362,12 @@ function refreshFileResults() {
 
 async function exportActiveFilesExcel(files = filteredFiles()) {
   if (!rolePerm().export) return toast("This role cannot export data.");
-  const rows = files.map(activeFileExportRow);
-  await downloadXlsxRows(`active-files-${todayDate()}`, rows);
-  toast("Active Files Excel downloaded");
+  return exportActiveFilesModernExcel(files);
 }
 
 async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  if (listView === "active") return exportActiveFilesModernExcel(reportFiles);
   if (listView === "feeReceived") return exportFeeReceivedFilesExcel(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
@@ -7382,6 +7384,7 @@ async function exportStaffPageExcel(listView, files) {
 
 async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  if (listView === "active") return exportActiveFilesModernPdf(reportFiles);
   if (listView === "feeReceived") return exportFeeReceivedFilesPdf(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
@@ -20025,6 +20028,314 @@ async function createFeePendingFilesPdfDocument(sourceFiles) {
   return { doc, records, summary };
 }
 
+function activeReportDueOffset(dueDate, reportDate = indiaTodayDate()) {
+  const due = normalizeImportDate(dueDate || "");
+  const today = normalizeImportDate(reportDate || "");
+  if (!due || !today) return null;
+  const dueTime = Date.parse(`${due}T00:00:00Z`);
+  const todayTime = Date.parse(`${today}T00:00:00Z`);
+  return Number.isFinite(dueTime) && Number.isFinite(todayTime) ? Math.round((dueTime - todayTime) / MS_DAY) : null;
+}
+
+function activeReportRecord(file = {}, index = 0, reportDate = indiaTodayDate()) {
+  const dueOffset = activeReportDueOffset(file.dueDate, reportDate);
+  const assignedStaff = filePdfText(currentFileAssignee(file).name || file.assignedStaff, "Not Assigned");
+  return {
+    index: index + 1,
+    file,
+    clientDetails: `${filePdfText(file.name, "-")}\nPAN/Reg: ${filePdfText(fileRegistrationNumber(file), "Not Recorded")}`,
+    serviceDetails: `${filePdfText(file.serviceType, "-")}\nFY: ${filePdfText(fileFy(file), "NA")}`,
+    careOf: filePdfText(file.careOf || file.care_of, "Direct"),
+    receivedDate: filePdfDate(file.fileReceivedDate) || "-",
+    allottedDate: filePdfDate(file.workAllotmentDate || file.fileReceivedDate) || "-",
+    dueDate: filePdfDate(file.dueDate) || "Not Set",
+    dueOffset,
+    assignedStaff,
+    status: filePdfText(statusOf(file).label, "Active"),
+    priority: filePdfText(file.priority, "Medium"),
+    remarks: filePdfText(file.remarks, "-"),
+  };
+}
+
+function activeReportRecords(sourceFiles = [], reportDate = indiaTodayDate()) {
+  return (sourceFiles || []).map((file, index) => activeReportRecord(file, index, reportDate));
+}
+
+function activeReportSummary(records = []) {
+  const staff = new Map();
+  const summary = records.reduce((totals, record) => {
+    totals.total += 1;
+    if (record.dueOffset !== null && record.dueOffset < 0) totals.overdue += 1;
+    if (record.dueOffset !== null && record.dueOffset >= 0 && record.dueOffset <= 7) totals.dueSoon += 1;
+    if (["high", "urgent"].includes(record.priority.toLowerCase())) totals.highPriority += 1;
+    if (record.assignedStaff === "Not Assigned") totals.unassigned += 1;
+    else totals.assigned += 1;
+    const staffName = record.assignedStaff || "Not Assigned";
+    const row = staff.get(staffName) || { staff: staffName, files: 0, overdue: 0, dueSoon: 0 };
+    row.files += 1;
+    if (record.dueOffset !== null && record.dueOffset < 0) row.overdue += 1;
+    if (record.dueOffset !== null && record.dueOffset >= 0 && record.dueOffset <= 7) row.dueSoon += 1;
+    staff.set(staffName, row);
+    return totals;
+  }, { total: 0, overdue: 0, dueSoon: 0, highPriority: 0, assigned: 0, unassigned: 0 });
+  summary.staffRows = [...staff.values()].sort((left, right) => right.files - left.files || left.staff.localeCompare(right.staff));
+  return summary;
+}
+
+function activeReportFilterSummary() {
+  const config = configuredFinancialFilterConfig("active");
+  if (!config) return "No Additional Filters Applied";
+  const parts = configuredFinancialActiveFilters(config)
+    .filter(({ key }) => key !== "activeSort")
+    .map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`);
+  return parts.length ? parts.join(" | ") : "No Additional Filters Applied";
+}
+
+function activeReportSortSummary() {
+  return state.filters.activeSort || "Received Date - Newest First";
+}
+
+function activeReportCardItems(summary = {}) {
+  return [
+    ["Total Active Files", String(summary.total || 0), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+    ["Overdue", String(summary.overdue || 0), BILLED_PDF_COLORS.red, BILLED_PDF_COLORS.lightRed],
+    ["Due in Next 7 Days", String(summary.dueSoon || 0), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["High / Urgent", String(summary.highPriority || 0), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Assigned", String(summary.assigned || 0), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Not Assigned", String(summary.unassigned || 0), BILLED_PDF_COLORS.muted, BILLED_PDF_COLORS.alternate],
+  ];
+}
+
+function drawActiveReportFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, generatedBy, records, filterSummary, sortSummary, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* Branded text remains visible. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(14); doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(8.2); doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(15); doc.text("ACTIVE FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.blue); doc.setLineWidth(1.5); doc.line(pageWidth / 2 - 74, 69, pageWidth / 2 + 74, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text); doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${records.length}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 125)}  |  Sort: ${sortSummary}`, margin + 8, 103);
+  drawBilledPdfCards(doc, activeReportCardItems(summary), margin, 121, pageWidth - margin * 2, 6);
+}
+
+function drawActiveReportCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24); doc.text("Active Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.5); doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" }); doc.text(`Filters: ${billedPdfShortText(filterSummary, 110)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.setLineWidth(0.5); doc.line(30, 46, pageWidth - 30, 46);
+}
+
+function activeReportPdfRows(records = []) {
+  return records.map((record) => ({
+    sn: record.index,
+    client: record.clientDetails,
+    service: record.serviceDetails,
+    careOf: record.careOf,
+    received: record.receivedDate,
+    allotted: record.allottedDate,
+    due: record.dueDate,
+    staff: record.assignedStaff,
+    status: record.status,
+    priority: record.priority,
+    remarks: record.remarks,
+  }));
+}
+
+function drawActiveReportFinalSummary(doc, context) {
+  const { pageWidth, pageHeight, summary } = context;
+  let y = (doc.lastAutoTable?.finalY || 60) + 14;
+  if (y + 190 > pageHeight - 34) {
+    doc.addPage();
+    drawActiveReportCompactHeader(doc, context);
+    y = 62;
+  }
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(30, y, pageWidth - 60, 102, 4, 4, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(10); doc.text("ACTIVE FILES SUMMARY", 40, y + 16);
+  drawBilledPdfCards(doc, activeReportCardItems(summary), 40, y + 25, pageWidth - 80, 3);
+  const staffY = y + 120;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(9); doc.text("STAFF WORKLOAD SUMMARY", 30, staffY);
+  doc.autoTable({
+    startY: staffY + 8,
+    columns: [
+      { header: "Assigned Staff", dataKey: "staff" },
+      { header: "Active Files", dataKey: "files" },
+      { header: "Overdue", dataKey: "overdue" },
+      { header: "Due in 7 Days", dataKey: "dueSoon" },
+    ],
+    body: summary.staffRows,
+    theme: "grid",
+    tableWidth: 470,
+    margin: { left: 30, right: pageWidth - 500, bottom: 32, top: 58 },
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: 3, textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.35 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { staff: { cellWidth: 245 }, files: { halign: "right", cellWidth: 75 }, overdue: { halign: "right", cellWidth: 70 }, dueSoon: { halign: "right", cellWidth: 80 } },
+    willDrawPage: (data) => { if (data.pageNumber > 1) drawActiveReportCompactHeader(doc, context); },
+  });
+}
+
+async function createActiveFilesPdfDocument(sourceFiles = []) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = activeReportRecords(sourceFiles);
+  const summary = activeReportSummary(records);
+  const context = {
+    doc, assets, records, summary,
+    generatedAt: fileExportDateTime(),
+    generatedBy: loggedInUser()?.name || state.currentUser || "Not Recorded",
+    filterSummary: activeReportFilterSummary(),
+    sortSummary: activeReportSortSummary(),
+    pageWidth: doc.internal.pageSize.getWidth(),
+    pageHeight: doc.internal.pageSize.getHeight(),
+  };
+  if (!records.length) return { doc, records, summary };
+  const rows = activeReportPdfRows(records);
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "sn" },
+      { header: "Client Details", dataKey: "client" },
+      { header: "Service / FY", dataKey: "service" },
+      { header: "C/o", dataKey: "careOf" },
+      { header: "Received Date", dataKey: "received" },
+      { header: "Allotted Date", dataKey: "allotted" },
+      { header: "Due Date", dataKey: "due" },
+      { header: "Assigned Staff", dataKey: "staff" },
+      { header: "Status", dataKey: "status" },
+      { header: "Priority", dataKey: "priority" },
+      { header: "Remarks", dataKey: "remarks" },
+    ],
+    body: rows,
+    theme: "grid", showHead: "everyPage", pageBreak: "auto", rowPageBreak: "avoid",
+    margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 6.25, cellPadding: { top: 3.4, right: 2.3, bottom: 3.4, left: 2.3 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.3, minCellHeight: 27 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 6.7, fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255], halign: "center", minCellHeight: 27 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: {
+      sn: { halign: "center", cellWidth: 22 }, client: { cellWidth: 122, fontStyle: "bold" }, service: { cellWidth: 95 }, careOf: { cellWidth: 45 },
+      received: { halign: "center", cellWidth: 55 }, allotted: { halign: "center", cellWidth: 55 }, due: { halign: "center", cellWidth: 55 },
+      staff: { cellWidth: 75 }, status: { halign: "center", cellWidth: 55 }, priority: { halign: "center", cellWidth: 48 }, remarks: { cellWidth: 150 },
+    },
+    willDrawPage: () => {
+      const page = doc.internal.getCurrentPageInfo().pageNumber;
+      if (page === 1) drawActiveReportFirstHeader(doc, context); else drawActiveReportCompactHeader(doc, context);
+    },
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      const record = records[data.row.index];
+      if (data.column.dataKey === "due" && record.dueOffset !== null && record.dueOffset < 0) {
+        data.cell.styles.fontStyle = "bold"; data.cell.styles.textColor = BILLED_PDF_COLORS.red; data.cell.styles.fillColor = BILLED_PDF_COLORS.lightRed;
+      }
+      if (data.column.dataKey === "priority") {
+        const urgent = record.priority.toLowerCase() === "urgent";
+        const high = record.priority.toLowerCase() === "high";
+        if (urgent || high) {
+          data.cell.styles.fontStyle = "bold"; data.cell.styles.textColor = urgent ? BILLED_PDF_COLORS.red : BILLED_PDF_COLORS.amber; data.cell.styles.fillColor = urgent ? BILLED_PDF_COLORS.lightRed : BILLED_PDF_COLORS.lightAmber;
+        }
+      }
+    },
+  });
+  drawActiveReportFinalSummary(doc, context);
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
+async function exportActiveFilesModernPdf(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const { doc, records } = await createActiveFilesPdfDocument(sourceFiles);
+  if (!records.length) return toast("No active files available for the selected filters.");
+  doc.save(`${fileListPdfFileName("Active Files")}.pdf`);
+  toast("Active Files PDF downloaded");
+}
+
+async function exportActiveFilesModernExcel(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  await loadSheetJs();
+  const records = activeReportRecords(sourceFiles);
+  if (!records.length) return toast("No active files available for the selected filters.");
+  const headers = ["SN", "Client Details", "Service / FY", "C/o", "Received Date", "Allotted Date", "Due Date", "Assigned Staff", "Status", "Priority", "Remarks"];
+  const dataStartRow = 12;
+  const dataRows = records.map((record) => [
+    record.index, record.clientDetails, record.serviceDetails, record.careOf,
+    excelDateValue(record.file.fileReceivedDate), excelDateValue(record.file.workAllotmentDate || record.file.fileReceivedDate), excelDateValue(record.file.dueDate),
+    record.assignedStaff, record.status, record.priority, record.remarks,
+  ]);
+  const lastDataRow = dataStartRow + dataRows.length - 1;
+  const rows = [
+    ["Muhammad & Associates"], ["Chartered Accountants"], ["ACTIVE FILES REPORT"],
+    [`Generated: ${fileExportDateTime()} | Records: ${records.length} | Generated by: ${loggedInUser()?.name || state.currentUser || "Not Recorded"}`],
+    [],
+    ["TOTAL ACTIVE FILES", "", "", "", "OVERDUE", "", "", "", "DUE IN NEXT 7 DAYS", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", ""],
+    ["HIGH / URGENT PRIORITY", "", "", "", "ASSIGNED", "", "", "", "NOT ASSIGNED", "", ""],
+    ["", "", "", "", "", "", "", "", "", "", ""],
+    [], headers, ...dataRows,
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+  worksheet["!merges"] = [
+    XLSX.utils.decode_range("A1:K1"), XLSX.utils.decode_range("A2:K2"), XLSX.utils.decode_range("A3:K3"), XLSX.utils.decode_range("A4:K4"),
+    ...["A6:D6", "E6:H6", "I6:K6", "A7:D7", "E7:H7", "I7:K7", "A8:D8", "E8:H8", "I8:K8", "A9:D9", "E9:H9", "I9:K9"].map(XLSX.utils.decode_range),
+  ];
+  worksheet.A7 = { t: "n", f: `COUNTA(A${dataStartRow}:A${lastDataRow})` };
+  worksheet.E7 = { t: "n", f: `COUNTIFS(G${dataStartRow}:G${lastDataRow},"<"&TODAY(),G${dataStartRow}:G${lastDataRow},"<>")` };
+  worksheet.I7 = { t: "n", f: `COUNTIFS(G${dataStartRow}:G${lastDataRow},">="&TODAY(),G${dataStartRow}:G${lastDataRow},"<="&TODAY()+7)` };
+  worksheet.A9 = { t: "n", f: `COUNTIF(J${dataStartRow}:J${lastDataRow},"High")+COUNTIF(J${dataStartRow}:J${lastDataRow},"Urgent")` };
+  worksheet.E9 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"<>Not Assigned")` };
+  worksheet.I9 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"Not Assigned")` };
+  const border = { style: "thin", color: { rgb: "CBD5E1" } };
+  const applyStyle = (rangeAddress, style) => {
+    const range = XLSX.utils.decode_range(rangeAddress);
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      for (let column = range.s.c; column <= range.e.c; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        worksheet[address] ||= { t: "s", v: "" };
+        worksheet[address].s = style;
+      }
+    }
+  };
+  applyStyle("A1:K1", { font: { name: "Aptos Display", sz: 16, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center", vertical: "center" } });
+  applyStyle("A2:K2", { font: { name: "Aptos", sz: 10, color: { rgb: "475569" } }, alignment: { horizontal: "center" } });
+  applyStyle("A3:K3", { font: { name: "Aptos Display", sz: 14, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center" }, border: { bottom: { style: "medium", color: { rgb: "2563EB" } } } });
+  applyStyle("A4:K4", { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 9, color: { rgb: "334155" } }, alignment: { horizontal: "left", vertical: "center" }, border: { top: border, bottom: border } });
+  ["A6:D6", "E6:H6", "I6:K6", "A8:D8", "E8:H8", "I8:K8"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "64748B" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: border, bottom: border, left: border, right: border } }));
+  ["A7:D7", "E7:H7", "I7:K7", "A9:D9", "E9:H9", "I9:K9"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "F8FAFC" } }, font: { name: "Aptos Display", sz: 12, bold: true, color: { rgb: "2563EB" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: border, bottom: border, left: border, right: border } }));
+  applyStyle("A11:K11", { fill: { patternType: "solid", fgColor: { rgb: "0F2A5F" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } });
+  for (let rowNumber = dataStartRow; rowNumber <= lastDataRow; rowNumber += 1) {
+    const fill = rowNumber % 2 ? "FFFFFF" : "F8FAFC";
+    applyStyle(`A${rowNumber}:K${rowNumber}`, { fill: { patternType: "solid", fgColor: { rgb: fill } }, font: { name: "Aptos", sz: 9, color: { rgb: "0F172A" } }, alignment: { vertical: "center", wrapText: true }, border: { bottom: border } });
+    [4, 5, 6].forEach((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: column })];
+      if (cell) { cell.z = "dd-mm-yyyy"; cell.s.alignment = { horizontal: "center", vertical: "center" }; }
+    });
+    const record = records[rowNumber - dataStartRow];
+    const priorityCell = worksheet[`J${rowNumber}`];
+    if (priorityCell && ["High", "Urgent"].includes(record.priority)) {
+      priorityCell.s = { ...priorityCell.s, fill: { patternType: "solid", fgColor: { rgb: record.priority === "Urgent" ? "FEF2F2" : "FFFBEB" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: record.priority === "Urgent" ? "B91C1C" : "B45309" } }, alignment: { horizontal: "center", vertical: "center" } };
+    }
+    const dueCell = worksheet[`G${rowNumber}`];
+    if (dueCell && record.dueOffset !== null && record.dueOffset < 0) {
+      dueCell.s = { ...dueCell.s, fill: { patternType: "solid", fgColor: { rgb: "FEF2F2" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "B91C1C" } }, alignment: { horizontal: "center", vertical: "center" } };
+    }
+  }
+  worksheet["!autofilter"] = { ref: `A11:K${lastDataRow}` };
+  worksheet["!freeze"] = { xSplit: 0, ySplit: 11, topLeftCell: "A12", activePane: "bottomLeft", state: "frozen" };
+  worksheet["!cols"] = [6, 32, 25, 16, 14, 14, 14, 20, 16, 12, 36].map((wch) => ({ wch }));
+  worksheet["!rows"] = rows.map((_, index) => ({ hpt: index === 0 ? 26 : index === 2 ? 24 : index === 10 ? 26 : index >= 11 ? 32 : 20 }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Active Files");
+  XLSX.writeFile(workbook, `${fileListPdfFileName("Active Files")}.xlsx`, { cellDates: true, cellStyles: true });
+  toast("Active Files Excel downloaded");
+}
+
 function feeReceivedReportPaymentMode(receipt = {}, file = {}) {
   const rawMode = String(
     receipt.paymentMode || receipt.payment_mode || receipt.paymentMethod || receipt.payment_method || receipt.mode
@@ -20485,6 +20796,7 @@ async function exportFilteredFilesPdf(files, button) {
   if (!sourceFiles.length) return toast("No records available for the selected filters.");
   const sectionTitle = fileListSectionTitle();
   const reportTitle = `${sectionTitle} Report`.toUpperCase();
+  const activeFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "active";
   const billedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "billed";
   const completedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "completed";
   const feeReceivedPdf = (state.filters.listView || state.filters.dashboardKind) === "feeReceived";
@@ -20497,6 +20809,16 @@ async function exportFilteredFilesPdf(files, button) {
     button.innerHTML = `${navIcon("pdf")}Generating...`;
   }
   try {
+    if (activeFilesPdf) {
+      const { doc, records } = await createActiveFilesPdfDocument(sourceFiles);
+      if (!records.length) {
+        toast("No active files available for the selected filters.");
+        return;
+      }
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Active Files PDF downloaded");
+      return;
+    }
     if (billedFilesPdf) {
       const { doc } = await createBilledFilesPdfDocument(sourceFiles);
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
