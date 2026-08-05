@@ -15,6 +15,7 @@
     "test:completed-files": "node tools/test-completed-files-modernization.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
     "test:fee-received": "node tools/test-fee-received-modernization.js",
+    "test:fee-received-report": "node tools/test-fee-received-report-modernization.js",
     "test:non-billed-actions": "node tools/test-non-billed-actions-modernization.js",
     "test:client-master": "node tools/test-client-master-modernization.js",
     "test:not-checked": "node tools/test-not-checked-modernization.js",

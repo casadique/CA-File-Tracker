@@ -6223,6 +6223,9 @@ function renderFilesPage() {
     exportFiltered.onclick = async () => {
       const sourceFiles = sortFilesForDisplay(filteredFiles());
       if (state.filters.listView || state.filters.dashboardKind) {
+        if ((state.filters.listView || state.filters.dashboardKind) === "feeReceived") {
+          return exportFeeReceivedFilesExcel(sourceFiles);
+        }
         const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
         const exactDatedName = ["completed", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView);
@@ -7363,6 +7366,7 @@ async function exportActiveFilesExcel(files = filteredFiles()) {
 
 async function exportStaffPageExcel(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  if (listView === "feeReceived") return exportFeeReceivedFilesExcel(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
     : listView === "feePending"
@@ -7378,6 +7382,7 @@ async function exportStaffPageExcel(listView, files) {
 
 async function exportStaffPagePdf(listView, files) {
   const reportFiles = listView === "feeReceived" ? sortFilesByFeeReceivedNewestFirst(files) : files;
+  if (listView === "feeReceived") return exportFeeReceivedFilesPdf(reportFiles);
   const baseRows = reportFiles.map((file, index) => listView === "nonBilled"
     ? nonBilledReportRow(file, index)
     : listView === "feePending"
@@ -20020,6 +20025,351 @@ async function createFeePendingFilesPdfDocument(sourceFiles) {
   return { doc, records, summary };
 }
 
+function feeReceivedReportPaymentMode(receipt = {}, file = {}) {
+  const rawMode = String(
+    receipt.paymentMode || receipt.payment_mode || receipt.paymentMethod || receipt.payment_method || receipt.mode
+    || file.paymentMode || file.payment_mode || file.receiptMode || "",
+  ).trim();
+  if (rawMode) {
+    const normalized = normalizeTransactionPaymentMethod(rawMode);
+    return normalized === "Other" && !/^other$/i.test(rawMode) ? rawMode : normalized;
+  }
+  return transactionAccountKey(receipt, "") === "cash" || transactionAccountKey(file, "") === "cash" ? "Cash" : "Not Recorded";
+}
+
+function feeReceivedReportReceiptEntries(file = {}, summary = feeReceiptSummaryForFile(file)) {
+  if (summary.receipts.length) {
+    return summary.receipts.map((receipt) => ({
+      amount: Math.max(Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0), 0),
+      date: feeReceiptRecordDate(receipt),
+      mode: feeReceivedReportPaymentMode(receipt, file),
+    })).filter((entry) => entry.amount > 0);
+  }
+  if (allFeeReceiptRecordsForFile(file).length || summary.totalReceived <= 0) return [];
+  return [{
+    amount: summary.totalReceived,
+    date: normalizeImportDate(file.feeReceivedDate || file.receivedDate || file.received_date || file.receivedOn || file.received_on || ""),
+    mode: feeReceivedReportPaymentMode({}, file),
+  }];
+}
+
+function feeReceivedPdfRecords(sourceFiles = []) {
+  return (sourceFiles || [])
+    .map((file, index) => {
+      const record = billedPdfRecord(file, index);
+      const receiptEntries = feeReceivedReportReceiptEntries(file, feeReceiptSummaryForFile(file));
+      const latestReceipt = receiptEntries[0] || null;
+      const registration = filePdfText(fileRegistrationNumber(file), "Not Recorded");
+      return {
+        ...record,
+        receiptEntries,
+        receiptDate: latestReceipt?.date ? displayDate(latestReceipt.date) : "-",
+        receiptMode: latestReceipt?.mode || "Not Recorded",
+        clientDetails: `${record.clientName}\nPAN/Reg: ${registration}`,
+        serviceDetails: `${record.serviceType}\nFY: ${filePdfText(fileFy(file), "NA")}`,
+        billDetails: `${billedPdfMoney(record.grossBilledAmount)}\n${record.billedDate}`,
+        receiptDetails: `${billedPdfMoney(record.receivedAmount)}\n${latestReceipt?.date ? displayDate(latestReceipt.date) : "-"}${receiptEntries.length > 1 ? ` (+${receiptEntries.length - 1} more)` : ""}`,
+        paymentMode: latestReceipt?.mode || "Not Recorded",
+      };
+    })
+    .filter((record) => record.receivedAmount > 0.005)
+    .map((record, index) => ({ ...record, index: index + 1 }));
+}
+
+function feeReceivedPdfFilterSummary() {
+  const config = configuredFinancialFilterConfig("feeReceived");
+  if (!config) return "No Additional Filters Applied";
+  const parts = configuredFinancialActiveFilters(config)
+    .filter(({ key }) => key !== "feeReceivedSort")
+    .map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`);
+  return parts.length ? parts.join(" | ") : "No Additional Filters Applied";
+}
+
+function feeReceivedPdfSortSummary() {
+  return state.filters.feeReceivedSort || "Receipt Date - Newest First";
+}
+
+function feeReceivedPdfCardItems(summary = {}) {
+  return [
+    ["Total Records", String(summary.totalRecords || 0), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.lightBlue],
+    ["Total Billed", billedPdfMoney(summary.grossBilledAmount), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+    ["Approved Discounts", billedPdfMoney(summary.discountAmount), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Total Received", billedPdfMoney(summary.receivedAmount), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Balance", billedPdfMoney(summary.balanceAmount), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+    ["Fully Settled", String(summary.receivedFiles || 0), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Partly Received", String(summary.partiallyReceivedFiles || 0), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
+  ];
+}
+
+function drawFeeReceivedPdfFirstHeader(doc, context) {
+  const { pageWidth, assets, generatedAt, generatedBy, records, filterSummary, sortSummary, summary } = context;
+  const margin = 30;
+  try { doc.addImage(assets.logo, "PNG", margin, 20, 35, 35); } catch { /* Branded text remains visible. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(14);
+  doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(8.2);
+  doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(15);
+  doc.text("FEE RECEIVED FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.green);
+  doc.setLineWidth(1.5);
+  doc.line(pageWidth / 2 - 98, 69, pageWidth / 2 + 98, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(margin, 78, pageWidth - margin * 2, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text);
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${records.length}  |  Generated by: ${generatedBy}`, margin + 8, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 125)}  |  Sort: ${sortSummary}`, margin + 8, 103);
+  drawBilledPdfCards(doc, feeReceivedPdfCardItems(summary), margin, 121, pageWidth - margin * 2, 7);
+}
+
+function drawFeeReceivedPdfCompactHeader(doc, context) {
+  const { pageWidth, generatedAt, filterSummary } = context;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(8.2);
+  doc.text("Muhammad & Associates", 30, 24);
+  doc.text("Fee Received Files Report", pageWidth / 2, 24, { align: "center" });
+  doc.setFont("DejaVuSans", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...BILLED_PDF_COLORS.muted);
+  doc.text(generatedAt, pageWidth - 30, 24, { align: "right" });
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 110)}`, 30, 38, { maxWidth: pageWidth - 60 });
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.setLineWidth(0.5);
+  doc.line(30, 46, pageWidth - 30, 46);
+}
+
+function feeReceivedPdfTableRows(records = []) {
+  return records.map((record) => ({
+    sn: record.index,
+    client: record.clientDetails,
+    service: record.serviceDetails,
+    bill: record.billDetails,
+    receipt: record.receiptDetails,
+    balance: billedPdfMoney(record.balanceAmount),
+    mode: record.paymentMode,
+  }));
+}
+
+function drawFeeReceivedPdfFinalSummary(doc, context) {
+  const { pageWidth, pageHeight, summary } = context;
+  const modeRows = billedPdfPaymentModeRows(summary);
+  const requiredHeight = 155 + modeRows.length * 16;
+  let y = (doc.lastAutoTable?.finalY || 60) + 14;
+  if (y + requiredHeight > pageHeight - 34) {
+    doc.addPage();
+    drawFeeReceivedPdfCompactHeader(doc, context);
+    y = 62;
+  }
+  doc.setFillColor(...BILLED_PDF_COLORS.lightBlue);
+  doc.setDrawColor(...BILLED_PDF_COLORS.border);
+  doc.roundedRect(30, y, pageWidth - 60, 102, 4, 4, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(10);
+  doc.text("FEE RECEIVED TOTALS", 40, y + 16);
+  drawBilledPdfCards(doc, feeReceivedPdfCardItems(summary), 40, y + 25, pageWidth - 80, 4);
+
+  const modeY = y + 120;
+  doc.setTextColor(...BILLED_PDF_COLORS.navy);
+  doc.setFont("DejaVuSans", "bold");
+  doc.setFontSize(9);
+  doc.text("PAYMENT MODE SUMMARY", 30, modeY);
+  doc.autoTable({
+    startY: modeY + 8,
+    columns: [
+      { header: "Payment Mode", dataKey: "mode" },
+      { header: "Received Amount", dataKey: "amount" },
+    ],
+    body: modeRows,
+    theme: "grid",
+    tableWidth: 390,
+    margin: { left: 30, right: pageWidth - 420, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 7, cellPadding: 3, textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.35 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { mode: { cellWidth: 235 }, amount: { halign: "right", cellWidth: 155 } },
+    didParseCell: (data) => {
+      if (data.section === "body" && modeRows[data.row.index]?.mode === "Total") {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.fillColor = BILLED_PDF_COLORS.lightGreen;
+        data.cell.styles.textColor = BILLED_PDF_COLORS.green;
+      }
+    },
+  });
+}
+
+async function createFeeReceivedFilesPdfDocument(sourceFiles = []) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = feeReceivedPdfRecords(sourceFiles);
+  const summary = billedPdfSummary(records);
+  const context = {
+    doc,
+    assets,
+    records,
+    summary,
+    generatedAt: fileExportDateTime(),
+    generatedBy: loggedInUser()?.name || state.currentUser || "Not Recorded",
+    filterSummary: feeReceivedPdfFilterSummary(),
+    sortSummary: feeReceivedPdfSortSummary(),
+    pageWidth: doc.internal.pageSize.getWidth(),
+    pageHeight: doc.internal.pageSize.getHeight(),
+  };
+  if (!records.length) return { doc, records, summary };
+  const rows = feeReceivedPdfTableRows(records);
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "sn" },
+      { header: "Client Details", dataKey: "client" },
+      { header: "Service / FY", dataKey: "service" },
+      { header: "Billing Details", dataKey: "bill" },
+      { header: "Receipt Details", dataKey: "receipt" },
+      { header: "Balance", dataKey: "balance" },
+      { header: "Payment Mode", dataKey: "mode" },
+    ],
+    body: rows,
+    theme: "grid",
+    showHead: "everyPage",
+    pageBreak: "auto",
+    rowPageBreak: "avoid",
+    margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 7.2, cellPadding: { top: 4, right: 3, bottom: 4, left: 3 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: 0.3, minCellHeight: 28 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 7.4, fillColor: BILLED_PDF_COLORS.navy, textColor: [255, 255, 255], halign: "center", minCellHeight: 27 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: {
+      sn: { halign: "center", cellWidth: 24 },
+      client: { halign: "left", cellWidth: 154, fontStyle: "bold" },
+      service: { halign: "left", cellWidth: 124 },
+      bill: { halign: "right", cellWidth: 108 },
+      receipt: { halign: "right", cellWidth: 120, fontStyle: "bold", textColor: BILLED_PDF_COLORS.green },
+      balance: { halign: "right", cellWidth: 88 },
+      mode: { halign: "left", cellWidth: 163 },
+    },
+    willDrawPage: () => {
+      const page = doc.internal.getCurrentPageInfo().pageNumber;
+      if (page === 1) drawFeeReceivedPdfFirstHeader(doc, context);
+      else drawFeeReceivedPdfCompactHeader(doc, context);
+    },
+    didParseCell: (data) => {
+      if (data.section !== "body" || data.column.dataKey !== "balance") return;
+      const record = records[data.row.index];
+      data.cell.styles.fontStyle = "bold";
+      data.cell.styles.textColor = record.balanceAmount > 0.005 ? BILLED_PDF_COLORS.amber : BILLED_PDF_COLORS.green;
+      data.cell.styles.fillColor = record.balanceAmount > 0.005 ? BILLED_PDF_COLORS.lightAmber : BILLED_PDF_COLORS.lightGreen;
+    },
+  });
+  drawFeeReceivedPdfFinalSummary(doc, context);
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
+async function exportFeeReceivedFilesPdf(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  const { doc, records } = await createFeeReceivedFilesPdfDocument(sourceFiles);
+  if (!records.length) return toast("No received records available for the selected filters.");
+  doc.save(`${fileListPdfFileName("Fee Received Files")}.pdf`);
+  toast("Fee Received Files PDF downloaded");
+}
+
+async function exportFeeReceivedFilesExcel(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  await loadSheetJs();
+  const records = feeReceivedPdfRecords(sourceFiles);
+  if (!records.length) return toast("No received records available for the selected filters.");
+  const headers = ["SN", "Client Details", "Service / FY", "Bill Date", "Billed Amount", "Received Amount", "Balance", "Received Date", "Payment Mode"];
+  const dataStartRow = 10;
+  const dataRows = records.map((record) => [
+    record.index,
+    `${record.clientName}\n${filePdfText(fileRegistrationNumber(record.file), "PAN/Reg Not Recorded")}`,
+    `${record.serviceType}\nFY ${filePdfText(fileFy(record.file), "NA")}`,
+    excelDateValue(record.file.billDate || record.file.bill_date || record.file.billedDate),
+    record.grossBilledAmount,
+    record.receivedAmount,
+    record.balanceAmount,
+    excelDateValue(record.receiptEntries[0]?.date || record.receiptDate),
+    record.paymentMode,
+  ]);
+  const totalRowNumber = dataStartRow + dataRows.length;
+  const rows = [
+    ["Muhammad & Associates"],
+    ["Chartered Accountants"],
+    ["FEE RECEIVED FILES REPORT"],
+    [`Generated: ${fileExportDateTime()} | Records: ${records.length} | Generated by: ${loggedInUser()?.name || state.currentUser || "Not Recorded"}`],
+    [],
+    ["TOTAL RECORDS", "", "TOTAL BILLED", "", "TOTAL RECEIVED", "", "", "BALANCE", ""],
+    ["", "", "", "", "", "", "", "", ""],
+    [],
+    headers,
+    ...dataRows,
+    ["", "TOTAL", "", "", "", "", "", "", ""],
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+  worksheet["!merges"] = [
+    XLSX.utils.decode_range("A1:I1"), XLSX.utils.decode_range("A2:I2"), XLSX.utils.decode_range("A3:I3"), XLSX.utils.decode_range("A4:I4"),
+    XLSX.utils.decode_range("A6:B6"), XLSX.utils.decode_range("C6:D6"), XLSX.utils.decode_range("E6:G6"), XLSX.utils.decode_range("H6:I6"),
+    XLSX.utils.decode_range("A7:B7"), XLSX.utils.decode_range("C7:D7"), XLSX.utils.decode_range("E7:G7"), XLSX.utils.decode_range("H7:I7"),
+  ];
+  worksheet.A7 = { t: "n", f: `COUNTA(A${dataStartRow}:A${totalRowNumber - 1})` };
+  worksheet.C7 = { t: "n", f: `SUM(E${dataStartRow}:E${totalRowNumber - 1})` };
+  worksheet.E7 = { t: "n", f: `SUM(F${dataStartRow}:F${totalRowNumber - 1})` };
+  worksheet.H7 = { t: "n", f: `SUM(G${dataStartRow}:G${totalRowNumber - 1})` };
+  worksheet[`E${totalRowNumber}`] = { t: "n", f: `SUM(E${dataStartRow}:E${totalRowNumber - 1})` };
+  worksheet[`F${totalRowNumber}`] = { t: "n", f: `SUM(F${dataStartRow}:F${totalRowNumber - 1})` };
+  worksheet[`G${totalRowNumber}`] = { t: "n", f: `SUM(G${dataStartRow}:G${totalRowNumber - 1})` };
+  const border = { style: "thin", color: { rgb: "CBD5E1" } };
+  const applyStyle = (rangeAddress, style) => {
+    const range = XLSX.utils.decode_range(rangeAddress);
+    for (let row = range.s.r; row <= range.e.r; row += 1) {
+      for (let column = range.s.c; column <= range.e.c; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        worksheet[address] ||= { t: "s", v: "" };
+        worksheet[address].s = style;
+      }
+    }
+  };
+  applyStyle("A1:I1", { font: { name: "Aptos Display", sz: 16, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center", vertical: "center" } });
+  applyStyle("A2:I2", { font: { name: "Aptos", sz: 10, color: { rgb: "475569" } }, alignment: { horizontal: "center" } });
+  applyStyle("A3:I3", { font: { name: "Aptos Display", sz: 14, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center" }, border: { bottom: { style: "medium", color: { rgb: "16A34A" } } } });
+  applyStyle("A4:I4", { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 9, color: { rgb: "334155" } }, alignment: { horizontal: "left", vertical: "center" }, border: { top: border, bottom: border } });
+  ["A6:B6", "C6:D6", "E6:G6", "H6:I6"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "64748B" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: border, bottom: border, left: border, right: border } }));
+  ["A7:B7", "C7:D7", "E7:G7", "H7:I7"].forEach((range) => applyStyle(range, { fill: { patternType: "solid", fgColor: { rgb: "ECFDF5" } }, font: { name: "Aptos Display", sz: 12, bold: true, color: { rgb: "15803D" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: border, bottom: border, left: border, right: border } }));
+  applyStyle("A9:I9", { fill: { patternType: "solid", fgColor: { rgb: "0F2A5F" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } });
+  for (let rowNumber = dataStartRow; rowNumber < totalRowNumber; rowNumber += 1) {
+    const fill = rowNumber % 2 ? "FFFFFF" : "F8FAFC";
+    applyStyle(`A${rowNumber}:I${rowNumber}`, { fill: { patternType: "solid", fgColor: { rgb: fill } }, font: { name: "Aptos", sz: 9, color: { rgb: "0F172A" } }, alignment: { vertical: "center", wrapText: true }, border: { bottom: border } });
+    [4, 5, 6].forEach((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: column })];
+      if (cell) { cell.z = "#,##0.00"; cell.s.alignment = { horizontal: "right", vertical: "center" }; }
+    });
+    [3, 7].forEach((column) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber - 1, c: column })];
+      if (cell) { cell.z = "dd-mm-yyyy"; cell.s.alignment = { horizontal: "center", vertical: "center" }; }
+    });
+  }
+  applyStyle(`A${totalRowNumber}:I${totalRowNumber}`, { fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "0F2A5F" } }, alignment: { vertical: "center" }, border: { top: { style: "medium", color: { rgb: "2563EB" } }, bottom: border } });
+  ["C7", "E7", "H7", `E${totalRowNumber}`, `F${totalRowNumber}`, `G${totalRowNumber}`].forEach((address) => { if (worksheet[address]) worksheet[address].z = "#,##0.00"; });
+  worksheet["!autofilter"] = { ref: `A9:I${totalRowNumber - 1}` };
+  worksheet["!freeze"] = { xSplit: 0, ySplit: 9, topLeftCell: "A10", activePane: "bottomLeft", state: "frozen" };
+  worksheet["!cols"] = [6, 32, 28, 14, 16, 17, 14, 15, 18].map((wch) => ({ wch }));
+  worksheet["!rows"] = rows.map((_, index) => ({ hpt: index === 0 ? 26 : index === 2 ? 24 : index === 8 ? 25 : index >= 9 ? 30 : 20 }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Fee Received");
+  XLSX.writeFile(workbook, `${fileListPdfFileName("Fee Received Files")}.xlsx`, { cellDates: true, cellStyles: true });
+  toast("Fee Received Files Excel downloaded");
+}
+
 async function createBilledFilesPdfDocument(sourceFiles) {
   await loadPdfTools();
   const assets = await loadBilledPdfAssets();
@@ -20137,6 +20487,7 @@ async function exportFilteredFilesPdf(files, button) {
   const reportTitle = `${sectionTitle} Report`.toUpperCase();
   const billedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "billed";
   const completedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "completed";
+  const feeReceivedPdf = (state.filters.listView || state.filters.dashboardKind) === "feeReceived";
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
   const feePendingPdf = (state.filters.listView || state.filters.dashboardKind) === "feePending";
@@ -20166,6 +20517,16 @@ async function exportFilteredFilesPdf(files, button) {
       }
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
       toast("Fee Pending Files PDF downloaded");
+      return;
+    }
+    if (feeReceivedPdf) {
+      const { doc, records } = await createFeeReceivedFilesPdfDocument(sourceFiles);
+      if (!records.length) {
+        toast("No received records available for the selected filters.");
+        return;
+      }
+      doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
+      toast("Fee Received Files PDF downloaded");
       return;
     }
     await loadPdfTools();
