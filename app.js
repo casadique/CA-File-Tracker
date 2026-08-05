@@ -10301,11 +10301,19 @@ async function returnFileForCorrection(fileId) {
   if (!isCheckedCompleted(file)) return toast("Only completed files can be returned for correction.");
   const correctionRemarks = prompt("Correction remarks")?.trim();
   if (!correctionRemarks) return toast("Correction remarks are required.");
+  const expectedCorrectionDate = prompt("Expected correction date (YYYY-MM-DD)", file.dueDate || todayDate())?.trim() || "";
+  const parsedExpectedDate = /^\d{4}-\d{2}-\d{2}$/.test(expectedCorrectionDate)
+    ? new Date(`${expectedCorrectionDate}T00:00:00Z`)
+    : null;
+  if (!parsedExpectedDate || Number.isNaN(parsedExpectedDate.getTime()) || dateInput(parsedExpectedDate) !== expectedCorrectionDate) {
+    return toast("Enter a valid expected correction date in YYYY-MM-DD format.");
+  }
+  if (expectedCorrectionDate < todayDate()) return toast("Expected correction date cannot be earlier than today.");
   if (isSupabaseMode()) {
     try {
       const result = await apiJson(`/api/files/${encodeURIComponent(fileId)}/return-correction`, {
         method: "POST",
-        body: JSON.stringify({ correctionReason: correctionRemarks }),
+        body: JSON.stringify({ correctionReason: correctionRemarks, expectedCorrectionDate }),
       });
       if (result.files) state.files = result.files;
       if (result.correctionHistory) state.correctionHistory = result.correctionHistory;
@@ -10330,6 +10338,8 @@ async function returnFileForCorrection(fileId) {
     file_id: fileId,
     correctionReason: correctionRemarks,
     correction_reason: correctionRemarks,
+    expectedCorrectionDate,
+    expected_correction_date: expectedCorrectionDate,
     returnedBy: state.currentUser || "",
     returnedById: state.session?.userId || "",
     returnedByEmail: state.session?.userEmail || "",
@@ -10354,6 +10364,8 @@ async function returnFileForCorrection(fileId) {
     checkedDate: "",
     checkingRemarks: "",
     correctionRemarks,
+    expectedCorrectionDate,
+    expected_correction_date: expectedCorrectionDate,
     returnedBy: correction.returnedBy,
     returnedById: correction.returnedById,
     returnedByEmail: correction.returnedByEmail,
@@ -10379,6 +10391,7 @@ async function returnFileForCorrection(fileId) {
     previousStatus: statusOf(file).label,
     newStatus: "Correction Required",
     correctionRemarks,
+    expectedCorrectionDate,
     returnedBy: updated.returnedBy,
     returnedDate,
   });
@@ -11888,7 +11901,7 @@ function latestCorrectionForFile(file = {}) {
   return correctionHistoryForFile(file)[0] || null;
 }
 
-function markLatestCorrectionResubmitted(file = {}, status = "Resubmitted for Checking") {
+function markLatestCorrectionResubmitted(file = {}, status = "Resubmitted for Checking", correctionResponse = "") {
   const history = correctionHistoryForFile(file);
   if (!history.length) return file.correctionHistory || [];
   const latestId = history[0].id;
@@ -11896,7 +11909,9 @@ function markLatestCorrectionResubmitted(file = {}, status = "Resubmitted for Ch
   const updated = history.map((item) => (item.id === latestId ? {
     ...item,
     status,
-    response: item.response || "Correction completed and resubmitted for checking.",
+    response: correctionResponse || item.response || "Correction completed and resubmitted for checking.",
+    correctionResponse: correctionResponse || item.correctionResponse || item.response || "Correction completed and resubmitted for checking.",
+    correction_response: correctionResponse || item.correction_response || item.response || "Correction completed and resubmitted for checking.",
     corrected_completed_by: status === "Corrected & Completed" ? (state.currentUser || "") : (item.corrected_completed_by || ""),
     correctedCompletedBy: status === "Corrected & Completed" ? (state.currentUser || "") : (item.correctedCompletedBy || ""),
     corrected_completed_at: status === "Corrected & Completed" ? now : (item.corrected_completed_at || ""),
@@ -12071,6 +12086,7 @@ function workflowStatusField(file = {}) {
 
 function canEditStage(stage, file = {}) {
   if (stage === "Billed") return false;
+  if (stage === "Completed" && hasOpenCorrection(file)) return false;
   if (!isStaffLogin()) return true;
   if (isAuthorisedCheckingStaff() && !fileCreatedByCurrentUser(file) && !fileBelongsToUser(file, loggedInUser())) return false;
   if (stage === "Corrected & Completed") return Boolean(file?.stages?.["Correction Required"]) || fileBelongsToUser(file, loggedInUser()) || fileCreatedByCurrentUser(file);
@@ -12120,6 +12136,18 @@ async function saveFileFromDrawer() {
   const originalWorkflowStatus = existingFile ? currentWorkflowStage(existingFile) : "Received";
   let selectedWorkflowStatus = data.get("workflowStatus") || originalWorkflowStatus || "Received";
   let pendingNewRemovalReason = "";
+  if (existingFile && hasOpenCorrection(existingFile) && selectedWorkflowStatus === "Completed") {
+    restoreSaveFileButton(saveButton);
+    return toast("This file was returned for correction. Select Corrected & Completed instead of Completed.");
+  }
+  let correctionResponse = "";
+  if (existingFile && hasOpenCorrection(existingFile) && selectedWorkflowStatus === "Corrected & Completed" && selectedWorkflowStatus !== originalWorkflowStatus) {
+    correctionResponse = window.prompt("Describe the correction completed / correction response:", "")?.trim() || "";
+    if (!correctionResponse) {
+      restoreSaveFileButton(saveButton);
+      return toast("Correction response is required before marking Corrected & Completed.");
+    }
+  }
   if (selectedWorkflowStatus === "Removed") {
     const removalReason = window.prompt("Enter the mandatory reason for removing this file:", "")?.trim() || "";
     if (!removalReason) {
@@ -12369,7 +12397,9 @@ async function saveFileFromDrawer() {
     returnedToEmail: existingFile?.returnedToEmail || "",
     returnedDate: existingFile?.returnedDate || "",
     correctionStatus: justCorrectedCompleted ? "Corrected & Completed" : (justCompleted && wasReturned ? "Resubmitted for Checking" : (existingFile?.correctionStatus || "")),
-    correctionHistory: justCorrectedCompleted ? markLatestCorrectionResubmitted(existingFile, "Corrected & Completed") : (justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || [])),
+    correctionResponse: justCorrectedCompleted ? correctionResponse : (existingFile?.correctionResponse || existingFile?.correction_response || ""),
+    correction_response: justCorrectedCompleted ? correctionResponse : (existingFile?.correction_response || existingFile?.correctionResponse || ""),
+    correctionHistory: justCorrectedCompleted ? markLatestCorrectionResubmitted(existingFile, "Corrected & Completed", correctionResponse) : (justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || [])),
     remarks: data.get("remarks").trim(),
     attachments: JSON.parse(document.querySelector("#fileDrawer").dataset.attachments || "[]"),
     lastUpdatedDate: todayDate(),

@@ -201,6 +201,37 @@ function assertBillingMutationPermission(before, after, profile = {}) {
   if (changed || beforeStage !== afterStage) throw httpError("Only Admin or Manager can change billing or payment details.", 403);
 }
 
+function strictDateOnly(value = "") {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  const normalized = `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`;
+  return normalized === raw ? raw : "";
+}
+
+function correctionResponseOf(file = {}) {
+  const correction = latestCorrection(file) || {};
+  return String(
+    file.correctionResponse
+    || file.correction_response
+    || correction.response
+    || correction.correctionResponse
+    || correction.correction_response
+    || ""
+  ).trim();
+}
+
+function assertCorrectionWorkflow(before, record) {
+  if (!before || !hasOpenCorrection(before)) return;
+  if (isCompletedFile(record) && !isCorrectedCompleted(record)) {
+    throw httpError("A returned file cannot be marked Completed. Select Corrected & Completed.", 400);
+  }
+  if (isCorrectedCompleted(record) && !correctionResponseOf(record)) {
+    throw httpError("Correction response is required before marking Corrected & Completed.", 400);
+  }
+}
+
 async function upsertFile(file, userId, profile = {}) {
   return patchAppState((state) => {
     const now = Date.now();
@@ -235,6 +266,7 @@ async function upsertFile(file, userId, profile = {}) {
       throw httpError("Use Take Back to restore a removed file.", 400);
     }
     assertBillingMutationPermission(before, { ...(before || {}), ...record }, profile);
+    assertCorrectionWorkflow(before, record);
     preserveCheckingDetailsForGeneralSave(record, before);
     validateReassignmentTarget(before, file);
     const nowIso = new Date(now).toISOString();
@@ -824,12 +856,15 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
     const now = new Date();
     const file = files[index];
     const returnedTo = resolveFileAssignee(state, file);
+    const expectedCorrectionDate = strictDateOnly(payload.expectedCorrectionDate || payload.expected_correction_date);
     const correction = {
       id: crypto.randomUUID(),
       file_id: fileId,
       fileId,
       correction_reason: String(payload.correctionReason || payload.correctionRemarks || "").trim(),
       correctionReason: String(payload.correctionReason || payload.correctionRemarks || "").trim(),
+      expected_correction_date: expectedCorrectionDate,
+      expectedCorrectionDate,
       returned_by: profile?.id || userId,
       authReturnedById: userId,
       returnedById: profile?.id || userId,
@@ -856,6 +891,16 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       error.status = 400;
       throw error;
     }
+    if (!expectedCorrectionDate) {
+      const error = new Error("Expected correction date is required in YYYY-MM-DD format.");
+      error.status = 400;
+      throw error;
+    }
+    if (expectedCorrectionDate < now.toISOString().slice(0, 10)) {
+      const error = new Error("Expected correction date cannot be earlier than the return date.");
+      error.status = 400;
+      throw error;
+    }
     const stages = { ...(file.stages || {}), "Correction Required": true, "Corrected & Completed": false, Completed: false };
     files[index] = {
       ...file,
@@ -865,6 +910,8 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       checkedDate: "",
       checkingRemarks: "",
       correctionRemarks: correction.correctionReason,
+      expectedCorrectionDate,
+      expected_correction_date: expectedCorrectionDate,
       returnedBy: correction.returnedBy,
       returnedById: correction.returnedById,
       returnedByEmail: correction.returnedByEmail,
@@ -890,7 +937,7 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
       fileId,
       sourceEventId: correctionEventId,
       fileName: file.name,
-      changeText: `Correction Reason: ${correction.correctionReason}`,
+      changeText: `Correction Reason: ${correction.correctionReason}. Expected by: ${expectedCorrectionDate}`,
       changedBy: correction.returnedBy,
       changedByRole: profile?.role || "",
       recipient: { id: correction.returnedToId, email: correction.returnedToEmail, name: correction.returnedTo },
@@ -908,6 +955,7 @@ async function returnFileForCorrection(fileId, payload, userId, profile) {
           fileId,
           fileName: file.name,
           correctionReason: correction.correctionReason,
+          expectedCorrectionDate,
           returnedBy: correction.returnedBy,
           returnedTo: correction.returnedTo,
         },
