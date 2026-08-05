@@ -6,6 +6,8 @@ const {
   deleteExpense,
   saveCollection,
   saveFeeReceipt,
+  getFeeCollectionEditor,
+  editFeeCollection,
   reverseFeeReceipt,
   reverseUnlinkedFeeReceipt,
   deleteCollection,
@@ -122,6 +124,30 @@ router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), 
       files: state.files || [],
       feeReceipts: state.feeReceipts || [],
       otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/fee-receipts/receipt/:receiptId/editor", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await getFeeCollectionEditor(req.params.receiptId)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/fee-receipts/receipt/:receiptId", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await editFeeCollection(req.params.receiptId, req.body.collection || req.body, req.user.id, req.profile);
+    res.json({
+      ok: true,
+      files: state.files || [],
+      feeReceipts: state.feeReceipts || [],
+      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+      cashReconciliations: state.cashReconciliations || [],
+      auditLog: state.auditLog || [],
     });
   } catch (error) {
     next(error);

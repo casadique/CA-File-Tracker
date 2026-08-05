@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { patchAppState } = require("./appStateService");
+const { getAppState, patchAppState } = require("./appStateService");
 
 const FINANCE_ACCOUNTS = Object.freeze([
   { key: "cash", name: "Cash in Hand", type: "cash", displayOrder: 1 },
@@ -334,6 +334,227 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
         outstandingBalance: Math.max(outstandingAmount - receivedAmount - discountAmount, 0),
       },
     }, profile, now);
+    return state;
+  }, userId);
+}
+
+function feeCollectionLinkedTransaction(state, receipt = {}) {
+  const receiptId = receipt.id || "";
+  const transactionId = receipt.transactionId || receipt.transaction_id || "";
+  return (state.otherCashCollections || []).find((item) => isActiveTransaction(item) && (
+    (transactionId && item.id === transactionId)
+    || (receiptId && (
+      item.feeReceiptId === receiptId
+      || item.fee_receipt_id === receiptId
+      || item.sourceId === receiptId
+      || item.source_id === receiptId
+    ))
+  )) || null;
+}
+
+function feeCollectionEditorPayload(state, receiptId) {
+  const receipt = (state.feeReceipts || []).find((item) => item.id === receiptId && isValidFeeReceipt(item));
+  if (!receipt) throw Object.assign(new Error("Fee receipt was not found or is no longer active."), { status: 404 });
+  const fileId = receiptFileId(receipt);
+  const file = (state.files || []).find((item) => item.id === fileId);
+  if (!file) throw Object.assign(new Error("The file linked to this receipt was not found."), { status: 404 });
+  const transaction = feeCollectionLinkedTransaction(state, receipt);
+  const otherReceipts = (state.feeReceipts || []).filter((item) => (
+    item.id !== receiptId && receiptFileId(item) === fileId && isValidFeeReceipt(item)
+  ));
+  const otherReceived = otherReceipts.reduce((sum, item) => sum + Math.max(Number(item.amount || item.receivedAmount || item.received_amount || 0), 0), 0);
+  const otherDiscount = otherReceipts.reduce((sum, item) => sum + Math.max(Number(item.discountAmount || item.discount_amount || item.discount || 0), 0), 0);
+  return {
+    receipt,
+    file: {
+      id: file.id,
+      name: file.name || "",
+      pan: file.pan || file.panRegNo || file.pan_reg_no || "",
+      serviceType: file.serviceType || "",
+      fy: file.fy || "",
+      careOf: file.careOf || file.care_of || "Direct",
+      assignedStaff: file.assignedStaff || "Not Assigned",
+      billNo: file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
+      billDate: file.billDate || file.bill_date || file.billedDate || "",
+      billedAmount: Number(file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || 0),
+      invoiceRemarks: file.invoiceRemarks || file.invoice_remarks || "",
+    },
+    transaction: transaction ? {
+      id: transaction.id,
+      date: transaction.date || transaction.collection_date || "",
+      type: transaction.collectionType || transaction.collection_type || "fee_collection",
+      paymentMode: transaction.paymentMethod || transaction.payment_method || transaction.mode || "",
+      accountKey: financeAccountOf(transaction, ""),
+      accountName: transaction.accountName || transaction.account_name || financeAccountName(financeAccountOf(transaction, "")),
+      amount: Number(transaction.amount || 0),
+      referenceNumber: transaction.reference_number || transaction.voucherNo || "",
+      remarks: transaction.remarks || "",
+      createdBy: transaction.createdBy || transaction.enteredBy || transaction.created_by || "",
+      createdAt: transaction.createdAt || transaction.created_at || "",
+    } : null,
+    otherReceipts: { count: otherReceipts.length, totalReceived: otherReceived, totalDiscount: otherDiscount },
+  };
+}
+
+async function getFeeCollectionEditor(receiptId) {
+  return feeCollectionEditorPayload(await getAppState(), receiptId);
+}
+
+function feeCollectionChangeList(before, after) {
+  const labels = {
+    billNo: "Invoice Number", billDate: "Invoice Date", grossBillAmount: "Gross Bill Amount",
+    invoiceRemarks: "Invoice Remarks", discountType: "Discount Type", discountAmount: "Discount Amount",
+    discountPercentage: "Discount Percentage", discountReason: "Discount Reason", discountRemarks: "Discount Remarks",
+    receivedDate: "Received Date", receivedAmount: "Received Amount", paymentMode: "Payment Mode",
+    accountKey: "Payment Account", referenceNumber: "Reference Number", receiptRemarks: "Receipt Remarks",
+    generalRemarks: "General Remarks",
+  };
+  return Object.keys(labels).filter((key) => String(before[key] ?? "") !== String(after[key] ?? "")).map((key) => ({
+    key, label: labels[key], previousValue: before[key] ?? "", newValue: after[key] ?? "",
+  }));
+}
+
+async function editFeeCollection(receiptId, payload, userId, profile) {
+  return patchAppState((state) => {
+    const now = new Date();
+    const snapshot = feeCollectionEditorPayload(state, receiptId);
+    const receipt = snapshot.receipt;
+    const fileIndex = (state.files || []).findIndex((item) => item.id === snapshot.file.id);
+    const originalFile = state.files[fileIndex];
+    const linkedTransaction = feeCollectionLinkedTransaction(state, receipt);
+    const wasLinked = Boolean(receipt.transactionId || receipt.transaction_id || receipt.pushStatus === "pushed" || receipt.push_status === "pushed");
+    if (wasLinked && !linkedTransaction) {
+      throw Object.assign(new Error("The linked transaction is missing. Restore it before editing this receipt."), { status: 409 });
+    }
+
+    const billNo = String(payload.billNo || payload.invoiceNumber || "").trim();
+    if (billNo && !/^[A-Za-z0-9/-]+$/.test(billNo)) {
+      throw Object.assign(new Error("Invoice Number can contain only letters, numbers, slash and hyphen."), { status: 400, field: "billNo" });
+    }
+    if (billNo && billNo.toLowerCase() !== String(snapshot.file.billNo || "").trim().toLowerCase() && (state.files || []).some((item) => item.id !== originalFile.id && String(item.billNo || item.bill_number || item.invoiceNumber || item.invoiceNo || "").trim().toLowerCase() === billNo.toLowerCase())) {
+      throw Object.assign(new Error("This Invoice Number is already used by another file."), { status: 409, field: "billNo" });
+    }
+    const billDate = normalizeDate(payload.billDate || payload.invoiceDate);
+    if (!billDate) throw Object.assign(new Error("Invoice Date is required."), { status: 400, field: "billDate" });
+    const grossBillAmount = Number(payload.grossBillAmount ?? payload.billedAmount);
+    if (!Number.isFinite(grossBillAmount) || grossBillAmount <= 0) {
+      throw Object.assign(new Error("Gross Bill Amount must be greater than zero."), { status: 400, field: "grossBillAmount" });
+    }
+
+    const discountType = ["No Discount", "Fixed Amount", "Percentage"].includes(payload.discountType) ? payload.discountType : "No Discount";
+    const discountPercentage = discountType === "Percentage" ? Number(payload.discountPercentage || 0) : 0;
+    if (!Number.isFinite(discountPercentage) || discountPercentage < 0 || discountPercentage > 100) {
+      throw Object.assign(new Error("Discount Percentage must be between 0 and 100."), { status: 400, field: "discountPercentage" });
+    }
+    const enteredDiscount = discountType === "No Discount" ? 0 : discountType === "Percentage"
+      ? grossBillAmount * discountPercentage / 100
+      : Number(payload.discountAmount || 0);
+    const discountAmount = Number(enteredDiscount.toFixed(2));
+    if (!Number.isFinite(discountAmount) || discountAmount < 0 || discountAmount > grossBillAmount) {
+      throw Object.assign(new Error("Discount cannot be negative or exceed the Gross Bill Amount."), { status: 400, field: "discountAmount" });
+    }
+    const previousDiscount = Number(receipt.discountAmount || receipt.discount_amount || receipt.discount || 0);
+    const discountReason = String(payload.discountReason || "").trim();
+    if (discountAmount > previousDiscount + 0.005 && !discountReason) {
+      throw Object.assign(new Error("A Discount Reason is required when increasing the discount."), { status: 400, field: "discountReason" });
+    }
+
+    const receivedDate = normalizeDate(payload.receivedDate || payload.receiptDate);
+    if (!receivedDate) throw Object.assign(new Error("Received Date is required."), { status: 400, field: "receivedDate" });
+    const receivedAmount = Number(payload.receivedAmount);
+    if (!Number.isFinite(receivedAmount) || receivedAmount <= 0) {
+      throw Object.assign(new Error("Received Amount must be greater than zero. Use Mark Not Received for reversals."), { status: 400, field: "receivedAmount" });
+    }
+    const paymentMode = normalizePaymentMethod(payload.paymentMode || "Cash");
+    const accountKey = transactionAccount({ accountKey: payload.accountKey || payload.paymentAccount }, paymentMode);
+    const totalDiscount = snapshot.otherReceipts.totalDiscount + discountAmount;
+    const netBillAmount = grossBillAmount - totalDiscount;
+    const totalReceived = snapshot.otherReceipts.totalReceived + receivedAmount;
+    if (totalDiscount > grossBillAmount + 0.005) {
+      throw Object.assign(new Error("Combined discounts cannot exceed the Gross Bill Amount."), { status: 400, field: "discountAmount" });
+    }
+    if (totalReceived > netBillAmount + 0.005) {
+      throw Object.assign(new Error("Total received after this edit cannot exceed the Net Bill Amount."), { status: 400, field: "receivedAmount" });
+    }
+
+    const referenceNumber = String(payload.referenceNumber || "").trim();
+    const receiptRemarks = String(payload.receiptRemarks || "").trim();
+    const generalRemarks = String(payload.generalRemarks || "").trim();
+    const invoiceRemarks = String(payload.invoiceRemarks || "").trim();
+    const discountRemarks = String(payload.discountRemarks || "").trim();
+    const before = {
+      billNo: snapshot.file.billNo, billDate: normalizeDate(snapshot.file.billDate), grossBillAmount: snapshot.file.billedAmount,
+      invoiceRemarks: snapshot.file.invoiceRemarks, discountType: receipt.discountType || receipt.discount_type || (previousDiscount > 0 ? "Fixed Amount" : "No Discount"),
+      discountAmount: previousDiscount, discountPercentage: Number(receipt.discountPercentage || receipt.discount_percentage || 0),
+      discountReason: receipt.discountReason || receipt.discount_reason || "", discountRemarks: receipt.discountRemarks || receipt.discount_remarks || "",
+      receivedDate: normalizeDate(receipt.receiptDate || receipt.receipt_date || receipt.receivedDate || receipt.received_date),
+      receivedAmount: Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0),
+      paymentMode: receipt.paymentMode || receipt.payment_mode || "Cash", accountKey: financeAccountOf(receipt, "cash"),
+      referenceNumber: receipt.referenceNumber || receipt.reference_number || linkedTransaction?.reference_number || linkedTransaction?.voucherNo || "",
+      receiptRemarks: receipt.receiptRemarks || receipt.receipt_remarks || receipt.remarks || "", generalRemarks: receipt.generalRemarks || receipt.general_remarks || "",
+    };
+    const after = { billNo, billDate, grossBillAmount, invoiceRemarks, discountType, discountAmount, discountPercentage, discountReason, discountRemarks, receivedDate, receivedAmount, paymentMode, accountKey, referenceNumber, receiptRemarks, generalRemarks };
+    const changes = feeCollectionChangeList(before, after);
+
+    const updatedReceipt = {
+      ...receipt,
+      receiptDate: receivedDate, receipt_date: receivedDate, receivedDate, received_date: receivedDate,
+      amount: receivedAmount, receivedAmount, received_amount: receivedAmount,
+      discountType, discount_type: discountType, discountAmount, discount_amount: discountAmount, discount: discountAmount,
+      discountPercentage, discount_percentage: discountPercentage, discountReason, discount_reason: discountReason,
+      discountRemarks, discount_remarks: discountRemarks,
+      paymentMode, payment_mode: paymentMode,
+      accountKey, account_key: accountKey, accountName: financeAccountName(accountKey), account_name: financeAccountName(accountKey),
+      referenceNumber, reference_number: referenceNumber,
+      remarks: receiptRemarks, receiptRemarks, receipt_remarks: receiptRemarks,
+      generalRemarks, general_remarks: generalRemarks,
+      updatedBy: profile?.name || "", updated_by: profile?.id || profile?.email || userId || "",
+      updatedAt: now.toISOString(), updated_at: now.toISOString(),
+    };
+    state.feeReceipts = upsertById(state.feeReceipts || [], updatedReceipt).sort(feeReceiptNewestFirst);
+
+    if (linkedTransaction) {
+      const updatedTransaction = {
+        ...linkedTransaction,
+        date: receivedDate, collection_date: receivedDate,
+        amount: receivedAmount,
+        mode: paymentMode, paymentMethod: paymentMode, payment_method: paymentMode, collection_mode: paymentMode,
+        accountKey, account_key: accountKey, accountName: financeAccountName(accountKey), account_name: financeAccountName(accountKey),
+        voucherNo: referenceNumber, reference_number: referenceNumber,
+        remarks: receiptRemarks || generalRemarks,
+        billNo, bill_no: billNo, billDate, bill_date: billDate,
+        updatedBy: profile?.name || "", updated_by: profile?.id || profile?.email || userId || "",
+        updatedAt: now.toISOString(), updated_at: now.toISOString(),
+      };
+      state.otherCashCollections = upsertById(state.otherCashCollections || [], updatedTransaction).sort(financeNewestFirst);
+    }
+
+    const recalculated = applyFeeReceiptSummary(originalFile, state.feeReceipts, now, profile, { billedAmount: grossBillAmount, billDate, billNo });
+    state.files[fileIndex] = {
+      ...recalculated,
+      billNo, bill_number: billNo, invoiceNumber: billNo, invoiceNo: billNo,
+      billDate, bill_date: billDate, billedDate: billDate,
+      billedAmount: grossBillAmount, billed_amount: grossBillAmount, billAmount: grossBillAmount, feeAmount: grossBillAmount, amount: grossBillAmount,
+      invoiceRemarks, invoice_remarks: invoiceRemarks,
+    };
+
+    changes.forEach((change) => appendAudit(state, "Fee collection field updated", {
+      id: receiptId,
+      fileId: originalFile.id,
+      receiptId,
+      transactionId: linkedTransaction?.id || "",
+      clientName: originalFile.name || "",
+      serviceType: originalFile.serviceType || "",
+      date: receivedDate,
+      amount: receivedAmount,
+      billedAmount: grossBillAmount,
+      outstandingBalance: Math.max(netBillAmount - totalReceived, 0),
+      paymentMode,
+      accountKey,
+      previousValue: { field: change.label, value: change.previousValue },
+      newValue: { field: change.label, value: change.newValue },
+      discountReason,
+    }, profile, now));
     return state;
   }, userId);
 }
@@ -1218,6 +1439,7 @@ function appendAudit(state, action, record, profile, now) {
         reversedAt: record.reversedAt || record.reversed_at || "",
         reversedBy: record.reversedBy || record.reversed_by || "",
         reversalReason: record.reversalReason || record.reversal_reason || "",
+        changeReason: record.changeReason || record.change_reason || record.discountReason || record.discount_reason || "",
       },
       user: profile?.name || "",
       role: profile?.role || "",
@@ -1233,6 +1455,8 @@ module.exports = {
   deleteExpense,
   saveCollection,
   saveFeeReceipt,
+  getFeeCollectionEditor,
+  editFeeCollection,
   reverseFeeReceipt,
   reverseUnlinkedFeeReceipt,
   deleteCollection,

@@ -12408,6 +12408,122 @@ table td {
   width: min(760px, 100%);
 }
 
+/* Fee Received: selected receipt and linked transaction editor. */
+.fee-collection-modal {
+  z-index: 10020;
+  padding: 18px;
+  background: rgba(15, 23, 42, .48);
+  backdrop-filter: blur(3px);
+}
+
+.fee-collection-modal-card {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+  border: 1px solid #b9ccec;
+  border-radius: 16px;
+  box-shadow: 0 28px 90px rgba(15, 39, 75, .32);
+}
+
+.fee-collection-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  border-bottom: 1px solid #d4e0ef;
+  background: linear-gradient(135deg, #f7fbff, #eef5ff);
+}
+
+.fee-collection-head h3 { margin: 2px 0 0; color: #102a56; font-size: 21px; }
+.fee-collection-head .eyebrow { color: #2563eb; font-size: 9px; font-weight: 850; letter-spacing: .12em; }
+.fee-collection-form { display: flex; min-height: 0; max-height: calc(100vh - 126px); flex-direction: column; }
+.fee-collection-scroll-body { min-height: 0; padding: 16px; overflow: auto; background: #f5f8fc; }
+.fee-collection-two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+.fee-collection-section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #d3dfef;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(30, 64, 175, .05);
+}
+
+.fee-collection-wide-section { margin-top: 14px; }
+.fee-collection-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.fee-collection-section-head > div { display: flex; align-items: center; gap: 8px; }
+.fee-collection-section-head > div > span { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 7px; background: #dbeafe; color: #1d4ed8; font-size: 10px; font-weight: 850; }
+.fee-collection-section-head h4 { margin: 0; color: #17345d; font-size: 13px; }
+.fee-collection-readonly-grid,
+.fee-collection-transaction-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fee-collection-readonly { min-width: 0; padding: 9px 10px; border: 1px solid #e0e8f3; border-radius: 9px; background: #f8fbff; }
+.fee-collection-readonly span { display: block; margin-bottom: 3px; color: #64748b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.fee-collection-readonly strong { display: block; color: #1f365d; font-size: 11px; overflow-wrap: anywhere; }
+.fee-collection-input-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fee-collection-input-grid .full-span { grid-column: 1 / -1; }
+.fee-collection-field { min-width: 0; }
+.fee-collection-field label { color: #3b4d69; font-size: 10px; font-weight: 800; }
+.fee-collection-field input,
+.fee-collection-field select { min-height: 42px; border-radius: 8px; }
+.fee-collection-money-input { position: relative; }
+.fee-collection-money-input > span { position: absolute; top: 50%; left: 12px; z-index: 1; color: #426088; font-size: 13px; font-weight: 850; transform: translateY(-50%); }
+.fee-collection-money-input > input { padding-left: 30px; }
+.fee-collection-field textarea { min-height: 72px; border-radius: 8px; resize: vertical; }
+.fee-collection-field.is-invalid input,
+.fee-collection-field.is-invalid select,
+.fee-collection-field.is-invalid textarea { border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .1); }
+.fee-collection-field-error { display: block; min-height: 13px; margin-top: 3px; color: #dc2626; font-size: 9px; font-weight: 700; }
+.fee-collection-transaction-empty { padding: 13px; border: 1px dashed #b9c9df; border-radius: 10px; background: #f8fafc; }
+.fee-collection-transaction-empty p { margin: 6px 0 0; color: #64748b; font-size: 11px; }
+.fee-collection-view-transaction { margin-top: 10px; }
+.fee-collection-calculation-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.fee-collection-calculation { padding: 11px; border: 1px solid #d9e5f4; border-left: 4px solid #3b82f6; border-radius: 10px; background: #f8fbff; }
+.fee-collection-calculation span { display: block; min-height: 25px; color: #64748b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.fee-collection-calculation strong { display: block; color: #102a56; font-size: 15px; text-align: right; }
+.fee-collection-calculation.is-status { border-left-color: #10b981; background: #f0fdf8; }
+.fee-collection-calculation.is-status strong { color: #047857; font-size: 12px; }
+.fee-collection-audit-note { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; color: #334155; font-size: 10px; }
+.fee-collection-audit-note span { color: #64748b; font-weight: 750; }
+.fee-collection-audit-note strong { overflow-wrap: anywhere; }
+.fee-collection-audit-note p { grid-column: 1 / -1; margin: 7px 0 0; color: #51627c; }
+.fee-collection-form-error,
+.fee-collection-load-error { margin-top: 14px; padding: 11px 13px; border: 1px solid #fecaca; border-radius: 9px; background: #fff1f2; color: #b91c1c; font-size: 11px; font-weight: 750; }
+.fee-collection-confirmation { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-top: 14px; padding: 14px; border: 1px solid #93c5fd; border-radius: 12px; background: #eff6ff; }
+.fee-collection-confirmation[hidden],
+.fee-collection-form-error[hidden] { display: none !important; }
+.fee-collection-confirmation h4 { margin: 0; color: #1e40af; }
+.fee-collection-confirmation p { margin: 3px 0 7px; color: #52637d; font-size: 10px; }
+.fee-collection-confirmation ul { margin: 0; padding-left: 18px; color: #233b61; font-size: 11px; }
+.fee-collection-confirmation-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.fee-collection-sticky-footer { position: sticky; bottom: 0; z-index: 5; background: #fff; box-shadow: 0 -10px 24px rgba(15, 39, 75, .07); }
+.fee-collection-loading { display: grid; min-height: 280px; place-items: center; align-content: center; gap: 8px; color: #17345d; text-align: center; }
+.fee-collection-loading p { margin: 0; color: #64748b; font-size: 11px; }
+.loading-spinner { width: 28px; height: 28px; border: 3px solid #dbeafe; border-top-color: #2563eb; border-radius: 50%; animation: spin .75s linear infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .fee-collection-modal { padding: 10px; }
+  .fee-collection-modal-card { max-height: calc(100vh - 20px); }
+  .fee-collection-two-column { grid-template-columns: 1fr; }
+  .fee-collection-calculation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .fee-collection-modal { padding: 0; }
+  .fee-collection-modal-card { width: 100%; height: 100vh; max-height: 100vh; border: 0; border-radius: 0; }
+  .fee-collection-form { max-height: calc(100vh - 76px); }
+  .fee-collection-scroll-body { padding: 10px; }
+  .fee-collection-section { padding: 12px; }
+  .fee-collection-input-grid,
+  .fee-collection-readonly-grid,
+  .fee-collection-transaction-grid,
+  .fee-collection-calculation-grid { grid-template-columns: 1fr; }
+  .fee-collection-confirmation { align-items: stretch; flex-direction: column; }
+  .fee-collection-confirmation-actions { justify-content: flex-end; }
+  .fee-collection-sticky-footer { padding: 10px; }
+  .fee-collection-sticky-footer button { flex: 1; min-height: 44px; }
+}
+
 .receipt-audit-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

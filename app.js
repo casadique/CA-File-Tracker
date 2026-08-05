@@ -1611,6 +1611,24 @@ async function saveLinkedFeeReceiptToApi(fileId, receipt, collection) {
   return result;
 }
 
+async function loadFeeCollectionEditorFromApi(receiptId) {
+  return apiJson(`/api/finance/fee-receipts/receipt/${encodeURIComponent(receiptId)}/editor`);
+}
+
+async function updateFeeCollectionInApi(receiptId, collection) {
+  const result = await apiJson(`/api/finance/fee-receipts/receipt/${encodeURIComponent(receiptId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ collection }),
+  });
+  if (result?.files) state.files = result.files;
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
+  if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  if (result?.cashReconciliations) state.cashReconciliations = result.cashReconciliations;
+  if (result?.auditLog) state.auditLog = result.auditLog;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function reverseUnlinkedFeeReceiptToApi(fileId) {
   const result = await apiJson(`/api/finance/fee-receipts/${encodeURIComponent(fileId)}/reverse-unlinked`, {
     method: "POST",
@@ -8128,13 +8146,12 @@ function feeReceivedTransactionCell(row = {}) {
 
 function feeReceivedReceiptActions(row = {}) {
   const { file, receipt, linked } = row;
-  const canEdit = Boolean(rolePerm().edit);
   const canDelete = Boolean(rolePerm().delete);
   const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
   const fileId = escapeHtml(file.id || "");
   const actionKey = escapeHtml(receipt?.id || file.id || "");
   const menuItems = [];
-  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canManageReceipt && receipt?.id) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit-fee-collection="${escapeHtml(receipt.id)}"` }));
   if (linked?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linked.id)}"` }));
   if (!linked && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Go to Transactions", icon: "transaction", attrs: `data-go-transactions="${fileId}"` }));
   if (receipt?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(receipt.id)}"` }));
@@ -9116,6 +9133,303 @@ function feeReceiptAmountDetails(receipt = {}, file = {}) {
   ];
 }
 
+function feeCollectionEditorLocalData(receiptId) {
+  const receipt = feeReceiptById(receiptId);
+  const file = feeReceiptFile(receipt || {});
+  if (!receipt || !file || !isValidFeeReceiptRecord(receipt)) throw new Error("Fee receipt or related file was not found.");
+  const transaction = linkedCollectionForFeeReceipt(receipt);
+  const others = (state.feeReceipts || []).filter((item) => item.id !== receiptId && (item.fileId || item.file_id) === file.id && isValidFeeReceiptRecord(item));
+  return {
+    receipt,
+    file: {
+      id: file.id, name: file.name || "", pan: file.pan || "", serviceType: file.serviceType || "", fy: fileFy(file),
+      careOf: file.careOf || "Direct", assignedStaff: file.assignedStaff || "Not Assigned",
+      billNo: file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "",
+      billDate: file.billDate || file.bill_date || file.billedDate || "",
+      billedAmount: Number(file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || 0),
+      invoiceRemarks: file.invoiceRemarks || file.invoice_remarks || "",
+    },
+    transaction: transaction ? {
+      ...transaction,
+      paymentMode: transaction.paymentMethod || transaction.payment_method || transaction.mode || "",
+      accountKey: transactionAccountKey(transaction, ""),
+      accountName: financeAccountLabel(transactionAccountKey(transaction, "")),
+      referenceNumber: transaction.reference_number || transaction.voucherNo || "",
+      createdBy: transaction.createdBy || transaction.enteredBy || "",
+      createdAt: transaction.createdAt || transaction.created_at || "",
+    } : null,
+    otherReceipts: {
+      count: others.length,
+      totalReceived: others.reduce((sum, item) => sum + Number(item.amount || item.receivedAmount || item.received_amount || 0), 0),
+      totalDiscount: others.reduce((sum, item) => sum + Number(item.discountAmount || item.discount_amount || item.discount || 0), 0),
+    },
+  };
+}
+
+function feeCollectionEditorField(name, label, value = "", type = "text", attrs = "") {
+  const input = `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? "")}" ${attrs}>`;
+  const control = ["grossBillAmount", "discountAmount", "receivedAmount"].includes(name) ? `<div class="fee-collection-money-input"><span>₹</span>${input}</div>` : input;
+  return `<div class="field fee-collection-field" data-fee-field="${escapeHtml(name)}"><label>${escapeHtml(label)}</label>${control}<small class="fee-collection-field-error" data-fee-error="${escapeHtml(name)}"></small></div>`;
+}
+
+function feeCollectionEditorTextarea(name, label, value = "") {
+  return `<div class="field fee-collection-field full-span" data-fee-field="${escapeHtml(name)}"><label>${escapeHtml(label)}</label><textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value || "")}</textarea><small class="fee-collection-field-error" data-fee-error="${escapeHtml(name)}"></small></div>`;
+}
+
+function feeCollectionEditorSelect(name, label, options, selectedValue = "") {
+  return `<div class="field fee-collection-field" data-fee-field="${escapeHtml(name)}"><label>${escapeHtml(label)}</label><select name="${escapeHtml(name)}">${options.map((option) => {
+    const value = typeof option === "string" ? option : option.value;
+    const optionLabel = typeof option === "string" ? option : option.label;
+    return `<option value="${escapeHtml(value)}" ${value === selectedValue ? "selected" : ""}>${escapeHtml(optionLabel)}</option>`;
+  }).join("")}</select><small class="fee-collection-field-error" data-fee-error="${escapeHtml(name)}"></small></div>`;
+}
+
+function feeCollectionReadOnly(label, value) {
+  return `<div class="fee-collection-readonly"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value || "-"))}</strong></div>`;
+}
+
+function feeCollectionOriginalValues(data = {}) {
+  const { receipt = {}, file = {}, transaction = {} } = data;
+  const discountAmount = Number(receipt.discountAmount || receipt.discount_amount || receipt.discount || 0);
+  return {
+    billNo: file.billNo || "",
+    billDate: normalizeImportDate(file.billDate || ""),
+    grossBillAmount: Number(file.billedAmount || 0),
+    invoiceRemarks: file.invoiceRemarks || "",
+    discountType: receipt.discountType || receipt.discount_type || (discountAmount > 0 ? "Fixed Amount" : "No Discount"),
+    discountAmount,
+    discountPercentage: Number(receipt.discountPercentage || receipt.discount_percentage || 0),
+    discountReason: receipt.discountReason || receipt.discount_reason || "",
+    discountRemarks: receipt.discountRemarks || receipt.discount_remarks || "",
+    receivedDate: normalizeImportDate(receipt.receiptDate || receipt.receipt_date || receipt.receivedDate || receipt.received_date || ""),
+    receivedAmount: Number(receipt.amount || receipt.receivedAmount || receipt.received_amount || 0),
+    paymentMode: receipt.paymentMode || receipt.payment_mode || "Cash",
+    accountKey: transactionAccountKey(receipt, transaction.accountKey || "cash"),
+    referenceNumber: receipt.referenceNumber || receipt.reference_number || transaction.referenceNumber || "",
+    receiptRemarks: receipt.receiptRemarks || receipt.receipt_remarks || receipt.remarks || "",
+    generalRemarks: receipt.generalRemarks || receipt.general_remarks || "",
+  };
+}
+
+function feeCollectionEditorTransactionMarkup(transaction = null) {
+  if (!transaction) return `<div class="fee-collection-transaction-empty"><span class="fee-received-receipt-only">Receipt Only</span><p>No Transactions entry is linked to this receipt.</p></div>`;
+  return `<div class="fee-collection-transaction-grid">
+    ${feeCollectionReadOnly("Status", "Transaction Linked")}${feeCollectionReadOnly("Transaction ID", transaction.id)}
+    ${feeCollectionReadOnly("Transaction Date", displayDate(transaction.date || transaction.collection_date))}${feeCollectionReadOnly("Transaction Type", transaction.type || transaction.collectionType || transaction.collection_type || "Fee Collection")}
+    ${feeCollectionReadOnly("Payment Mode", transaction.paymentMode)}${feeCollectionReadOnly("Account", transaction.accountName || financeAccountLabel(transaction.accountKey))}
+    ${feeCollectionReadOnly("Amount", `₹ ${money(transaction.amount || 0)}`)}${feeCollectionReadOnly("Reference Number", transaction.referenceNumber || "-")}
+    ${feeCollectionReadOnly("Created By", transaction.createdBy || "-")}${feeCollectionReadOnly("Created On", formatDateTime(transaction.createdAt || ""))}
+  </div><button type="button" class="secondary-button fee-collection-view-transaction" data-edit-fee-view-transaction="${escapeHtml(transaction.id)}">View Transaction</button>`;
+}
+
+function renderFeeCollectionEditor(data = {}) {
+  const modal = document.querySelector("#editFeeCollectionModal");
+  if (!modal) return;
+  const original = feeCollectionOriginalValues(data);
+  modal.dataset.receiptId = data.receipt?.id || "";
+  modal.dataset.fileId = data.file?.id || "";
+  modal.dataset.original = JSON.stringify(original);
+  modal.dataset.otherReceived = String(data.otherReceipts?.totalReceived || 0);
+  modal.dataset.otherDiscount = String(data.otherReceipts?.totalDiscount || 0);
+  modal.dataset.transactionId = data.transaction?.id || "";
+  modal.querySelector(".fee-collection-modal-card").innerHTML = `
+    <div class="drawer-head fee-collection-head"><div><span class="eyebrow">FINANCE EDITOR</span><h3>Edit Fee Collection</h3><p class="small-muted">Edit this selected receipt and its linked transaction safely.</p></div><button type="button" class="icon-button" data-close-fee-collection aria-label="Close Edit Fee Collection">X</button></div>
+    <form id="editFeeCollectionForm" class="fee-collection-form" novalidate>
+      <div class="fee-collection-scroll-body">
+        <div class="fee-collection-two-column">
+          <section class="fee-collection-section"><div class="fee-collection-section-head"><div><span>1</span><h4>Client & File Details</h4></div><button type="button" class="mini-button" data-edit-fee-file>Edit File Details</button></div><div class="fee-collection-readonly-grid">
+            ${feeCollectionReadOnly("Client Name", data.file?.name)}${feeCollectionReadOnly("PAN / Reg No.", data.file?.pan)}${feeCollectionReadOnly("Service Type", data.file?.serviceType)}${feeCollectionReadOnly("FY", data.file?.fy || "NA")}${feeCollectionReadOnly("C/o", data.file?.careOf)}${feeCollectionReadOnly("Assigned Staff", data.file?.assignedStaff)}${feeCollectionReadOnly("File ID", data.file?.id)}
+          </div></section>
+          <section class="fee-collection-section"><div class="fee-collection-section-head"><div><span>2</span><h4>Invoice Details</h4></div></div><div class="fee-collection-input-grid">
+            ${feeCollectionEditorField("billNo", "Invoice Number", original.billNo, "text", "pattern='[A-Za-z0-9/-]*'")}${feeCollectionEditorField("billDate", "Invoice Date *", original.billDate, "date", "required")}${feeCollectionEditorField("grossBillAmount", "Gross Bill Amount *", original.grossBillAmount, "number", "min='0.01' step='0.01' required")}${feeCollectionEditorTextarea("invoiceRemarks", "Invoice Remarks", original.invoiceRemarks)}
+          </div></section>
+          <section class="fee-collection-section"><div class="fee-collection-section-head"><div><span>3</span><h4>Discount Details</h4></div></div><div class="fee-collection-input-grid">
+            ${feeCollectionEditorSelect("discountType", "Discount Type", ["No Discount", "Fixed Amount", "Percentage"], original.discountType)}${feeCollectionEditorField("discountAmount", "Discount Amount", original.discountAmount, "number", "min='0' step='0.01'")}${feeCollectionEditorField("discountPercentage", "Discount Percentage", original.discountPercentage, "number", "min='0' max='100' step='0.01'")}${feeCollectionEditorField("discountReason", "Discount Reason", original.discountReason)}${feeCollectionEditorTextarea("discountRemarks", "Discount Remarks", original.discountRemarks)}
+          </div></section>
+          <section class="fee-collection-section"><div class="fee-collection-section-head"><div><span>4</span><h4>Receipt Details</h4></div></div><div class="fee-collection-input-grid">
+            ${feeCollectionEditorField("receivedDate", "Received Date *", original.receivedDate, "date", "required")}${feeCollectionEditorField("receivedAmount", "Received Amount *", original.receivedAmount, "number", "min='0.01' step='0.01' required")}${feeCollectionEditorSelect("paymentMode", "Payment Mode *", paymentModes(), original.paymentMode)}${feeCollectionEditorSelect("accountKey", "Payment Account *", financeAccounts, original.accountKey)}${feeCollectionEditorField("referenceNumber", "Reference Number", original.referenceNumber)}${feeCollectionEditorTextarea("receiptRemarks", "Receipt Remarks", original.receiptRemarks)}${feeCollectionEditorTextarea("generalRemarks", "General Remarks", original.generalRemarks)}
+          </div></section>
+        </div>
+        <section class="fee-collection-section fee-collection-wide-section"><div class="fee-collection-section-head"><div><span>5</span><h4>Transaction Details</h4></div></div>${feeCollectionEditorTransactionMarkup(data.transaction)}</section>
+        <section class="fee-collection-section fee-collection-wide-section"><div class="fee-collection-section-head"><div><span>6</span><h4>Calculation Summary</h4></div></div><div class="fee-collection-calculation-grid">
+          ${["Gross Bill Amount", "Discount", "Net Bill Amount", "Other Valid Receipts", "Current Receipt Amount", "Total Received After Edit", "Outstanding Balance After Edit", "Resulting Payment Status"].map((label, index) => `<div class="fee-collection-calculation${index === 7 ? " is-status" : ""}"><span>${label}</span><strong data-fee-calculation="${["gross", "discount", "net", "other", "current", "total", "balance", "status"][index]}">-</strong></div>`).join("")}
+        </div></section>
+        <section class="fee-collection-section fee-collection-wide-section"><div class="fee-collection-section-head"><div><span>7</span><h4>Remarks and Audit Information</h4></div></div><div class="fee-collection-audit-note"><span>Receipt ID</span><strong>${escapeHtml(data.receipt?.id || "-")}</strong><span>Created By</span><strong>${escapeHtml(data.receipt?.receivedBy || data.receipt?.received_by || "-")}</strong><span>Created On</span><strong>${escapeHtml(formatDateTime(data.receipt?.createdAt || data.receipt?.created_at || data.receipt?.receivedAt || data.receipt?.received_at || ""))}</strong><p>All changed fields are recorded with previous and new values when saved.</p></div></section>
+        <div class="fee-collection-form-error" role="alert" hidden></div>
+        <div class="fee-collection-confirmation" hidden><div><h4>Confirm Financial Changes</h4><p>Review the changes below before saving.</p><ul data-fee-confirmation-list></ul></div><div class="fee-collection-confirmation-actions"><button type="button" class="secondary-button" data-cancel-fee-confirmation>Cancel</button><button type="button" class="primary-button" data-confirm-fee-save>Confirm and Save</button></div></div>
+      </div>
+      <div class="drawer-actions fee-collection-sticky-footer"><button type="button" class="secondary-button" data-close-fee-collection>Cancel</button><button type="submit" class="primary-button" data-save-fee-collection>Save Changes</button></div>
+    </form>`;
+  bindFeeCollectionEditor(data);
+}
+
+function feeCollectionEditorValues() {
+  const form = document.querySelector("#editFeeCollectionForm");
+  const value = (name) => form?.elements?.namedItem(name)?.value ?? "";
+  return {
+    billNo: String(value("billNo")).trim(), billDate: value("billDate"), grossBillAmount: Number(value("grossBillAmount")), invoiceRemarks: String(value("invoiceRemarks")).trim(),
+    discountType: value("discountType"), discountAmount: Number(value("discountAmount") || 0), discountPercentage: Number(value("discountPercentage") || 0), discountReason: String(value("discountReason")).trim(), discountRemarks: String(value("discountRemarks")).trim(),
+    receivedDate: value("receivedDate"), receivedAmount: Number(value("receivedAmount")), paymentMode: value("paymentMode"), accountKey: value("accountKey"), referenceNumber: String(value("referenceNumber")).trim(), receiptRemarks: String(value("receiptRemarks")).trim(), generalRemarks: String(value("generalRemarks")).trim(),
+  };
+}
+
+function feeCollectionCalculatedDiscount(values = feeCollectionEditorValues()) {
+  if (values.discountType === "No Discount") return 0;
+  if (values.discountType === "Percentage") return Number((values.grossBillAmount * values.discountPercentage / 100).toFixed(2));
+  return Number(values.discountAmount || 0);
+}
+
+function updateFeeCollectionCalculation() {
+  const modal = document.querySelector("#editFeeCollectionModal");
+  if (!modal) return;
+  const values = feeCollectionEditorValues();
+  const discount = feeCollectionCalculatedDiscount(values);
+  const otherDiscount = Number(modal.dataset.otherDiscount || 0);
+  const otherReceived = Number(modal.dataset.otherReceived || 0);
+  const totalDiscount = otherDiscount + discount;
+  const net = Math.max(values.grossBillAmount - totalDiscount, 0);
+  const total = otherReceived + Math.max(values.receivedAmount || 0, 0);
+  const balance = Math.max(net - total, 0);
+  const status = net <= 0 && total <= 0 ? "Fully Discounted" : total <= 0 ? "Not Received" : balance <= 0.005 ? "Fully Received" : "Partially Received";
+  const outputs = { gross: `₹ ${money(values.grossBillAmount || 0)}`, discount: `₹ ${money(totalDiscount)}`, net: `₹ ${money(net)}`, other: `₹ ${money(otherReceived)}`, current: `₹ ${money(values.receivedAmount || 0)}`, total: `₹ ${money(total)}`, balance: `₹ ${money(balance)}`, status };
+  Object.entries(outputs).forEach(([key, output]) => { const node = modal.querySelector(`[data-fee-calculation='${key}']`); if (node) node.textContent = output; });
+  const amount = modal.querySelector("[name='discountAmount']");
+  const percentage = modal.querySelector("[name='discountPercentage']");
+  if (amount) amount.disabled = values.discountType !== "Fixed Amount";
+  if (percentage) percentage.disabled = values.discountType !== "Percentage";
+}
+
+function clearFeeCollectionErrors() {
+  document.querySelectorAll("#editFeeCollectionModal [data-fee-error]").forEach((node) => { node.textContent = ""; });
+  document.querySelectorAll("#editFeeCollectionModal .fee-collection-field.is-invalid").forEach((node) => node.classList.remove("is-invalid"));
+  const general = document.querySelector("#editFeeCollectionModal .fee-collection-form-error");
+  if (general) { general.hidden = true; general.textContent = ""; }
+}
+
+function setFeeCollectionError(field, message) {
+  const modal = document.querySelector("#editFeeCollectionModal");
+  const node = modal?.querySelector(`[data-fee-error='${field}']`);
+  if (node) { node.textContent = message; node.closest(".fee-collection-field")?.classList.add("is-invalid"); }
+}
+
+function validateFeeCollectionEditor(values) {
+  const modal = document.querySelector("#editFeeCollectionModal");
+  const original = JSON.parse(modal?.dataset.original || "{}");
+  const discount = feeCollectionCalculatedDiscount(values);
+  const otherDiscount = Number(modal?.dataset.otherDiscount || 0);
+  const otherReceived = Number(modal?.dataset.otherReceived || 0);
+  const errors = {};
+  if (values.billNo && !/^[A-Za-z0-9/-]+$/.test(values.billNo)) errors.billNo = "Use only letters, numbers, slash and hyphen.";
+  if (!values.billDate) errors.billDate = "Invoice Date is required.";
+  if (!Number.isFinite(values.grossBillAmount) || values.grossBillAmount <= 0) errors.grossBillAmount = "Enter an amount greater than zero.";
+  if (values.discountType === "Percentage" && (!Number.isFinite(values.discountPercentage) || values.discountPercentage < 0 || values.discountPercentage > 100)) errors.discountPercentage = "Enter a percentage from 0 to 100.";
+  if (!Number.isFinite(discount) || discount < 0 || discount + otherDiscount > values.grossBillAmount) errors.discountAmount = "Combined discounts cannot exceed the Gross Bill Amount.";
+  if (discount > Number(original.discountAmount || 0) + 0.005 && !values.discountReason) errors.discountReason = "Give a reason for increasing the discount.";
+  if (!values.receivedDate) errors.receivedDate = "Received Date is required.";
+  if (!Number.isFinite(values.receivedAmount) || values.receivedAmount <= 0) errors.receivedAmount = "Enter an amount greater than zero.";
+  if (values.paymentMode === "Cash" && values.accountKey !== "cash") errors.accountKey = "Cash receipts must use Cash in Hand.";
+  if (values.paymentMode !== "Cash" && !["federal_bank", "tmb"].includes(values.accountKey)) errors.accountKey = "Select Federal Bank or TMB.";
+  const net = values.grossBillAmount - otherDiscount - discount;
+  if (otherReceived + values.receivedAmount > net + 0.005) errors.receivedAmount = "Total receipts cannot exceed the Net Bill Amount.";
+  Object.entries(errors).forEach(([field, message]) => setFeeCollectionError(field, message));
+  return Object.keys(errors).length === 0;
+}
+
+function feeCollectionChanges(values) {
+  const original = JSON.parse(document.querySelector("#editFeeCollectionModal")?.dataset.original || "{}");
+  const normalized = { ...values, discountAmount: feeCollectionCalculatedDiscount(values) };
+  return Object.keys(normalized).filter((key) => String(original[key] ?? "") !== String(normalized[key] ?? "")).map((key) => ({ key, before: original[key] ?? "", after: normalized[key] ?? "" }));
+}
+
+function feeCollectionChangeLabel(change) {
+  const labels = { billNo: "Invoice Number", billDate: "Invoice Date", grossBillAmount: "Gross Bill Amount", discountAmount: "Discount", discountPercentage: "Discount Percentage", receivedDate: "Received Date", receivedAmount: "Received Amount", paymentMode: "Payment Mode", accountKey: "Account", referenceNumber: "Reference Number" };
+  const amountFields = new Set(["grossBillAmount", "discountAmount", "receivedAmount"]);
+  const accountLabel = (value) => financeAccountLabel(value) || value || "-";
+  const display = (value) => amountFields.has(change.key) ? `₹ ${money(value || 0)}` : change.key === "accountKey" ? accountLabel(value) : change.key.toLowerCase().includes("date") ? (displayDate(value) || "-") : String(value || "-");
+  return `${labels[change.key] || change.key}: ${display(change.before)} → ${display(change.after)}`;
+}
+
+async function commitFeeCollectionEdit(values) {
+  const modal = document.querySelector("#editFeeCollectionModal");
+  const receiptId = modal?.dataset.receiptId || "";
+  const saveButtons = modal?.querySelectorAll("[data-save-fee-collection], [data-confirm-fee-save]") || [];
+  saveButtons.forEach((button) => { button.disabled = true; button.dataset.originalLabel = button.textContent; button.textContent = "Saving..."; });
+  try {
+    const payload = { ...values, discountAmount: feeCollectionCalculatedDiscount(values) };
+    if (isSupabaseMode()) await updateFeeCollectionInApi(receiptId, payload);
+    else throw new Error("Fee Collection editing requires the central database connection.");
+    closeEditFeeCollectionModal();
+    refreshFileResults();
+    toast("Fee collection updated successfully.");
+  } catch (error) {
+    const errorNode = modal?.querySelector(".fee-collection-form-error");
+    if (errorNode) { errorNode.hidden = false; errorNode.textContent = error.message || "Unable to update this fee collection."; }
+    saveButtons.forEach((button) => { button.disabled = false; button.textContent = button.dataset.originalLabel || "Save Changes"; });
+  }
+}
+
+function requestFeeCollectionSave() {
+  clearFeeCollectionErrors();
+  const values = feeCollectionEditorValues();
+  if (!validateFeeCollectionEditor(values)) return;
+  const changes = feeCollectionChanges(values);
+  const financialKeys = new Set(["billNo", "billDate", "grossBillAmount", "discountType", "discountAmount", "discountPercentage", "receivedDate", "receivedAmount", "paymentMode", "accountKey", "referenceNumber"]);
+  const financialChanges = changes.filter((change) => financialKeys.has(change.key));
+  if (!financialChanges.length) return commitFeeCollectionEdit(values);
+  const confirmation = document.querySelector("#editFeeCollectionModal .fee-collection-confirmation");
+  const list = confirmation?.querySelector("[data-fee-confirmation-list]");
+  if (list) list.innerHTML = financialChanges.map((change) => `<li>${escapeHtml(feeCollectionChangeLabel(change))}</li>`).join("");
+  if (confirmation) confirmation.hidden = false;
+  confirmation?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  confirmation.querySelector("[data-confirm-fee-save]").onclick = () => commitFeeCollectionEdit(values);
+}
+
+function bindFeeCollectionEditor(data) {
+  const modal = document.querySelector("#editFeeCollectionModal");
+  const form = modal?.querySelector("#editFeeCollectionForm");
+  modal?.querySelectorAll("[data-close-fee-collection]").forEach((button) => { button.onclick = closeEditFeeCollectionModal; });
+  form?.addEventListener("submit", (event) => { event.preventDefault(); requestFeeCollectionSave(); });
+  form?.querySelectorAll("input, select, textarea").forEach((control) => control.addEventListener("input", () => { clearFeeCollectionErrors(); modal.querySelector(".fee-collection-confirmation").hidden = true; updateFeeCollectionCalculation(); }));
+  form?.querySelector("[name='paymentMode']")?.addEventListener("change", (event) => {
+    const account = form.elements.namedItem("accountKey");
+    if (event.target.value === "Cash") { account.value = "cash"; account.disabled = true; }
+    else { account.disabled = false; if (!["federal_bank", "tmb"].includes(account.value)) account.value = "federal_bank"; }
+    updateFeeCollectionCalculation();
+  });
+  form?.querySelector("[name='paymentMode']")?.dispatchEvent(new Event("change"));
+  modal?.querySelector("[data-cancel-fee-confirmation]")?.addEventListener("click", () => { modal.querySelector(".fee-collection-confirmation").hidden = true; });
+  modal?.querySelector("[data-edit-fee-file]")?.addEventListener("click", () => { const fileId = modal.dataset.fileId; closeEditFeeCollectionModal(); openFileDrawer(fileId); });
+  modal?.querySelector("[data-edit-fee-view-transaction]")?.addEventListener("click", () => {
+    const transaction = activeCashCollections().find((item) => item.id === data.transaction?.id) || data.transaction;
+    if (transaction) viewTransactionDetail("Collection", transaction);
+  });
+  updateFeeCollectionCalculation();
+}
+
+function closeEditFeeCollectionModal() {
+  document.querySelector("#editFeeCollectionModal")?.remove();
+  if (!document.querySelector(".drawer.open") && !document.querySelector(".notification-panel.open")) document.querySelector("#backdrop")?.classList.remove("show");
+}
+
+async function openEditFeeCollectionModal(receiptId) {
+  if (!["Admin", "Manager"].includes(normalizeRole(state.currentRole))) return toast("Only Admin or Manager can edit fee collections.");
+  closeBilledActionMenus();
+  closeEditFeeCollectionModal();
+  const modal = document.createElement("div");
+  modal.id = "editFeeCollectionModal";
+  modal.className = "simple-modal open fee-collection-modal";
+  modal.innerHTML = `<div class="simple-modal-card fee-collection-modal-card"><div class="fee-collection-loading"><span class="loading-spinner" aria-hidden="true"></span><strong>Loading latest fee collection...</strong><p>Fetching the selected receipt and linked transaction from the central database.</p></div></div>`;
+  document.body.appendChild(modal);
+  document.querySelector("#backdrop")?.classList.add("show");
+  try {
+    const data = isSupabaseMode() ? await loadFeeCollectionEditorFromApi(receiptId) : feeCollectionEditorLocalData(receiptId);
+    renderFeeCollectionEditor(data);
+  } catch (error) {
+    modal.querySelector(".fee-collection-modal-card").innerHTML = `<div class="drawer-head"><div><h3>Edit Fee Collection</h3><p class="small-muted">Unable to load the selected collection.</p></div><button type="button" class="icon-button" data-close-fee-collection>X</button></div><div class="fee-collection-load-error">${escapeHtml(error.message || "Please reload and try again.")}</div><div class="drawer-actions"><button type="button" class="secondary-button" data-close-fee-collection>Close</button></div>`;
+    modal.querySelectorAll("[data-close-fee-collection]").forEach((button) => { button.onclick = closeEditFeeCollectionModal; });
+  }
+}
+
 function openFeeReceiptViewModal(receiptId) {
   closeFeeReceiptActionModal();
   const receipt = feeReceiptById(receiptId);
@@ -9526,6 +9840,9 @@ function bindFileActions() {
       button.setAttribute("aria-expanded", String(opening));
       button.classList.toggle("expanded", opening);
     };
+  });
+  document.querySelectorAll("[data-edit-fee-collection]").forEach((btn) => {
+    btn.onclick = () => openEditFeeCollectionModal(btn.dataset.editFeeCollection);
   });
   document.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => openFileDrawer(btn.dataset.edit)));
   document.querySelectorAll("[data-check-file]").forEach((btn) => {
