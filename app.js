@@ -72,7 +72,6 @@ const defaultServices = sortList([
   "Bookkeeping",
   "Certificate- Others",
   "Company Incorporation",
-  "Deed Drafting",
   "DPT-3 Filing",
   "DSC",
   "EPF Registration",
@@ -88,11 +87,9 @@ const defaultServices = sortList([
   "Independent Audit",
   "IT Notice",
   "ITR Filing",
-  "KGST Audit",
   "LLP Incorporation",
   "Networth Certificate",
   "NRI Status Updation",
-  "NSS Certification",
   "NSS Utilization Certificate",
   "PAN Application",
   "Project Report",
@@ -101,21 +98,34 @@ const defaultServices = sortList([
   "TAN Application",
   "Tax Audit",
   "TDS/TCS Returns",
-  "Trade Mark",
+  "Trade Mark hearing",
   "Utilization Certificate",
 ]);
 
 const RETIRED_COMBINED_REGISTRATION = "ESI/EPF Registration";
+const RETIRED_SERVICE_TYPES = [
+  RETIRED_COMBINED_REGISTRATION,
+  "NSS Certification",
+  "Deed Drafting",
+  "Deed Preparation",
+  "KGST Audit",
+];
 
 function canonicalServiceType(value) {
   const serviceType = String(value || "").trim().replace(/\s+/g, " ");
   if (/^net\s*worth certificate$/i.test(serviceType)) return "Networth Certificate";
   if (/^independend audit$/i.test(serviceType)) return "Independent Audit";
+  if (/^trade\s*mark(?:\s+hearing)?$/i.test(serviceType)) return "Trade Mark hearing";
   return serviceType;
 }
 
 function isRetiredCombinedRegistration(value) {
   return canonicalServiceType(value).toLowerCase() === RETIRED_COMBINED_REGISTRATION.toLowerCase();
+}
+
+function isRetiredServiceType(value) {
+  const normalized = canonicalServiceType(value).toLowerCase();
+  return RETIRED_SERVICE_TYPES.some((serviceType) => serviceType.toLowerCase() === normalized);
 }
 
 const defaultCareOfList = sortList([
@@ -637,7 +647,7 @@ function normalizeState(appState) {
     ...file,
     serviceType: canonicalServiceType(file.serviceType),
   }));
-  appState.services = sortList([...(appState.services || []).map(canonicalServiceType), ...defaultServices]);
+  appState.services = sortList([...(appState.services || []).map(canonicalServiceType), ...defaultServices].filter((serviceType) => !isRetiredServiceType(serviceType)));
   appState.careOfList = sortList([...(appState.careOfList || []), ...defaultCareOfList]);
   appState.staffMaster = dedupeByNormalizedText([...(appState.staffMaster || []), ...defaultStaffMaster]);
   appState.modeList = dedupeByNormalizedText([...(appState.modeList || []), ...modes]);
@@ -999,7 +1009,7 @@ function cleanDropdownMasterData(appState = state) {
     staffMaster: [...(appState.staffMaster || [])],
     modeList: [...(appState.modeList || [])],
   };
-  const usedServices = dedupeByNormalizedText((appState.files || []).map((file) => canonicalServiceType(file.serviceType)));
+  const usedServices = dedupeByNormalizedText((appState.files || []).map((file) => canonicalServiceType(file.serviceType)).filter((serviceType) => !isRetiredServiceType(serviceType)));
   const usedCareOf = dedupeByNormalizedText((appState.files || []).map((file) => file.careOf || "Direct"));
   appState.services = dedupeByNormalizedText([...defaultServices, ...usedServices]);
   appState.careOfList = usedCareOf.length ? usedCareOf : dedupeByNormalizedText(appState.careOfList || defaultCareOfList);
@@ -7628,17 +7638,37 @@ function masterFileBillingBadge(file = {}) {
 }
 
 function masterFileExpandedDetails(file = {}) {
-  const assignee = currentFileAssignee(file);
-  const checking = checkingStatusOf(file);
   const payment = feeReceiptSummaryForFile(file);
   const billNumber = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "Not recorded";
+  const billDate = displayDate(file.billDate || file.bill_date || file.billedDate) || "Not recorded";
+  const checkedBy = file.checkedBy || file.checked_by || "Not checked";
+  const checkedDate = displayDate(file.checkedDate || file.checked_date || file.checkedAt || file.checked_at) || "Not checked";
+  const checkingComment = file.checkingRemarks || file.checking_remarks || "No checking comment";
+  const contactNumber = file.contactNo || file.contact_no || file.contactNumber || file.contact_number
+    || file.mobile || file.mobileNo || file.mobile_no || file.phone || file.phoneNumber || file.phone_number
+    || file.clientSnapshot?.contactNo || file.clientSnapshot?.contact_no || file.clientSnapshot?.contactNumber
+    || file.clientSnapshot?.mobile || file.clientSnapshot?.mobileNo || file.clientSnapshot?.phone
+    || file.client_snapshot?.contactNo || file.client_snapshot?.contact_no || file.client_snapshot?.contactNumber
+    || file.client_snapshot?.mobile || file.client_snapshot?.mobileNo || file.client_snapshot?.phone
+    || "Not recorded";
+  const email = file.email || file.emailId || file.email_id || file.clientEmail || file.client_email
+    || file.clientSnapshot?.email || file.clientSnapshot?.emailId || file.clientSnapshot?.email_id
+    || file.client_snapshot?.email || file.client_snapshot?.emailId || file.client_snapshot?.email_id
+    || "Not recorded";
   return `<div class="master-file-expanded-grid">
-    <div><span>Work Started</span><strong>${escapeHtml(displayDate(file.workStartedDate || file.work_started_date || (file.stages?.WIP ? file.workAllotmentDate : "")) || "Not recorded")}</strong></div>
-    <div><span>Assignment</span><strong>${escapeHtml(isReassignedFile(file) ? "Reassigned" : (hasAssignedStaffValue(assignee.name) ? "Assigned" : "Not Assigned"))}</strong></div>
-    <div><span>Checking</span><strong>${escapeHtml(checking.label || "Not applicable")}${file.checkedBy ? ` · ${escapeHtml(file.checkedBy)}` : ""}</strong></div>
-    <div><span>Bill Details</span><strong>${escapeHtml(String(billNumber))}${file.billDate ? ` · ${escapeHtml(displayDate(file.billDate))}` : ""}</strong></div>
-    <div><span>Received / Balance</span><strong>${escapeHtml(rupee(payment.totalReceived || 0))} / ${escapeHtml(rupee(payment.outstandingAmount || 0))}</strong></div>
-    <div><span>Mode</span><strong>${escapeHtml(file.mode || "Not recorded")}</strong></div>
+    <div class="master-file-expanded-checking"><span>Checking</span><dl class="master-file-expanded-lines">
+      <dt>Checked By</dt><dd>${escapeHtml(checkedBy)}</dd>
+      <dt>Checked Date</dt><dd>${escapeHtml(checkedDate)}</dd>
+      <dt>Comment</dt><dd>${escapeHtml(checkingComment)}</dd>
+    </dl></div>
+    <div class="master-file-expanded-billing"><span>Bill Details</span><dl class="master-file-expanded-lines">
+      <dt>Bill No.</dt><dd>${escapeHtml(String(billNumber))}</dd>
+      <dt>Amount</dt><dd>${escapeHtml(money(payment.billedAmount || 0))}</dd>
+      <dt>Date</dt><dd>${escapeHtml(billDate)}</dd>
+    </dl></div>
+    <div class="master-file-expanded-payment"><span>Received / Balance</span><strong>${escapeHtml(money(payment.totalReceived || 0))} / ${escapeHtml(money(payment.outstandingAmount || 0))}</strong></div>
+    <div class="master-file-expanded-contact"><span>Contact No.</span><strong>${escapeHtml(String(contactNumber))}</strong></div>
+    <div class="master-file-expanded-email"><span>Email</span><strong>${escapeHtml(String(email))}</strong></div>
     <div class="master-file-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div>
   </div>`;
 }
@@ -11273,14 +11303,14 @@ function serviceDropdownOptions() {
   return sortList(dedupeByNormalizedText([
     ...defaultServices,
     ...(state.services || []).map(canonicalServiceType),
-  ]).filter((serviceType) => !isRetiredCombinedRegistration(serviceType)));
+  ]).filter((serviceType) => !isRetiredServiceType(serviceType)));
 }
 
 function serviceFilterOptions() {
   return sortList(dedupeByNormalizedText([
     ...defaultServices,
     ...(state.files || []).map((file) => canonicalServiceType(file.serviceType)),
-  ]));
+  ]).filter((serviceType) => !isRetiredServiceType(serviceType)));
 }
 
 function careOfDropdownOptions(currentValue = "") {
@@ -11542,12 +11572,9 @@ async function saveFileFromDrawer() {
     restoreSaveFileButton(saveButton);
     return toast("Please enter service type.");
   }
-  if (
-    isRetiredCombinedRegistration(serviceType)
-    && (!existingFile || !isRetiredCombinedRegistration(existingFile.serviceType))
-  ) {
+  if (isRetiredServiceType(serviceType) && (!existingFile || canonicalServiceType(existingFile.serviceType).toLowerCase() !== serviceType.toLowerCase())) {
     restoreSaveFileButton(saveButton);
-    return toast("ESI/EPF Registration is retired. Select ESI Registration or EPF Registration.");
+    return toast(`${serviceType} has been removed from Service Type. Select another service.`);
   }
   if (!state.services.includes(serviceType)) state.services.push(serviceType);
   state.services = sortList(state.services);
@@ -15219,8 +15246,8 @@ function importRows(rows, options = {}) {
     const importSerialNumber = normalizeImportSerial(get("SN", "S.N", "S No", "S.No", "Sl No", "Sl.No", "Serial No", "Serial Number", "No")) || (options.assignSerials ? rowIndex + 1 : "");
     const rawServiceType = get("Service Type", "Service") || defaultServices[0] || "Other Services";
     const serviceType = normalizeImportedServiceType(rawServiceType, masterSummary);
-    if (isRetiredCombinedRegistration(serviceType)) {
-      throw new Error(`Row ${excelRowNumber}: ESI/EPF Registration is retired. Use ESI Registration or EPF Registration.`);
+    if (isRetiredServiceType(serviceType)) {
+      throw new Error(`Row ${excelRowNumber}: ${serviceType} has been removed from Service Type. Select another service.`);
     }
     const careOf = normalizeImportedMasterValue(
       get("C/o", "Care Of", "CO", "C O") || "Direct",

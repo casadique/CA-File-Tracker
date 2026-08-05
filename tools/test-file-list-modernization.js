@@ -60,6 +60,18 @@ assert.match(source, /document\.querySelectorAll\("\[data-master-file-toggle\]"\
 assert.match(source, /exportFilteredPdf\.onclick = \(\) => exportFilteredFilesPdf/,
   "Existing File List PDF export must remain connected");
 
+const expandedDetails = block("function masterFileExpandedDetails", "\\nfunction masterFileDesktopRows");
+for (const label of ["Checked By", "Checked Date", "Comment", "Bill No.", "Amount", "Date", "Contact No.", "Email", "Received / Balance"]) {
+  assert.match(expandedDetails, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+}
+for (const removedLabel of ["Work Started", "Assignment", "<span>Mode</span>"]) {
+  assert.doesNotMatch(expandedDetails, new RegExp(removedLabel));
+}
+assert.match(expandedDetails, /money\(payment\.totalReceived \|\| 0\)/);
+assert.match(expandedDetails, /money\(payment\.outstandingAmount \|\| 0\)/);
+assert.doesNotMatch(expandedDetails, /escapeHtml\(rupee/,
+  "Expanded receipt and balance amounts must not expose the encoded rupee entity");
+
 for (const css of [
   ".master-file-table-wrap", ".master-file-table", ".master-file-actions-column",
   ".master-file-mobile-card", ".master-billing-badge", ".master-file-expanded-grid",

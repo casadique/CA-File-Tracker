@@ -9268,9 +9268,18 @@ textarea {
 .master-file-actions .billed-primary-action { min-width: 106px; }
 .master-file-details-row td { height: auto; padding: 0 !important; background: #f5f9ff !important; }
 .master-file-expanded-grid { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 10px; padding: 14px 18px 16px 88px; border-left: 4px solid #2f6fed; }
-.master-file-expanded-grid div { padding: 8px 10px; border: 1px solid #d8e2ef; border-radius: 9px; background: #fff; }
+.master-file-expanded-grid > div { padding: 10px 12px; border: 1px solid #d8e2ef; border-radius: 9px; background: #fff; }
 .master-file-expanded-grid span { display: block; margin-bottom: 4px; color: #64748b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .master-file-expanded-grid strong { color: #233b61; font-size: 11px; font-weight: 700; }
+.master-file-expanded-checking,
+.master-file-expanded-billing,
+.master-file-expanded-payment { grid-column: span 2; }
+.master-file-expanded-contact,
+.master-file-expanded-email { grid-column: span 3; }
+.master-file-expanded-lines { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; margin: 0; color: #233b61; font-size: 11px; }
+.master-file-expanded-lines dt { color: #64748b; font-weight: 700; }
+.master-file-expanded-lines dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-weight: 800; }
+.master-file-expanded-payment strong { display: block; padding-top: 6px; font-size: 14px; }
 .master-file-expanded-remarks { grid-column: 1 / -1; }
 .master-file-mobile-list { display: none; }
 
@@ -9293,6 +9302,11 @@ textarea {
   .master-file-mobile-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
   .master-file-mobile-details { margin-top: 12px; }
   .master-file-expanded-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
+  .master-file-expanded-checking,
+  .master-file-expanded-billing,
+  .master-file-expanded-payment,
+  .master-file-expanded-contact,
+  .master-file-expanded-email { grid-column: span 1; }
 }
 
 @media (max-width: 430px) {

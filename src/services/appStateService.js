@@ -2,8 +2,8 @@ const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
 const {
   ACTIVE_SERVICE_TYPES,
-  RETIRED_COMBINED_REGISTRATION,
   canonicalServiceType,
+  isRetiredServiceType,
 } = require("../constants/serviceTypes");
 const {
   archiveExpiredNotificationRows,
@@ -198,17 +198,11 @@ function normalizeServiceTypes(state = {}) {
       ...(Object.prototype.hasOwnProperty.call(file, "service_type") ? { service_type: serviceType } : {}),
     };
   });
-  const legacyCombinedIsUsed = files.some(
-    (file) => file.serviceType.toLowerCase() === RETIRED_COMBINED_REGISTRATION.toLowerCase()
-  );
   const services = [
     ...ACTIVE_SERVICE_TYPES,
     ...(renamedState.services || []).map(canonicalServiceType),
     ...files.map((file) => file.serviceType),
-  ].filter((serviceType) => serviceType && (
-    serviceType.toLowerCase() !== RETIRED_COMBINED_REGISTRATION.toLowerCase()
-    || legacyCombinedIsUsed
-  ));
+  ].filter((serviceType) => serviceType && !isRetiredServiceType(serviceType));
   return {
     ...renamedState,
     files,

@@ -4,6 +4,7 @@ const {
   RETIRED_COMBINED_REGISTRATION,
   canonicalServiceType,
   isRetiredCombinedRegistration,
+  isRetiredServiceType,
 } = require("../constants/serviceTypes");
 const {
   hasOpenCorrection,
@@ -205,12 +206,14 @@ async function upsertFile(file, userId, profile = {}) {
     record.serviceType = canonicalServiceType(
       record.serviceType || record.service_type || before?.serviceType || before?.service_type
     );
-    if (
-      isRetiredCombinedRegistration(record.serviceType)
-      && (!before || !isRetiredCombinedRegistration(before.serviceType || before.service_type))
-    ) {
+    if (isRetiredServiceType(record.serviceType) && (
+      !before
+      || canonicalServiceType(before.serviceType || before.service_type).toLowerCase() !== record.serviceType.toLowerCase()
+    )) {
       throw httpError(
-        `${RETIRED_COMBINED_REGISTRATION} is retired. Select ESI Registration or EPF Registration.`,
+        isRetiredCombinedRegistration(record.serviceType)
+          ? `${RETIRED_COMBINED_REGISTRATION} is retired. Select ESI Registration or EPF Registration.`
+          : `${record.serviceType} has been removed from Service Type. Select another service.`,
         400
       );
     }
