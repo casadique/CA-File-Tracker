@@ -1311,6 +1311,516 @@ th.non-billed-actions-column {
   background: #eff6ff;
 }
 
+/* Modern Client Master workspace */
+.client-master-shell {
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(30, 64, 175, 0.07);
+}
+
+.client-master-filter-head,
+.client-master-filter-meta,
+.client-master-actionbar,
+.client-master-action-primary,
+.client-master-action-exports,
+.client-master-action-admin {
+  display: flex;
+  align-items: center;
+}
+
+.client-master-filter-head {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.client-master-filter-head h2,
+.client-master-filter-head p {
+  margin: 0;
+}
+
+.client-master-filter-head h2 {
+  color: #13294b;
+  font-size: 18px;
+}
+
+.client-master-filter-head p {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.client-master-filter-meta {
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+.client-master-filter-meta strong {
+  padding: 7px 12px;
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.client-master-filter-meta .text-button {
+  color: #64748b;
+  font-weight: 750;
+}
+
+.client-master-filters {
+  grid-template-columns: minmax(300px, 2fr) minmax(160px, 1fr) minmax(150px, 0.9fr) minmax(150px, 0.8fr);
+  align-items: end;
+  padding-top: 13px;
+}
+
+.client-master-filters .field,
+.client-master-more-filters .field {
+  gap: 6px;
+}
+
+.client-master-filters label,
+.client-master-more-filters label {
+  color: #34445f;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.client-master-search-input {
+  position: relative;
+}
+
+.client-master-search-input > span {
+  position: absolute;
+  top: 50%;
+  left: 13px;
+  z-index: 1;
+  color: #64748b;
+  font-size: 19px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.client-master-search-input input {
+  width: 100%;
+  padding-left: 38px;
+}
+
+.client-more-filters-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 43px;
+  padding: 0 14px;
+  border: 1px solid #93c5fd;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.client-more-filters-button:hover,
+.client-more-filters-button:focus-visible {
+  border-color: #2563eb;
+  background: #dbeafe;
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  outline-offset: 2px;
+}
+
+.client-more-filters-button[aria-expanded="true"] span:last-child {
+  transform: rotate(180deg);
+}
+
+.client-master-more-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d8e4f2;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.client-master-more-filters[hidden] {
+  display: none;
+}
+
+.client-master-actionbar {
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 13px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.client-master-action-primary,
+.client-master-action-exports,
+.client-master-action-admin {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.client-master-action-admin {
+  margin-left: auto;
+}
+
+.client-action-button {
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid;
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.client-action-button.sample { border-color: #93c5fd; color: #1d4ed8; }
+.client-action-button.import { border-color: #67e8f9; color: #0e7490; background: #ecfeff; }
+.client-action-button.excel { border-color: #86efac; color: #15803d; background: #f0fdf4; }
+.client-action-button.pdf { border-color: #fca5a5; color: #dc2626; background: #fff7f7; }
+
+.client-action-button:hover,
+.client-action-button:focus-visible {
+  filter: brightness(0.97);
+  box-shadow: 0 4px 12px rgba(30, 64, 175, 0.1);
+  outline: 2px solid rgba(37, 99, 235, 0.16);
+  outline-offset: 2px;
+}
+
+.client-master-table-wrap {
+  position: relative;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(30, 64, 175, 0.07);
+}
+
+.client-master-table-wrap table {
+  min-width: 1160px;
+}
+
+.client-master-table thead th {
+  z-index: 4;
+  padding: 12px 10px;
+  background: #e8eef7;
+  color: #273b5a;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.client-master-table td {
+  padding: 11px 10px;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #dce5f1;
+  vertical-align: middle;
+}
+
+.client-master-table .client-master-client-column {
+  position: sticky;
+  left: 48px;
+  z-index: 2;
+  width: 235px;
+  min-width: 235px;
+  background: #fff;
+  box-shadow: 1px 0 #cbd9ec;
+}
+
+.client-master-table thead .client-master-client-column {
+  z-index: 6;
+  background: #e8eef7;
+}
+
+.client-master-table tbody tr:nth-child(even) .client-master-client-column {
+  background: #f8fbff;
+}
+
+.client-master-table tbody tr:hover .client-master-client-column,
+.client-master-table tbody tr:hover .client-master-actions-column {
+  background: #eef6ff;
+}
+
+.client-master-name {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #10244a;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+}
+
+.client-master-name:hover,
+.client-master-name:focus-visible {
+  color: #1d4ed8;
+  text-decoration: underline;
+  outline: none;
+}
+
+.client-master-client-column small,
+.client-master-client-column span,
+.client-master-type-column small,
+.client-master-contact-column span,
+.client-master-contact-column small {
+  display: block;
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.client-master-type-column {
+  width: 190px;
+  min-width: 190px;
+}
+
+.client-master-careof-column,
+.client-master-place-column {
+  width: 105px;
+  min-width: 105px;
+}
+
+.client-master-contact-column {
+  width: 190px;
+  min-width: 190px;
+}
+
+.client-master-contact-column strong {
+  color: #253754;
+  font-size: 12px;
+}
+
+.client-master-tax-column {
+  width: 155px;
+  min-width: 155px;
+}
+
+.client-master-tax-column span {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0;
+  color: #475569;
+  font-size: 10px;
+}
+
+.client-master-tax-column b {
+  width: 26px;
+  color: #1e3a5f;
+}
+
+.client-master-status-column {
+  width: 90px;
+  min-width: 90px;
+  text-align: center;
+}
+
+.client-master-actions-column {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  width: 176px;
+  min-width: 176px;
+  background: #fff;
+  box-shadow: -1px 0 #cbd9ec;
+}
+
+.client-master-table thead .client-master-actions-column {
+  z-index: 6;
+  background: #e8eef7;
+}
+
+.client-master-table tbody tr:nth-child(even) .client-master-actions-column {
+  background: #f8fbff;
+}
+
+.client-master-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.client-master-actions .billed-primary-action {
+  min-width: 112px;
+  justify-content: center;
+}
+
+.client-master-mobile-list {
+  display: none;
+}
+
+.client-pagination {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid #d7e3f1;
+  border-radius: 10px;
+  background: #fff;
+}
+
+@media (max-width: 1050px) {
+  .client-master-filters {
+    grid-template-columns: minmax(260px, 1.7fr) repeat(3, minmax(140px, 1fr));
+  }
+
+  .client-master-action-admin {
+    width: 100%;
+    margin-left: 0;
+    padding-top: 9px;
+    border-top: 1px dashed #d7e3f1;
+  }
+}
+
+@media (max-width: 760px) {
+  .client-master-shell {
+    padding: 14px;
+  }
+
+  .client-master-filter-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .client-master-filter-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .client-master-filters,
+  .client-master-more-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .client-master-search {
+    grid-column: auto;
+  }
+
+  .client-master-actionbar,
+  .client-master-action-primary,
+  .client-master-action-exports,
+  .client-master-action-admin {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .client-master-action-primary > button,
+  .client-master-action-exports > button,
+  .client-master-action-admin > button {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .client-master-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .client-master-table {
+    display: none;
+  }
+
+  .client-master-mobile-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .client-master-mobile-card {
+    padding: 14px;
+    border: 1px solid #cbd9ec;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 7px 20px rgba(30, 64, 175, 0.08);
+  }
+
+  .client-master-mobile-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .client-master-mobile-head p {
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 11px;
+  }
+
+  .client-master-mobile-tags {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin: 12px 0;
+  }
+
+  .client-master-mobile-tags span {
+    padding: 4px 7px;
+    border: 1px solid #c7d2fe;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #3730a3;
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  .client-master-mobile-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .client-master-mobile-summary > div {
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid #dbe5f1;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+
+  .client-master-mobile-summary span {
+    display: block;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .client-master-mobile-summary strong,
+  .client-master-mobile-summary small {
+    display: block;
+    color: #233552;
+    overflow-wrap: anywhere;
+  }
+
+  .client-master-mobile-summary small {
+    margin-top: 3px;
+    color: #64748b;
+    font-size: 10px;
+  }
+
+  .client-master-mobile-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 13px;
+    padding-top: 12px;
+    border-top: 1px solid #dbe5f1;
+  }
+}
+
+@media (max-width: 430px) {
+  .client-master-action-primary > button,
+  .client-master-action-exports > button,
+  .client-master-action-admin > button {
+    flex-basis: 100%;
+  }
+
+  .client-master-mobile-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
 .staff-selector {
   max-width: 360px;
   margin-bottom: 16px;

@@ -380,6 +380,7 @@ const clientMasterUi = {
   rows: [],
   loading: false,
   masters: null,
+  moreFiltersOpen: false,
 };
 const fileSaveRequests = new Set();
 const PERF_LOG_ENABLED = (() => {
@@ -10468,34 +10469,34 @@ async function renderClientMasterPage() {
     const value = getName(item);
     return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`;
   }).join("");
+  const moreFiltersOpen = Boolean(clientMasterUi.moreFiltersOpen || clientMasterUi.constitution || clientMasterUi.careOf || clientMasterUi.place);
   page.innerHTML = `
     <section class="client-master-shell panel-card">
-      <div class="client-master-heading"><div><span class="eyebrow">CENTRAL DIRECTORY</span><h2>Client Master</h2><p>Manage client identities, registrations and contact details from one secure source.</p></div><strong id="clientMasterCount">0 clients</strong></div>
-      <div class="client-master-toolbar">
-      <div class="client-toolbar-actions">
-        <button class="secondary-button" id="clientClearFilters">Clear Filters</button>
-        <button class="secondary-button" id="clientRefreshButton">Refresh</button>
-        <button class="secondary-button" id="clientExportButton">Export Excel</button>
-        <button class="secondary-button" id="clientPdfButton">Export PDF</button>
-        <button class="secondary-button" id="clientTemplateButton">Sample Excel</button>
-        <button class="secondary-button" id="clientImportButton">Import Excel</button>
-        <input class="hidden" id="clientImportInput" type="file" accept=".xlsx,.xls">
-        ${canManageClientMasters() ? `<button class="secondary-button" id="clientMastersButton">Manage Masters</button>` : ""}
-        ${state.currentRole === "Admin" ? `<button class="secondary-button" id="clientMigrationButton">Generate from Existing Files</button>` : ""}
-        <button class="primary-button" id="addClientMasterButton">Add Client</button>
-      </div>
+      <div class="client-master-filter-head">
+        <div><h2>Search &amp; Filter Clients</h2><p>Find clients by identity, registration, contact or location.</p></div>
+        <div class="client-master-filter-meta"><strong id="clientMasterCount">0 clients</strong><button type="button" class="text-button" id="clientClearFilters">Clear All</button></div>
       </div>
       <div class="client-master-filters">
-        <div class="field client-master-search"><label>Search</label><input id="clientMasterSearch" type="search" value="${escapeHtml(clientMasterUi.search)}" placeholder="Name, type, C/o, PAN, GST, TAN, contact, email or place"></div>
+        <div class="field client-master-search"><label>Global Search</label><div class="client-master-search-input"><span aria-hidden="true">⌕</span><input id="clientMasterSearch" type="search" value="${escapeHtml(clientMasterUi.search)}" placeholder="Search name, code, PAN, GST, contact or email"></div></div>
         <div class="field"><label>Client Type</label><select id="clientMasterType"><option value="">All Types</option>${optionList(masters.clientTypes, clientMasterUi.clientType)}</select></div>
+        <div class="field"><label>Status</label><select id="clientMasterStatus"><option>Active</option><option>Inactive</option><option>All</option></select></div>
+        <button type="button" class="client-more-filters-button" id="clientMoreFiltersButton" aria-expanded="${moreFiltersOpen}"><span>More Filters</span><span aria-hidden="true">⌄</span></button>
+      </div>
+      <div class="client-master-more-filters ${moreFiltersOpen ? "open" : ""}" id="clientMasterMoreFilters" ${moreFiltersOpen ? "" : "hidden"}>
         <div class="field"><label>Constitution</label><select id="clientMasterConstitution"><option value="">All Constitutions</option>${optionList(masters.constitutions, clientMasterUi.constitution)}</select></div>
         <div class="field"><label>C/o</label><select id="clientMasterCareOf"><option value="">All C/o</option>${optionList(masters.careOf, clientMasterUi.careOf, (item) => item)}</select></div>
-        <div class="field"><label>Status</label><select id="clientMasterStatus"><option>Active</option><option>Inactive</option><option>All</option></select></div>
         <div class="field"><label>Place</label><input id="clientMasterPlace" value="${escapeHtml(clientMasterUi.place)}" placeholder="Filter place"></div>
+      </div>
+      <div class="client-master-actionbar">
+        <div class="client-master-action-primary"><button class="primary-button" id="addClientMasterButton">Add Client</button><button class="secondary-button" id="clientRefreshButton">Refresh</button></div>
+        <div class="client-master-action-exports"><button class="client-action-button sample" id="clientTemplateButton">Download Sample</button><button class="client-action-button import" id="clientImportButton">Import Excel</button><button class="client-action-button excel" id="clientExportButton">Export Excel</button><button class="client-action-button pdf" id="clientPdfButton">Export PDF</button></div>
+        <input class="hidden" id="clientImportInput" type="file" accept=".xlsx,.xls">
+        <div class="client-master-action-admin">${canManageClientMasters() ? `<button class="secondary-button" id="clientMastersButton">Manage Masters</button>` : ""}${state.currentRole === "Admin" ? `<button class="secondary-button" id="clientMigrationButton">Generate from Files</button>` : ""}</div>
       </div>
     </section>
     <div class="table-wrap client-master-table-wrap">
-      <table class="client-master-table"><thead><tr><th>SN</th><th>Client Name</th><th>Client Type</th><th>C/o</th><th>PAN</th><th>GST No.</th><th>TAN</th><th>Constitution</th><th>Contact Person</th><th>Contact No.</th><th>Email ID</th><th>Place</th><th>Status</th><th>Actions</th></tr></thead><tbody id="clientMasterRows"><tr><td colspan="14">Loading clients...</td></tr></tbody></table>
+      <table class="client-master-table"><thead><tr><th class="client-sn">SN</th><th class="client-master-client-column">Client</th><th>Type &amp; Constitution</th><th>C/o</th><th>Contact</th><th>Tax IDs</th><th>Place</th><th>Status</th><th class="client-master-actions-column">Actions</th></tr></thead><tbody id="clientMasterRows"><tr><td colspan="9">Loading clients...</td></tr></tbody></table>
+      <div class="client-master-mobile-list" id="clientMasterCards"><div class="client-master-mobile-loading">Loading clients...</div></div>
     </div>
     <div class="client-pagination"><button class="mini-button" id="clientPrevPage">Previous</button><span id="clientPageLabel">Page 1</span><button class="mini-button" id="clientNextPage">Next</button></div>
   `;
@@ -10527,9 +10528,16 @@ function bindClientMasterPage() {
     ["#clientMasterStatus", "status"], ["#clientMasterType", "clientType"],
     ["#clientMasterConstitution", "constitution"], ["#clientMasterCareOf", "careOf"],
   ].forEach(([selector, key]) => document.querySelector(selector).onchange = (event) => { clientMasterUi[key] = event.target.value; clientMasterUi.page = 1; loadClientMaster(); });
+  document.querySelector("#clientMoreFiltersButton").onclick = () => {
+    clientMasterUi.moreFiltersOpen = !clientMasterUi.moreFiltersOpen;
+    const panel = document.querySelector("#clientMasterMoreFilters");
+    panel.hidden = !clientMasterUi.moreFiltersOpen;
+    panel.classList.toggle("open", clientMasterUi.moreFiltersOpen);
+    document.querySelector("#clientMoreFiltersButton").setAttribute("aria-expanded", String(clientMasterUi.moreFiltersOpen));
+  };
   const place = document.querySelector("#clientMasterPlace");
   place.oninput = () => { clearTimeout(clientSearchTimer); clientSearchTimer = setTimeout(() => { clientMasterUi.place = place.value.trim(); clientMasterUi.page = 1; loadClientMaster(); }, 250); };
-  document.querySelector("#clientClearFilters").onclick = () => { Object.assign(clientMasterUi, { search: "", status: "Active", clientType: "", constitution: "", careOf: "", place: "", page: 1 }); renderClientMasterPage(); };
+  document.querySelector("#clientClearFilters").onclick = () => { Object.assign(clientMasterUi, { search: "", status: "Active", clientType: "", constitution: "", careOf: "", place: "", page: 1, moreFiltersOpen: false }); renderClientMasterPage(); };
   document.querySelector("#clientRefreshButton").onclick = () => { clientMasterUi.page = 1; loadClientMaster(); };
   document.querySelector("#addClientMasterButton").onclick = () => openClientEditor();
   document.querySelector("#clientPrevPage").onclick = () => { if (clientMasterUi.page > 1) { clientMasterUi.page -= 1; loadClientMaster(); } };
@@ -10545,22 +10553,38 @@ function bindClientMasterPage() {
 
 async function loadClientMaster() {
   const body = document.querySelector("#clientMasterRows");
+  const cards = document.querySelector("#clientMasterCards");
   if (!body || clientMasterUi.loading) return;
   clientMasterUi.loading = true;
-  body.innerHTML = `<tr><td colspan="14">Loading clients...</td></tr>`;
+  body.innerHTML = `<tr><td colspan="9">Loading clients...</td></tr>`;
+  if (cards) cards.innerHTML = `<div class="client-master-mobile-loading">Loading clients...</div>`;
   try {
     const query = clientMasterQuery();
     const payload = await apiJson(`/api/clients?${query}`);
     clientMasterUi.rows = payload.clients || []; clientMasterUi.total = payload.total || 0;
-    body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="14" class="client-empty-state">No clients match the selected filters.</td></tr>`;
+    body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="9" class="client-empty-state">No clients match the selected filters.</td></tr>`;
+    if (cards) cards.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterMobileCard).join("") : `<div class="client-empty-state">No clients match the selected filters.</div>`;
     document.querySelector("#clientMasterCount").textContent = `${clientMasterUi.total} client(s)`;
     document.querySelector("#clientPageLabel").textContent = `Page ${clientMasterUi.page} of ${Math.max(1, Math.ceil(clientMasterUi.total / clientMasterUi.pageSize))}`;
     document.querySelector("#clientPrevPage").disabled = clientMasterUi.page <= 1;
     document.querySelector("#clientNextPage").disabled = clientMasterUi.page * clientMasterUi.pageSize >= clientMasterUi.total;
     bindClientMasterRows();
   } catch (error) {
-    body.innerHTML = `<tr><td colspan="13"><strong>${escapeHtml(error.message)}</strong>${error.status === 503 ? `<br><small>Run database/20260803_client_master_secure_upgrade.sql in Supabase SQL Editor, then refresh.</small>` : ""}</td></tr>`;
+    const errorMarkup = `<strong>${escapeHtml(error.message)}</strong>${error.status === 503 ? `<br><small>Run database/20260803_client_master_secure_upgrade.sql in Supabase SQL Editor, then refresh.</small>` : ""}`;
+    body.innerHTML = `<tr><td colspan="9">${errorMarkup}</td></tr>`;
+    if (cards) cards.innerHTML = `<div class="client-empty-state">${errorMarkup}</div>`;
   } finally { clientMasterUi.loading = false; }
+}
+
+function clientMasterActions(client = {}) {
+  const clientId = escapeHtml(client.id || "");
+  const nextStatus = client.status === "Active" ? "Inactive" : "Active";
+  const statusLabel = nextStatus === "Inactive" ? "Deactivate" : "Activate";
+  const menuItems = [
+    billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-client-edit="${clientId}"` }),
+    billedActionMenuItem({ label: statusLabel, icon: nextStatus === "Active" ? "received" : "nonbillable", attrs: `data-client-status="${clientId}" data-status="${nextStatus}"`, danger: nextStatus === "Inactive", divider: true }),
+  ];
+  return `<div class="billed-actions client-master-actions" data-billed-actions="client-${clientId}"><button type="button" class="billed-primary-action view-only" data-client-profile="${clientId}">${billedActionIcon("edit")}<span>View Client</span></button><button type="button" class="billed-menu-toggle" data-billed-menu-toggle="client-${clientId}" aria-label="Open actions for ${escapeHtml(client.client_name || "client")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="client-${clientId}" role="menu" aria-label="Actions for ${escapeHtml(client.client_name || "client")}">${menuItems.join("")}</div></div>`;
 }
 
 function clientMasterRow(client) {
@@ -10568,18 +10592,37 @@ function clientMasterRow(client) {
   const types = client.client_types?.length ? client.client_types : String(client.client_type || "").split(/\s*\|\s*/).filter(Boolean);
   const visibleTypes = types.slice(0, 2);
   const typeMarkup = `<div class="client-type-tags" title="${escapeHtml(types.join(", "))}">${visibleTypes.map((type) => `<span>${escapeHtml(type)}</span>`).join("")}${types.length > 2 ? `<em>+${types.length - 2}</em>` : ""}${!types.length ? "-" : ""}</div>`;
-  return `<tr>
+  const pan = client.pan_reg_no || "-";
+  const contactPerson = client.contact_person || "Not specified";
+  const contactNumber = client.contact_number || "-";
+  const email = client.email || "-";
+  return `<tr class="client-master-row">
     <td class="client-sn">${index}</td>
-    <td><button class="text-button" data-client-profile="${client.id}">${escapeHtml(client.client_name)}</button><small class="table-secondary">${escapeHtml(client.client_code || "")}</small></td>
-    <td>${typeMarkup}</td>
-    <td>${escapeHtml(client.care_of || "-")}</td><td>${escapeHtml(client.pan_reg_no || "-")}</td><td>${escapeHtml(client.gst_no || "-")}</td><td>${escapeHtml(client.tan || "-")}</td>
-    <td>${escapeHtml(client.constitution || "-")}</td><td>${escapeHtml(client.contact_person || "-")}</td><td>${escapeHtml(client.contact_number || "-")}</td><td>${escapeHtml(client.email || "-")}</td><td>${escapeHtml(client.place || "-")}</td>
-    <td><span class="badge ${client.status === "Active" ? "checked" : "neutral"}">${escapeHtml(client.status)}</span></td>
-    <td><div class="table-actions"><button class="mini-button" data-client-profile="${client.id}">View</button><button class="mini-button" data-client-edit="${client.id}">Edit</button><button class="mini-button" data-client-status="${client.id}" data-status="${client.status === "Active" ? "Inactive" : "Active"}">${client.status === "Active" ? "Deactivate" : "Activate"}</button></div></td>
+    <td class="client-master-client-column"><button class="client-master-name" data-client-profile="${client.id}">${escapeHtml(client.client_name)}</button><small>${escapeHtml(client.client_code || "No client code")}</small><span>${escapeHtml(pan)}</span></td>
+    <td class="client-master-type-column">${typeMarkup}<small>${escapeHtml(client.constitution || "Constitution not specified")}</small></td>
+    <td class="client-master-careof-column">${escapeHtml(client.care_of || "Direct")}</td>
+    <td class="client-master-contact-column"><strong>${escapeHtml(contactPerson)}</strong><span>${escapeHtml(contactNumber)}</span><small>${escapeHtml(email)}</small></td>
+    <td class="client-master-tax-column"><span><b>PAN</b>${escapeHtml(pan)}</span><span><b>GST</b>${escapeHtml(client.gst_no || "-")}</span><span><b>TAN</b>${escapeHtml(client.tan || "-")}</span></td>
+    <td class="client-master-place-column">${escapeHtml(client.place || "-")}</td>
+    <td class="client-master-status-column"><span class="badge ${client.status === "Active" ? "checked" : "neutral"}">${escapeHtml(client.status)}</span></td>
+    <td class="client-master-actions-column"><div class="action-row">${clientMasterActions(client)}</div></td>
   </tr>`;
 }
 
+function clientMasterMobileCard(client = {}) {
+  const types = client.client_types?.length ? client.client_types : String(client.client_type || "").split(/\s*\|\s*/).filter(Boolean);
+  return `<article class="client-master-mobile-card"><div class="client-master-mobile-head"><div><button class="client-master-name" data-client-profile="${escapeHtml(client.id || "")}">${escapeHtml(client.client_name || "-")}</button><p>${escapeHtml(client.client_code || "No client code")} · ${escapeHtml(client.pan_reg_no || "No PAN/Reg No.")}</p></div><span class="badge ${client.status === "Active" ? "checked" : "neutral"}">${escapeHtml(client.status || "-")}</span></div><div class="client-master-mobile-tags">${types.slice(0, 3).map((type) => `<span>${escapeHtml(type)}</span>`).join("") || `<span>Type not specified</span>`}</div><div class="client-master-mobile-summary"><div><span>Constitution</span><strong>${escapeHtml(client.constitution || "-")}</strong></div><div><span>C/o</span><strong>${escapeHtml(client.care_of || "Direct")}</strong></div><div><span>Contact</span><strong>${escapeHtml(client.contact_number || "-")}</strong><small>${escapeHtml(client.email || "-")}</small></div><div><span>Place</span><strong>${escapeHtml(client.place || "-")}</strong></div></div><div class="client-master-mobile-actions">${clientMasterActions(client)}</div></article>`;
+}
+
 function bindClientMasterRows() {
+  bindBilledActionMenus();
+  document.querySelectorAll("#clientMaster [data-billed-menu-toggle]").forEach((toggle) => {
+    toggle.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openBilledActionMenu(toggle);
+    };
+  });
   document.querySelectorAll("[data-client-edit]").forEach((button) => button.onclick = () => openClientEditor(clientMasterUi.rows.find((client) => client.id === button.dataset.clientEdit)));
   document.querySelectorAll("[data-client-profile]").forEach((button) => button.onclick = () => openClientProfile(button.dataset.clientProfile));
   document.querySelectorAll("[data-client-status]").forEach((button) => button.onclick = async () => {
