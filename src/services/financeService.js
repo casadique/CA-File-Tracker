@@ -1448,6 +1448,46 @@ function appendAudit(state, action, record, profile, now) {
   ].slice(-1000);
 }
 
+function normalizedExpenseItem(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function expenseItemIsUsed(expenses = [], value = "") {
+  const key = normalizedExpenseItem(value).toLowerCase();
+  return Boolean(key && (expenses || []).some((expense) => normalizedExpenseItem(expense.particulars || expense.expenseItem || expense.expense_item).toLowerCase() === key));
+}
+
+async function addExpenseItem(value, userId, profile = {}) {
+  const expenseItem = normalizedExpenseItem(value);
+  if (!expenseItem) throw Object.assign(new Error("Enter an expense item name."), { status: 400 });
+  return patchAppState((state) => {
+    const items = Array.isArray(state.expenseItems) ? state.expenseItems : [];
+    if (items.some((item) => normalizedExpenseItem(item).toLowerCase() === expenseItem.toLowerCase())) return state;
+    state.expenseItems = [...items, expenseItem]
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, "en-IN", { sensitivity: "base" }));
+    appendAudit(state, "Expense item added", { id: `expense-item:${expenseItem}`, particulars: expenseItem }, profile, new Date());
+    return state;
+  }, userId);
+}
+
+async function removeExpenseItem(value, userId, profile = {}) {
+  const expenseItem = normalizedExpenseItem(value);
+  if (!expenseItem) throw Object.assign(new Error("Select an expense item to remove."), { status: 400 });
+  return patchAppState((state) => {
+    const used = expenseItemIsUsed(state.expenses || [], expenseItem);
+    if (used) {
+      throw Object.assign(new Error("This expense item has corresponding expense entries and cannot be removed."), { status: 409 });
+    }
+    const items = Array.isArray(state.expenseItems) ? state.expenseItems : [];
+    const exists = items.some((item) => normalizedExpenseItem(item).toLowerCase() === expenseItem.toLowerCase());
+    if (!exists) throw Object.assign(new Error("Expense item was not found."), { status: 404 });
+    state.expenseItems = items.filter((item) => normalizedExpenseItem(item).toLowerCase() !== expenseItem.toLowerCase());
+    appendAudit(state, "Expense item removed", { id: `expense-item:${expenseItem}`, particulars: expenseItem }, profile, new Date());
+    return state;
+  }, userId);
+}
+
 module.exports = {
   FINANCE_ACCOUNTS,
   PAYMENT_METHODS,
@@ -1469,4 +1509,7 @@ module.exports = {
   saveAccountTransfer,
   deleteAccountTransfer,
   classifyLegacyBankTransaction,
+  addExpenseItem,
+  removeExpenseItem,
+  expenseItemIsUsed,
 };

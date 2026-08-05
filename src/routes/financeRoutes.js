@@ -22,6 +22,8 @@ const {
   saveAccountTransfer,
   deleteAccountTransfer,
   classifyLegacyBankTransaction,
+  addExpenseItem,
+  removeExpenseItem,
 } = require("../services/financeService");
 
 const router = express.Router();
@@ -86,6 +88,20 @@ router.post("/expenses", requireAuth, requireRole(...financeRoles), async (req, 
   } catch (error) {
     next(error);
   }
+});
+
+router.post("/expense-items", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await addExpenseItem(req.body?.item, req.user.id, req.profile);
+    res.json({ ok: true, expenseItems: state.expenseItems || [] });
+  } catch (error) { next(error); }
+});
+
+router.delete("/expense-items", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await removeExpenseItem(req.body?.item, req.user.id, req.profile);
+    res.json({ ok: true, expenseItems: state.expenseItems || [] });
+  } catch (error) { next(error); }
 });
 
 router.delete("/expenses/:id", requireAuth, requireRole(...financeRoles), async (req, res, next) => {

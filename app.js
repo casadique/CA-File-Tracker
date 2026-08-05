@@ -1581,6 +1581,26 @@ async function deleteExpenseFromApi(id) {
   return result;
 }
 
+async function addExpenseItemToApi(item) {
+  const result = await apiJson("/api/finance/expense-items", {
+    method: "POST",
+    body: JSON.stringify({ item }),
+  });
+  if (result?.expenseItems) state.expenseItems = result.expenseItems;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
+async function removeExpenseItemFromApi(item) {
+  const result = await apiJson("/api/finance/expense-items", {
+    method: "DELETE",
+    body: JSON.stringify({ item }),
+  });
+  if (result?.expenseItems) state.expenseItems = result.expenseItems;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function saveCashCollectionToApi(collection) {
   const result = await apiJson("/api/finance/collections", {
     method: "POST",
@@ -17316,7 +17336,7 @@ function renderExpenseEntryTab() {
             <p>Record and manage business expenses</p>
           </div>
           ${expenseDateField("expenseDate", "Expense Date", editingExpense()?.date || todayDate())}
-          ${expenseItemField(editingExpense()?.particulars || "")}
+          ${expenseItemField(editingExpense()?.particulars || state.filters.expenseItemSelection || "")}
           ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "", "text", "", "wide-field")}
           ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01", "compact-field amount-field")}
           ${expenseSelect("expenseMode", "Payment Method", paymentModes(), editingExpense()?.paymentMethod || editingExpense()?.payment_method || editingExpense()?.mode || "Cash")}
@@ -17664,11 +17684,19 @@ function expenseSelect(id, label, options, value = "") {
 }
 
 function expenseItemField(value = "") {
+  const items = state.expenseItems || [];
+  const selected = items.includes(value) ? value : (items[0] || "");
   return `
     <div class="field expense-item-field cash-received-from-field">
       <label>Particulars / Expense Item</label>
       <div class="expense-item-combo">
-        <select id="expenseParticularsEntry">${state.expenseItems.map((item) => `<option value="${escapeHtml(item)}" ${item === value ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select>
+        <select id="expenseParticularsEntry">
+          ${selected ? "" : `<option value="" disabled selected>Select Expense Item</option>`}
+          ${items.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+          <option disabled>──────────</option>
+          <option value="__add_expense_item__">+ Add New Expense</option>
+          <option value="__remove_expense_item__">- Remove Expense Item</option>
+        </select>
         <button class="secondary-button" id="manageExpenseItems" type="button">Manage Items</button>
       </div>
     </div>
@@ -17677,22 +17705,23 @@ function expenseItemField(value = "") {
 }
 
 function renderExpenseItemManager() {
+  const removing = state.filters.expenseItemManagerAction === "remove";
   return `
     <div class="modal-backdrop soft-modal-backdrop">
       <div class="modal-card expense-item-manager">
         <div class="expense-card-head">
-          <h3>Manage Expense Items</h3>
-          <p>Add or remove unused expense items</p>
+          <h3>${removing ? "Remove Expense Item" : "Add New Expense Item"}</h3>
+          <p>${removing ? "Select an unused item below. Items with corresponding expense entries cannot be removed." : "Enter the new expense item name."}</p>
         </div>
         <div class="expense-item-manager-grid">
-          <input id="newExpenseItem" placeholder="New expense item">
-          <button class="primary-button" id="addExpenseItemNow" type="button">Add Item</button>
+          <input id="newExpenseItem" placeholder="${removing ? "Select an item below" : "New expense item"}">
+          ${removing ? "" : `<button class="primary-button" id="addExpenseItemNow" type="button">Add Item</button>`}
         </div>
         <div class="expense-item-list">
           ${(state.expenseItems || []).map((item) => `<button class="mini-button" data-select-expense-item="${escapeHtml(item)}">${escapeHtml(item)}</button>`).join("")}
         </div>
         <div class="drawer-actions">
-          <button class="secondary-button" id="removeExpenseItemNow" type="button">Remove Selected</button>
+          ${removing ? `<button class="secondary-button danger" id="removeExpenseItemNow" type="button">Remove Selected</button>` : ""}
           <button class="secondary-button" id="closeExpenseItemManager" type="button">Close</button>
         </div>
       </div>
@@ -17773,10 +17802,13 @@ function bindExpensePage() {
   if (transferForm) transferForm.onsubmit = saveAccountTransferEntry;
   document.querySelector("#cancelExpenseEdit")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
   document.querySelector("#cancelCashEdit")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
-  document.querySelector("#resetExpenseForm")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
+  document.querySelector("#resetExpenseForm")?.addEventListener("click", () => { state.filters.editExpenseId = ""; state.filters.expenseItemSelection = ""; saveState(); renderAll(); });
   document.querySelector("#resetCashForm")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
-  document.querySelector("#manageExpenseItems")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = "Yes"; saveState(); renderAll(); });
-  document.querySelector("#closeExpenseItemManager")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = ""; saveState(); renderAll(); });
+  document.querySelector("#manageExpenseItems")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = "Yes"; state.filters.expenseItemManagerAction = "add"; saveState(); renderAll(); });
+  const expenseItemSelect = document.querySelector("#expenseParticularsEntry");
+  expenseItemSelect?.addEventListener("focus", () => { expenseItemSelect.dataset.previousValue = expenseItemSelect.value; });
+  expenseItemSelect?.addEventListener("change", handleExpenseItemDropdownChange);
+  document.querySelector("#closeExpenseItemManager")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = ""; state.filters.expenseItemManagerAction = ""; saveState(); renderAll(); });
   document.querySelector("#addExpenseItemNow")?.addEventListener("click", addExpenseItem);
   document.querySelector("#removeExpenseItemNow")?.addEventListener("click", removeExpenseItem);
   document.querySelectorAll("[data-select-expense-item]").forEach((btn) => btn.onclick = () => {
@@ -17847,6 +17879,11 @@ async function saveExpenseEntry(event) {
   const submitButton = event.submitter || document.querySelector("#expenseForm button[type='submit']");
   if (submitButton?.disabled) return;
   if (submitButton) submitButton.disabled = true;
+  const expenseItem = document.querySelector("#expenseParticularsEntry")?.value || "";
+  if (!expenseItem || expenseItem.startsWith("__")) {
+    if (submitButton) submitButton.disabled = false;
+    return toast("Please select an expense item.");
+  }
   const amount = Number(document.querySelector("#expenseAmount")?.value || 0);
   if (!amount) {
     if (submitButton) submitButton.disabled = false;
@@ -17861,7 +17898,7 @@ async function saveExpenseEntry(event) {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
     date: document.querySelector("#expenseDate")?.value || existing?.date || todayDate(),
-    particulars: document.querySelector("#expenseParticularsEntry").value,
+    particulars: expenseItem,
     voucherNo: document.querySelector("#expenseVoucherNo").value.trim(),
     amount,
     mode: paymentMethod,
@@ -17886,6 +17923,7 @@ async function saveExpenseEntry(event) {
       await saveExpenseToApi(record);
       rememberExpenseItem(record.particulars);
       state.filters.editExpenseId = "";
+      state.filters.expenseItemSelection = "";
       toast(existing ? "Expense updated and synced" : "Expense saved and synced");
       renderAll();
       return;
@@ -17899,6 +17937,7 @@ async function saveExpenseEntry(event) {
   state.expenses = existing ? state.expenses.map((item) => item.id === existing.id ? record : item) : [record, ...(state.expenses || [])];
   rememberExpenseItem(record.particulars);
   state.filters.editExpenseId = "";
+  state.filters.expenseItemSelection = "";
   saveState();
   toast(existing ? "Expense updated" : "Expense saved");
   renderAll();
@@ -18152,31 +18191,60 @@ function editingCashCollection() {
   return (state.otherCashCollections || []).find((item) => item.id === state.filters.editCashId);
 }
 
-function addExpenseItem() {
+async function addExpenseItem() {
   const value = document.querySelector("#newExpenseItem")?.value.trim();
   if (!value) return toast("Enter expense item name.");
-  rememberExpenseItem(value);
-  saveState();
-  toast("Expense item added");
-  renderAll();
+  try {
+    if (isSupabaseMode()) await addExpenseItemToApi(value);
+    else {
+      rememberExpenseItem(value);
+      saveState();
+    }
+    const savedValue = (state.expenseItems || []).find((item) => expenseItemKey(item) === expenseItemKey(value)) || value;
+    state.filters.expenseItemSelection = savedValue;
+    state.filters.manageExpenseItemsOpen = "";
+    state.filters.expenseItemManagerAction = "";
+    toast("Expense item added");
+    renderAll();
+  } catch (error) { toast(error.message || "Expense item could not be added."); }
 }
 
-function removeExpenseItem() {
+async function removeExpenseItem() {
   const value = document.querySelector("#newExpenseItem")?.value.trim() || document.querySelector("#expenseParticularsEntry")?.value;
   if (!value) return toast("Select or enter expense item to remove.");
-  const used = (state.expenses || []).some((item) => String(item.particulars || "").trim().toLowerCase() === value.toLowerCase());
-  if (used) return toast("This expense item is already used in entries and cannot be removed.");
-  state.expenseItems = (state.expenseItems || []).filter((item) => item.toLowerCase() !== value.toLowerCase());
-  saveState();
-  toast("Expense item removed");
-  renderAll();
+  const used = (state.expenses || []).some((item) => expenseItemKey(item.particulars) === expenseItemKey(value));
+  if (used) return toast("This expense item has corresponding expense entries and cannot be removed.");
+  if (!confirm(`Remove the unused expense item "${value}"?`)) return;
+  try {
+    if (isSupabaseMode()) await removeExpenseItemFromApi(value);
+    else {
+      state.expenseItems = (state.expenseItems || []).filter((item) => expenseItemKey(item) !== expenseItemKey(value));
+      saveState();
+    }
+    if (expenseItemKey(state.filters.expenseItemSelection) === expenseItemKey(value)) state.filters.expenseItemSelection = "";
+    state.filters.manageExpenseItemsOpen = "";
+    state.filters.expenseItemManagerAction = "";
+    toast("Expense item removed");
+    renderAll();
+  } catch (error) { toast(error.message || "Expense item could not be removed."); }
 }
 
-function handleExpenseItemAction(event) {
-  const action = event.target.value;
-  if (action === "add") addExpenseItem();
-  if (action === "remove") removeExpenseItem();
-  event.target.value = "";
+function expenseItemKey(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function handleExpenseItemDropdownChange(event) {
+  const value = event.currentTarget.value;
+  if (!["__add_expense_item__", "__remove_expense_item__"].includes(value)) {
+    state.filters.expenseItemSelection = value;
+    return saveViewState();
+  }
+  const previousValue = event.currentTarget.dataset.previousValue || state.filters.expenseItemSelection || "";
+  if (previousValue && !previousValue.startsWith("__")) state.filters.expenseItemSelection = previousValue;
+  state.filters.manageExpenseItemsOpen = "Yes";
+  state.filters.expenseItemManagerAction = value === "__remove_expense_item__" ? "remove" : "add";
+  saveState();
+  renderAll();
 }
 
 function viewTransactionDetail(type, item) {
