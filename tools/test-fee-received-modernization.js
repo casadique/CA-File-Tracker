@@ -29,6 +29,12 @@ assert.doesNotMatch(desktopRow, /<span>Billed<\/span>|<span>Received<\/span>|<sp
 assert.doesNotMatch(desktopRow, /row\.paymentMode/,
   "Receipt Details must show only the received amount and date");
 
+const expandedDetails = block("function feeReceivedExpandedDetails", "\\nfunction feeReceivedDesktopRow");
+assert.match(expandedDetails, /<span>Discount<\/span><strong>\$\{rupee\(row\.discountAmount\)\}<\/strong>/,
+  "Expanded Discount must render through the currency formatter");
+assert.doesNotMatch(expandedDetails, /escapeHtml\(rupee\(/,
+  "Expanded Discount must not double-escape the rupee symbol into visible entity text");
+
 for (const requirement of [
   /function feeReceivedDisplayRow/,
   /function feeReceivedTransactionCell/,
