@@ -7735,8 +7735,6 @@ function activeExpandedDetails(file = {}) {
     <div><span>Assignment</span><strong>${escapeHtml(isReassignedFile(file) ? "Reassigned" : (hasAssignedStaffValue(assignee.name) ? "Assigned" : "Not Assigned"))}</strong></div>
     <div><span>Mode</span><strong>${escapeHtml(file.mode || "Not recorded")}</strong></div>
     <div><span>Last Updated</span><strong>${escapeHtml(displayDate(file.lastUpdatedDate || file.updated_at) || "-")}</strong></div>
-    <div><span>DP</span><strong>${escapeHtml(file.dp || file.dealingPerson || file.dealtBy || "Not recorded")}</strong></div>
-    <div><span>SP</span><strong>${escapeHtml(file.sp || file.supervisor || file.salesPerson || "Not recorded")}</strong></div>
     <div class="active-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div>
   </div>`;
 }

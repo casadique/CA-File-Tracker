@@ -53,6 +53,10 @@ assert.match(source, /document\.querySelectorAll\("\[data-active-row-toggle\]"\)
 assert.match(source, /if \(f\.listView === "active" && !isDashboardActiveFile\(file\)\) return false;/,
   "Active eligibility rules must remain intact");
 
+const expandedDetails = block("function activeExpandedDetails", "\\nfunction activeDesktopRows");
+assert.doesNotMatch(expandedDetails, /<span>DP<\/span>|<span>SP<\/span>/,
+  "Active Files expanded details must not show DP or SP");
+
 for (const css of [
   ".active-table-wrap", ".active-modern-table", ".active-actions-column", ".active-mobile-card",
   ".active-expanded-grid", "@media (max-width: 760px)",

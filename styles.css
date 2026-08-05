@@ -9384,7 +9384,7 @@ textarea {
 .active-details-row td { height: auto; padding: 0 !important; background: #f5f9ff !important; }
 .active-expanded-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
   gap: 10px;
   padding: 14px 18px 16px 88px;
   border-left: 4px solid #2f6fed;
