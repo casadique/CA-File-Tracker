@@ -717,15 +717,16 @@ function reliableCompletionTimestamp(file = {}) {
 function assertCheckingPermission(profile = {}) {
   const role = String(profile?.role || "").trim();
   const authorisedStaff = new Set(["nisha", "rizwana", "althaf"]);
-  if (["Admin", "Manager", "Staff Manager"].includes(role)) return;
-  if (role === "Staff" && authorisedStaff.has(normalizeStaffIdentity(profile?.name))) return;
+  if (["Admin", "Manager"].includes(role)) return;
+  if (["Staff", "Staff Manager"].includes(role) && authorisedStaff.has(normalizeStaffIdentity(profile?.name))) return;
   throw httpError("Only authorised checkers can check completed files.", 403);
 }
 
 function fileWasCompletedBy(file = {}, profile = {}) {
   const checker = [profile.id, profile.auth_user_id, profile.email, profile.name].filter(Boolean);
   const workers = [file.completedById, file.completedByEmail, file.completedBy, file.workDoneById, file.workDoneByEmail, file.workDoneBy].filter(Boolean);
-  return checker.some((identity) => workers.some((worker) => exactIdentity(identity, worker) || sameStaffIdentity(identity, worker)));
+  const identitiesToCheck = workers.length ? workers : [file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff].filter(Boolean);
+  return checker.some((identity) => identitiesToCheck.some((worker) => exactIdentity(identity, worker) || sameStaffIdentity(identity, worker)));
 }
 
 function httpError(message, status) {

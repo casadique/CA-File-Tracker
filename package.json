@@ -24,6 +24,7 @@
     "test:non-billed-actions": "node tools/test-non-billed-actions-modernization.js",
     "test:client-master": "node tools/test-client-master-modernization.js",
     "test:not-checked": "node tools/test-not-checked-modernization.js",
+    "test:checking-permissions": "node tools/test-checking-permissions.js",
     "test:correction-required": "node tools/test-correction-required-modernization.js",
     "test:correction-workflow": "node tools/test-correction-workflow.js",
     "test:status-sorting": "node tools/test-status-updated-sorting.js",

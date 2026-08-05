@@ -3506,11 +3506,24 @@ function validCheckingRemark(value) {
 
 function workDoneByUser(file = {}, user = loggedInUser()) {
   if (!file || !user) return false;
-  return sameStaffName(file.completedBy, user.name)
+  const hasRecordedWorker = Boolean(
+    file.completedBy || file.completedById || file.completedByEmail
+    || file.workDoneBy || file.workDoneById || file.workDoneByEmail
+  );
+  const recordedWorkerMatches = sameStaffName(file.completedBy, user.name)
     || exactStaffIdentity(file.completedById, user.id)
     || exactStaffIdentity(file.completedByEmail, user.email)
     || sameStaffName(file.workDoneBy, user.name)
-    || staffNameBelongsToUser(file.assignedStaff, user);
+    || exactStaffIdentity(file.workDoneById, user.id)
+    || exactStaffIdentity(file.workDoneByEmail, user.email);
+  if (recordedWorkerMatches) return true;
+  // Older files may not have completedBy/workDoneBy. Use the assignee only as
+  // a self-check safeguard when no actual completion identity was recorded.
+  return !hasRecordedWorker && (
+    staffNameBelongsToUser(file.assignedStaff, user)
+    || exactStaffIdentity(file.assignedStaffId, user.id)
+    || exactStaffIdentity(file.assignedStaffEmail, user.email)
+  );
 }
 
 function canCheckFile(file = {}) {
