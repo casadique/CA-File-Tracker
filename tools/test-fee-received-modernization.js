@@ -21,6 +21,14 @@ assert.match(table, /feeReceiptRecordsForFile\(file\)\.filter/);
 assert.match(table, /!receiptWasPushed\(receipt\) \|\| Boolean\(linkedCollectionForFeeReceipt\(receipt\)\)/);
 assert.match(table, /file\.feeReceived && !hasReceiptHistory/);
 
+const desktopRow = block("function feeReceivedDesktopRow", "\\nfunction feeReceivedMobileCard");
+assert.doesNotMatch(desktopRow, /escapeHtml\(rupee\(/,
+  "Fee Received currency values must render the rupee symbol instead of its HTML entity text");
+assert.doesNotMatch(desktopRow, /<span>Billed<\/span>|<span>Received<\/span>|<span>Balance<\/span>/,
+  "Desktop amount cells must not repeat their column headings");
+assert.doesNotMatch(desktopRow, /row\.paymentMode/,
+  "Receipt Details must show only the received amount and date");
+
 for (const requirement of [
   /function feeReceivedDisplayRow/,
   /function feeReceivedTransactionCell/,
