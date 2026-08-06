@@ -16,6 +16,11 @@ assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.reconciliation-mobile
 for (const selector of [".collection-form-modern", ".collection-filter-grid", ".collection-register-table", ".collection-type-badge"]) {
   assert.ok(styles.includes(`${selector} {`), `Missing modern Collections style: ${selector}`);
 }
+const collectionFormSource = app.slice(app.indexOf("function renderCashCollectionsTab"), app.indexOf("function renderAccountTransfersTab"));
+assert.doesNotMatch(collectionFormSource, /collectionTypeSelect\("cashCollectionType"/,
+  "Add Collection must not show a Collection Type option");
+assert.match(app, /const collectionType = normalizeCollectionType\(existing\?\.collectionType \|\| existing\?\.collection_type \|\| "other_cash_collection"\)/,
+  "manual collections should retain an existing internal type or use the safe default");
 
 let state = { files: [], expenses: [], otherCashCollections: [], openingBalances: [], accountTransfers: [], cashReconciliations: [], auditLog: [] };
 const appStatePath = require.resolve(path.join(root, "src/services/appStateService.js"));

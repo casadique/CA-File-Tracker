@@ -15459,7 +15459,7 @@ body,
 }
 
 .collection-details-grid .particulars-field {
-  grid-column: span 3;
+  grid-column: 1 / -1;
 }
 
 .collection-payment-grid {

@@ -18161,7 +18161,6 @@ function renderCashCollectionsTab() {
             <div class="collection-section-head"><div><span>01</span><h4 id="collectionDetailsHeading">Collection Details</h4></div><p>Who paid, why it was received and the amount.</p></div>
             <div class="collection-fields-grid collection-details-grid">
               ${expenseDateField("cashDate", "Collection Date", editing?.date || todayDate())}
-              ${collectionTypeSelect("cashCollectionType", "Collection Type", editing?.collectionType || editing?.collection_type || "other_cash_collection")}
               ${cashReceivedFromField(editing?.receivedFrom || "")}
               ${expenseInput("cashAmount", "Amount", editing?.amount || "", "number", "0.01", "compact-field amount-field")}
               ${collectionParticularsSelect(editing?.particulars || "Fee Collection")}
@@ -19091,12 +19090,13 @@ async function saveCashCollectionEntry(event) {
   const attachment = uploadedAttachment || existing?.attachment || null;
   const paymentMethod = document.querySelector("#cashModeEntry").value;
   const accountKey = paymentMethod === "Cash" ? "cash" : document.querySelector("#cashAccountEntry")?.value;
+  const collectionType = normalizeCollectionType(existing?.collectionType || existing?.collection_type || "other_cash_collection");
   const record = {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
     date: document.querySelector("#cashDate").value || todayDate(),
-    collectionType: normalizeCollectionType(document.querySelector("#cashCollectionType")?.value || existing?.collectionType || existing?.collection_type || ""),
-    collection_type: normalizeCollectionType(document.querySelector("#cashCollectionType")?.value || existing?.collectionType || existing?.collection_type || ""),
+    collectionType,
+    collection_type: collectionType,
     particulars: document.querySelector("#cashParticularsEntry").value.trim(),
     voucherNo: document.querySelector("#cashVoucherNo").value.trim(),
     amount,
