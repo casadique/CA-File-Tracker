@@ -10475,8 +10475,8 @@ function correctionRequiredDesktopRows(files = []) {
   return files.map((file, index) => {
     const details = correctionRequiredDetails(file);
     return `<tr class="correction-required-file-row" data-correction-row-file="${escapeHtml(file.id || "")}">
-      <td class="correction-required-sn"><div class="correction-required-sn-cell"><span>${fileSerialNumber(file, index)}</span><button type="button" class="billed-expand-toggle correction-required-row-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">&#8250;</span></button></div></td>
-      <td class="correction-required-client"><div class="correction-required-client-line"><div>${clientDetailsCell(file)}</div></div></td>
+      <td class="correction-required-sn"><span>${fileSerialNumber(file, index)}</span></td>
+      <td class="correction-required-client"><div class="correction-required-client-line"><button type="button" class="billed-expand-toggle correction-required-row-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">&#8250;</span></button><div class="correction-required-client-content">${clientDetailsCell(file)}</div></div></td>
       <td class="correction-required-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")} · C/o ${escapeHtml(file.careOf || "Direct")}</span></td>
       <td class="correction-required-summary"><strong>${escapeHtml(details.reason)}</strong><span>Returned ${escapeHtml(displayDate(details.returnedOn) || "-")} by ${escapeHtml(details.returnedBy)}</span></td>
       <td class="correction-required-staff"><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong><span>Completed ${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</span></td>
@@ -10499,7 +10499,7 @@ function correctionRequiredMobileCard(file = {}, index = 0) {
 function renderCorrectionRequiredTable(files = []) {
   const rows = sortConfiguredFinancialFiles(files, "correctionRequired");
   if (!rows.length) return empty("No correction-required files found.");
-  return sharedTableScrollRegion("correctionRequired", "Correction Required Files", "correction-required-table-wrap", `<table class="file-table correction-required-modern-table"><thead><tr><th class="correction-required-sn">SN</th><th class="correction-required-client">Client</th><th>Service</th><th>Correction Details</th><th>Assigned Staff</th><th>Status</th><th class="correction-required-actions-column">Actions</th></tr></thead><tbody>${correctionRequiredDesktopRows(rows)}</tbody></table>`, `<div class="correction-required-mobile-list">${rows.map(correctionRequiredMobileCard).join("")}</div>`);
+  return sharedTableScrollRegion("correctionRequired", "Correction Required Files", "correction-required-table-wrap", `<table class="file-table correction-required-modern-table"><thead><tr><th class="correction-required-sn">SN</th><th class="correction-required-client">Client</th><th class="correction-required-service">Service</th><th class="correction-required-summary">Correction Details</th><th class="correction-required-staff">Assigned Staff</th><th class="correction-required-status">Status</th><th class="correction-required-actions-column">Actions</th></tr></thead><tbody>${correctionRequiredDesktopRows(rows)}</tbody></table>`, `<div class="correction-required-mobile-list">${rows.map(correctionRequiredMobileCard).join("")}</div>`);
 }
 
 function openMarkReceivedModal(fileId) {
