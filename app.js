@@ -3227,7 +3227,7 @@ function filteredFiles() {
   const f = state.filters;
   const authorisedAllNotCheckedView = isStaffLogin() && f.listView === "notChecked" && isAuthorisedCheckingStaff();
   return filteredFileSource(f.listView).filter((file) => {
-    const configuredBillingView = ["", "active", "completed", "notChecked", "correctionRequired", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
+    const configuredBillingView = ["", "active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
       ? configuredFinancialSearchHaystack(file)
@@ -5716,6 +5716,10 @@ function configuredFinancialFilterConfigs() {
     "Newest First", "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Client Name - A to Z", "Service Type", "Assigned Staff", "Priority", "Workflow Status",
   ];
+  const reAssignedSort = [
+    "Re Allot Date - Newest First", "Re Allot Date - Oldest First", "Received Date - Newest First",
+    "Client Name - A to Z", "Service Type", "Re Allotted To", "Reassigned By", "Workflow Status",
+  ];
   const fileListSort = [
     "Newest First", "Received Date - Newest First", "Received Date - Oldest First", "Due Date - Earliest First",
     "Due Date - Latest First", "Completion Date - Newest First", "Client Name - A to Z",
@@ -5775,6 +5779,34 @@ function configuredFinancialFilterConfigs() {
       advanced: [common.pan, common.fy,
         { key: "activeAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Assigned", "Reassigned"] },
         { key: "activeApproval", label: "Approval", type: "select", emptyLabel: "All approval states", options: ["Pending", "Approved", "Not Submitted"] },
+        common.hasRemarks,
+      ],
+    },
+    reAssigned: {
+      title: "Search & Filter Re Assigned Files",
+      mobileTitle: "Filter Re Assigned Files",
+      mainPrimary: [
+        { ...common.search, placeholder: "Search client, PAN, service, staff, reassigned by or remarks" },
+        common.client, common.careOf, common.service,
+        { key: "reAssignedTo", label: "Re Allotted To", type: "select", emptyLabel: "All staff", options: () => assignableStaffNames() },
+        { key: "reAssignedStatus", label: "Workflow Status", type: "select", emptyLabel: "All statuses", options: ["Received", "Allotted", "WIP", "Work Done", "On Hold", "Client Pending", "Approval Pending", "Correction Required", "Corrected & Completed", "Approved", "Completed", "Billed", "Overdue"] },
+      ],
+      mainSecondary: [
+        { label: "Re Allot Date Range", type: "range", controls: [
+          { key: "reAssignedFrom", label: "Re Allotted From", type: "date" },
+          { key: "reAssignedToDate", label: "Re Allotted To", type: "date" },
+        ] },
+        { key: "reAssignedOriginalStaff", label: "First Allotted To", type: "text", placeholder: "Original staff" },
+        { key: "reAssignedByFilter", label: "Reassigned By", type: "text", placeholder: "Reassigned by" },
+        common.fy,
+        { key: "reAssignedSort", label: "Sort By", type: "select", options: reAssignedSort, defaultValue: reAssignedSort[0] },
+      ],
+      advanced: [common.pan,
+        { label: "Received Date Range", type: "range", controls: [
+          { key: "reAssignedReceivedFrom", label: "Received From", type: "date" },
+          { key: "reAssignedReceivedTo", label: "Received To", type: "date" },
+        ] },
+        { key: "priority", label: "Priority", type: "select", emptyLabel: "All priorities", options: ["Low", "Medium", "High", "Urgent"] },
         common.hasRemarks,
       ],
     },
@@ -6232,6 +6264,17 @@ function configuredFinancialFileMatches(file, listView, filters) {
     if (filters.nonBilledMissingBillAmount === "No" && financial.grossBilledAmount <= 0) return false;
     return true;
   }
+  if (listView === "reAssigned") {
+    const details = reAssignedFileDetails(file);
+    if (filters.reAssignedTo && !sameStaffName(details.reAllottedTo, filters.reAssignedTo)) return false;
+    if (filters.reAssignedStatus && statusOf(file).label !== filters.reAssignedStatus) return false;
+    if (!configuredFinancialDateInRange(details.reAllotDate, filters.reAssignedFrom, filters.reAssignedToDate)) return false;
+    if (!configuredFinancialDateInRange(facts.receivedDate, filters.reAssignedReceivedFrom, filters.reAssignedReceivedTo)) return false;
+    if (filters.reAssignedOriginalStaff && !details.firstAllottedTo.toLowerCase().includes(filters.reAssignedOriginalStaff.toLowerCase())) return false;
+    if (filters.reAssignedByFilter && !details.reassignedBy.toLowerCase().includes(filters.reAssignedByFilter.toLowerCase())) return false;
+    if (filters.priority && String(file.priority || "Medium") !== filters.priority) return false;
+    return true;
+  }
   if (listView === "feePending") {
     if (filters.feePendingStatus && financial.paymentStatus !== filters.feePendingStatus) return false;
     if (!configuredFinancialDateInRange(facts.billDate, filters.feePendingBillFrom, filters.feePendingBillTo)) return false;
@@ -6384,6 +6427,9 @@ function renderFilesPage() {
         }
         if ((state.filters.listView || state.filters.dashboardKind) === "correctionRequired") {
           return exportCorrectionRequiredFilesExcel(sourceFiles);
+        }
+        if ((state.filters.listView || state.filters.dashboardKind) === "reAssigned") {
+          return exportReAssignedFilesExcel(sourceFiles);
         }
         const rows = fileListReportRows(sourceFiles, { format: "excel" });
         if (!rows.length) return toast("No data to export.");
@@ -6616,13 +6662,14 @@ function renderConfiguredStaffFinancialFilesPage(listView, config) {
     const reportFiles = sortFilesForDisplay(filteredFiles());
     if (listView === "notChecked") return exportNotCheckedFilesExcel(reportFiles);
     if (listView === "correctionRequired") return exportCorrectionRequiredFilesExcel(reportFiles);
+    if (listView === "reAssigned") return exportReAssignedFilesExcel(reportFiles);
     if (listView !== "completed") return exportStaffPageExcel(listView, reportFiles);
     const rows = fileListReportRows(reportFiles, { format: "excel" });
     await downloadXlsxRows(fileListPdfFileName(fileListSectionTitle()), rows, completedFilesReportHeading(reportFiles));
     toast("Excel file downloaded");
   };
   const exportPdfButton = document.querySelector("#exportFilteredPdf");
-  if (exportPdfButton) exportPdfButton.onclick = () => ["completed", "notChecked", "correctionRequired"].includes(listView)
+  if (exportPdfButton) exportPdfButton.onclick = () => ["completed", "notChecked", "correctionRequired", "reAssigned"].includes(listView)
     ? exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportPdfButton)
     : exportStaffPagePdf(listView, sortFilesForDisplay(filteredFiles()));
   bindFileActions();
@@ -7046,6 +7093,8 @@ function sortConfiguredFinancialFiles(files, listView) {
     else if (sortLabel === "Checked Date - Oldest First") result = dateCompare(left.checkedDate, right.checkedDate, "asc");
     else if (sortLabel === "Returned Date - Newest First") result = dateCompare(left.correctionReturnedDate, right.correctionReturnedDate);
     else if (sortLabel === "Returned Date - Oldest First" || sortLabel === "Oldest Correction First") result = dateCompare(left.correctionReturnedDate, right.correctionReturnedDate, "asc");
+    else if (sortLabel === "Re Allot Date - Newest First") result = dateCompare(reAssignedFileDetails(a).reAllotDate, reAssignedFileDetails(b).reAllotDate);
+    else if (sortLabel === "Re Allot Date - Oldest First") result = dateCompare(reAssignedFileDetails(a).reAllotDate, reAssignedFileDetails(b).reAllotDate, "asc");
     else if (sortLabel === "Bill Date - Newest First") result = dateCompare(left.billDate, right.billDate);
     else if (sortLabel === "Bill Date - Oldest First" || sortLabel === "Oldest Pending First") result = dateCompare(left.billDate, right.billDate, "asc");
     else if (sortLabel === "Receipt Date - Newest First") result = dateCompare(left.receiptDate, right.receiptDate);
@@ -7061,6 +7110,8 @@ function sortConfiguredFinancialFiles(files, listView) {
     else if (sortLabel === "Client Name - A to Z") result = textCompare(a.name, b.name);
     else if (sortLabel === "Service Type") result = textCompare(a.serviceType, b.serviceType);
     else if (sortLabel === "Assigned Staff") result = textCompare(a.assignedStaff, b.assignedStaff);
+    else if (sortLabel === "Re Allotted To") result = textCompare(reAssignedFileDetails(a).reAllottedTo, reAssignedFileDetails(b).reAllottedTo);
+    else if (sortLabel === "Reassigned By") result = textCompare(reAssignedFileDetails(a).reassignedBy, reAssignedFileDetails(b).reassignedBy);
     else if (sortLabel === "Done By") result = textCompare(a.completedBy || a.workDoneBy || a.assignedStaff, b.completedBy || b.workDoneBy || b.assignedStaff);
     else if (sortLabel === "Checked By") result = textCompare(a.checkedBy, b.checkedBy);
     else if (sortLabel === "Billing Status") result = textCompare(completedFileBillingCategory(a), completedFileBillingCategory(b));
@@ -7077,7 +7128,7 @@ function sortConfiguredFinancialFiles(files, listView) {
 }
 
 function sortFilesForDisplay(files) {
-  if (["", "active", "completed", "notChecked", "correctionRequired", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
+  if (["", "active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "feePending", "feeReceived"].includes(state.filters.listView || "")) return sortConfiguredFinancialFiles(files, state.filters.listView || "");
   if (state.filters.receivedSort === "Oldest First") return sortFilesOldestReceivedFirst(files);
   if (state.filters.receivedSort === "Newest First") return sortFilesNewestFirst(files);
   if (usesCompletionSort()) return sortFilesByCompletionNewestFirst(files);
@@ -8230,35 +8281,40 @@ function renderFeePendingFileTable(files = []) {
       </table>`);
 }
 
-function renderReAssignedFileTable(files) {
-  const rows = sortFilesByAssignmentNewestFirst(files);
-  return `
-    <div class="table-wrap file-table-wrap">
-      <table class="file-table file-table-compact">
-        <thead><tr><th>SN</th><th>Client Name</th><th>Service</th><th>Received On</th><th>C/o</th><th>Status</th><th>First Allotted</th><th>Re Allotted To</th><th>Re Allot Date</th><th>Reassigned By</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${rows.map((file, index) => {
-            const history = assignmentHistory(file)[0] || {};
-            const reassignedBy = history.assignedBy || history.assigned_by || file.reassignedBy || file.reassigned_by || "-";
-            const reallotDate = normalizeImportDate(file.reAssignedDate || file.reassignedAt || file.reassigned_at || history.assignedAt || history.assigned_at || "");
-            return `<tr>
-              <td>${index + 1}</td>
-              <td class="client-details-cell">${clientDetailsCell(file)}</td>
-              <td>${escapeHtml(file.serviceType || "")}</td>
-              <td>${fmt(file.fileReceivedDate)}</td>
-              <td>${escapeHtml(file.careOf || "Direct")}</td>
-              <td><span class="badge ${statusOf(file).className}">${escapeHtml(statusOf(file).label)}</span></td>
-              <td>${escapeHtml(originalAllottedTo(file))}</td>
-              <td>${escapeHtml(file.reAssignedStaff || currentFileAssignee(file).name || "-")}</td>
-              <td>${fmt(reallotDate)}</td>
-              <td>${escapeHtml(reassignedBy)}</td>
-              <td><div class="action-row"><button class="mini-button" data-edit="${file.id}">View File</button></div></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
+function reAssignedFileDetails(file = {}) {
+  const history = assignmentHistory(file)[0] || {};
+  return {
+    firstAllottedTo: String(originalAllottedTo(file) || "Not Assigned"),
+    firstAllottedDate: normalizeImportDate(file.workAllotmentDate || file.assignedAt || file.assigned_at || file.fileReceivedDate || ""),
+    reAllottedTo: String(file.reAssignedStaff || currentFileAssignee(file).name || "Not Assigned"),
+    reAllotDate: normalizeImportDate(file.reAssignedDate || file.reassignedAt || file.reassigned_at || history.assignedAt || history.assigned_at || ""),
+    reassignedBy: String(history.assignedBy || history.assigned_by || file.reassignedBy || file.reassigned_by || "Not recorded"),
+    remarks: String(file.reassignmentRemarks || file.reassignment_remarks || file.remarks || "No remarks"),
+  };
+}
+
+function reAssignedAssignmentTimeline(file = {}) {
+  const details = reAssignedFileDetails(file);
+  return `<div class="reassigned-assignment-timeline"><span><b>First Allotted</b>${escapeHtml(details.firstAllottedTo)}<small>${escapeHtml(displayDate(details.firstAllottedDate) || "-")}</small></span><span><b>Re Allotted</b>${escapeHtml(details.reAllottedTo)}<small>${escapeHtml(displayDate(details.reAllotDate) || "-")}</small></span></div>`;
+}
+
+function reAssignedExpandedDetails(file = {}) {
+  const details = reAssignedFileDetails(file);
+  return `<div class="reassigned-expanded-grid"><div><span>Received On</span><strong>${escapeHtml(displayDate(file.fileReceivedDate) || "-")}</strong></div><div><span>First Allotted To</span><strong>${escapeHtml(details.firstAllottedTo)}</strong></div><div><span>First Allotted Date</span><strong>${escapeHtml(displayDate(details.firstAllottedDate) || "-")}</strong></div><div><span>Reassigned By</span><strong>${escapeHtml(details.reassignedBy)}</strong></div><div><span>Re Allot Date</span><strong>${escapeHtml(displayDate(details.reAllotDate) || "-")}</strong></div><div class="reassigned-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(details.remarks)}</strong></div></div>`;
+}
+
+function reAssignedDesktopRows(files = []) {
+  return files.map((file, index) => `<tr class="reassigned-file-row"><td class="reassigned-sn">${fileSerialNumber(file, index)}</td><td class="reassigned-client"><div class="reassigned-client-line"><button type="button" class="billed-expand-toggle" data-reassigned-row-toggle aria-label="Expand reassignment details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">&#8250;</span></button><div>${clientDetailsCell(file)}</div></div></td><td class="reassigned-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")}</span></td><td class="reassigned-timeline">${reAssignedAssignmentTimeline(file)}</td><td class="reassigned-careof">${escapeHtml(file.careOf || "Direct")}</td><td class="reassigned-status"><span class="badge ${statusOf(file).className}">${escapeHtml(statusOf(file).label)}</span></td><td class="reassigned-actions-column"><div class="action-row">${masterFileActions(file)}</div></td></tr><tr class="reassigned-details-row" hidden><td colspan="7">${reAssignedExpandedDetails(file)}</td></tr>`).join("");
+}
+
+function reAssignedMobileCard(file = {}, index = 0) {
+  const details = reAssignedFileDetails(file);
+  return `<article class="reassigned-mobile-card${index % 2 ? " is-alt" : ""}"><div class="reassigned-mobile-head"><button type="button" class="billed-expand-toggle" data-reassigned-row-toggle aria-label="Expand reassignment details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">&#8250;</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div><div class="reassigned-mobile-summary"><div><span>First Allotted</span><strong>${escapeHtml(details.firstAllottedTo)}</strong><small>${escapeHtml(displayDate(details.firstAllottedDate) || "-")}</small></div><div><span>Re Allotted To</span><strong>${escapeHtml(details.reAllottedTo)}</strong><small>${escapeHtml(displayDate(details.reAllotDate) || "-")}</small></div><div><span>Reassigned By</span><strong>${escapeHtml(details.reassignedBy)}</strong></div><div><span>Status</span><strong>${escapeHtml(statusOf(file).label)}</strong></div></div><div class="reassigned-mobile-actions">${masterFileActions(file)}</div><div class="reassigned-mobile-details" hidden>${reAssignedExpandedDetails(file)}</div></article>`;
+}
+
+function renderReAssignedFileTable(files = []) {
+  const rows = sortConfiguredFinancialFiles(files, "reAssigned");
+  return sharedTableScrollRegion("reAssigned", "Re Assigned Files", "reassigned-table-wrap", `<table class="file-table reassigned-modern-table"><thead><tr><th class="reassigned-sn">SN</th><th class="reassigned-client">Client</th><th>Service</th><th>Assignment Timeline</th><th>C/o</th><th>Status</th><th class="reassigned-actions-column">Actions</th></tr></thead><tbody>${reAssignedDesktopRows(rows)}</tbody></table>`, `<div class="reassigned-mobile-list">${rows.map(reAssignedMobileCard).join("")}</div>`);
 }
 
 function feeReceivedDisplayRow(file = {}, receipt = null) {
@@ -9908,6 +9964,22 @@ function bindFileActions() {
       event.stopPropagation();
       const row = button.closest(".fee-pending-file-row");
       const details = row?.nextElementSibling?.classList.contains("fee-pending-details-row") ? row.nextElementSibling : null;
+      if (!details) return;
+      const opening = details.hidden;
+      details.hidden = !opening;
+      button.setAttribute("aria-expanded", String(opening));
+      button.classList.toggle("expanded", opening);
+    };
+  });
+  document.querySelectorAll("[data-reassigned-row-toggle]").forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const desktopRow = button.closest(".reassigned-file-row");
+      const mobileCard = button.closest(".reassigned-mobile-card");
+      const details = desktopRow?.nextElementSibling?.classList.contains("reassigned-details-row")
+        ? desktopRow.nextElementSibling
+        : mobileCard?.querySelector(".reassigned-mobile-details");
       if (!details) return;
       const opening = details.hidden;
       details.hidden = !opening;
@@ -22209,6 +22281,126 @@ async function createBilledFilesPdfDocument(sourceFiles) {
   return { doc, records, summary };
 }
 
+function reAssignedReportRecords(sourceFiles = []) {
+  return sortConfiguredFinancialFiles(sourceFiles || [], "reAssigned").map((file, index) => {
+    const details = reAssignedFileDetails(file);
+    return {
+      index: index + 1,
+      file,
+      client: `${filePdfText(file.name, "-")}\n${filePdfText(fileRegistrationNumber(file), "Regn No. Not Available")} · FY ${filePdfText(fileFy(file), "NA")}`,
+      service: `${filePdfText(file.serviceType, "-")}\nC/o: ${filePdfText(file.careOf, "Direct")}`,
+      received: filePdfDate(file.fileReceivedDate) || "-",
+      firstAllotment: `${filePdfText(details.firstAllottedTo, "Not Assigned")}\n${filePdfDate(details.firstAllottedDate) || "-"}`,
+      reAllotment: `${filePdfText(details.reAllottedTo, "Not Assigned")}\n${filePdfDate(details.reAllotDate) || "-"}`,
+      reassignedBy: filePdfText(details.reassignedBy, "Not recorded"),
+      status: filePdfText(statusOf(file).label, "-"),
+      remarks: filePdfText(details.remarks, "-"),
+    };
+  });
+}
+
+function reAssignedReportSummary(records = []) {
+  const staff = new Set();
+  return records.reduce((summary, record) => {
+    summary.total += 1;
+    if (/completed|billed/i.test(record.status)) summary.completed += 1;
+    else summary.active += 1;
+    const assigned = reAssignedFileDetails(record.file).reAllottedTo;
+    if (assigned && assigned !== "Not Assigned") staff.add(assigned.toLowerCase());
+    summary.staff = staff.size;
+    return summary;
+  }, { total: 0, active: 0, completed: 0, staff: 0 });
+}
+
+function reAssignedPdfFilterSummary() {
+  const config = configuredFinancialFilterConfig("reAssigned");
+  const active = config ? configuredFinancialActiveFilters(config).filter((field) => field.key !== "reAssignedSort") : [];
+  return active.length ? active.map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`).join(" | ") : "No filters applied";
+}
+
+function drawReAssignedPdfHeader(doc, context, compact = false) {
+  const { pageWidth, assets, generatedAt, generatedBy, filterSummary, summary } = context;
+  if (compact) {
+    doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(8.2);
+    doc.text("Muhammad & Associates", 30, 24); doc.text("Re Assigned Files Report", pageWidth / 2, 24, { align: "center" });
+    doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.5); doc.setTextColor(...BILLED_PDF_COLORS.muted);
+    doc.text(generatedAt, pageWidth - 30, 24, { align: "right" }); doc.text(`Filters: ${billedPdfShortText(filterSummary, 120)}`, 30, 38, { maxWidth: pageWidth - 60 });
+    doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.line(30, 46, pageWidth - 30, 46); return;
+  }
+  try { doc.addImage(assets.logo, "PNG", 30, 20, 35, 35); } catch { /* Branded text remains visible. */ }
+  doc.setTextColor(...BILLED_PDF_COLORS.navy); doc.setFont("DejaVuSans", "bold"); doc.setFontSize(14); doc.text("Muhammad & Associates", 73, 31);
+  doc.setFont("DejaVuSans", "normal"); doc.setFontSize(8.2); doc.text("Chartered Accountants", 73, 46);
+  doc.setFont("DejaVuSans", "bold"); doc.setFontSize(15); doc.text("RE ASSIGNED FILES REPORT", pageWidth / 2, 62, { align: "center" });
+  doc.setDrawColor(...BILLED_PDF_COLORS.violet); doc.setLineWidth(1.5); doc.line(pageWidth / 2 - 95, 69, pageWidth / 2 + 95, 69);
+  doc.setFillColor(...BILLED_PDF_COLORS.lightViolet); doc.setDrawColor(...BILLED_PDF_COLORS.border); doc.roundedRect(30, 78, pageWidth - 60, 34, 3, 3, "FD");
+  doc.setTextColor(...BILLED_PDF_COLORS.text); doc.setFont("DejaVuSans", "normal"); doc.setFontSize(6.7);
+  doc.text(`Generated: ${generatedAt}  |  Records: ${summary.total}  |  Generated by: ${generatedBy}`, 38, 91);
+  doc.text(`Filters: ${billedPdfShortText(filterSummary, 145)}  |  Sort: ${state.filters.reAssignedSort || "Re Allot Date - Newest First"}`, 38, 103);
+  drawBilledPdfCards(doc, [
+    ["Re Assigned Files", String(summary.total), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
+    ["Active", String(summary.active), BILLED_PDF_COLORS.blue, BILLED_PDF_COLORS.lightBlue],
+    ["Completed / Billed", String(summary.completed), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
+    ["Current Staff", String(summary.staff), BILLED_PDF_COLORS.navy, BILLED_PDF_COLORS.alternate],
+  ], 30, 121, pageWidth - 60, 4);
+}
+
+async function createReAssignedFilesPdfDocument(sourceFiles = []) {
+  await loadPdfTools();
+  const assets = await loadBilledPdfAssets();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true, putOnlyUsedFonts: true });
+  registerBilledPdfFonts(doc, assets);
+  const records = reAssignedReportRecords(sourceFiles);
+  const summary = reAssignedReportSummary(records);
+  const context = { assets, summary, generatedAt: fileExportDateTime(), generatedBy: loggedInUser()?.name || state.currentUser || "Not Recorded", filterSummary: reAssignedPdfFilterSummary(), pageWidth: doc.internal.pageSize.getWidth() };
+  if (!records.length) return { doc, records, summary };
+  doc.autoTable({
+    startY: 173,
+    columns: [
+      { header: "SN", dataKey: "index" }, { header: "Client Details", dataKey: "client" }, { header: "Service / C/o", dataKey: "service" },
+      { header: "Received", dataKey: "received" }, { header: "First Allotted", dataKey: "firstAllotment" }, { header: "Re Allotted", dataKey: "reAllotment" },
+      { header: "Reassigned By", dataKey: "reassignedBy" }, { header: "Status", dataKey: "status" }, { header: "Remarks", dataKey: "remarks" },
+    ],
+    body: records, theme: "grid", showHead: "everyPage", rowPageBreak: "avoid", margin: { left: 30, right: 30, top: 58, bottom: 32 },
+    styles: { font: "DejaVuSans", fontSize: 6.7, cellPadding: { top: 3.8, right: 2.6, bottom: 3.8, left: 2.6 }, overflow: "linebreak", valign: "middle", textColor: BILLED_PDF_COLORS.text, lineColor: BILLED_PDF_COLORS.border, lineWidth: .3, minCellHeight: 31 },
+    headStyles: { font: "DejaVuSans", fontStyle: "bold", fontSize: 6.9, fillColor: BILLED_PDF_COLORS.navy, textColor: [255,255,255], halign: "center", minCellHeight: 27 },
+    alternateRowStyles: { fillColor: BILLED_PDF_COLORS.alternate },
+    columnStyles: { index: { halign: "center", cellWidth: 22 }, client: { cellWidth: 128, fontStyle: "bold" }, service: { cellWidth: 92 }, received: { halign: "center", cellWidth: 57 }, firstAllotment: { cellWidth: 92 }, reAllotment: { cellWidth: 92 }, reassignedBy: { cellWidth: 75 }, status: { halign: "center", cellWidth: 72 }, remarks: { cellWidth: 125 } },
+    willDrawPage: (data) => drawReAssignedPdfHeader(doc, context, data.pageNumber !== 1),
+  });
+  drawBilledPdfFooters(doc);
+  return { doc, records, summary };
+}
+
+async function exportReAssignedFilesExcel(sourceFiles = []) {
+  if (!rolePerm().export) return toast("This role cannot export data.");
+  await loadSheetJs();
+  const records = reAssignedReportRecords(sourceFiles);
+  if (!records.length) return toast("No re-assigned files available for the selected filters.");
+  const headers = ["SN", "Client Details", "Service / C/o", "Received Date", "First Allotted To", "First Allotted Date", "Re Allotted To", "Re Allot Date", "Reassigned By", "Status", "Remarks"];
+  const rows = [["Muhammad & Associates"], ["Chartered Accountants"], ["RE ASSIGNED FILES REPORT"], [`Generated: ${fileExportDateTime()} | Records: ${records.length} | Generated by: ${loggedInUser()?.name || state.currentUser || "Not Recorded"}`], [`Filters: ${reAssignedPdfFilterSummary()} | Sort: ${state.filters.reAssignedSort || "Re Allot Date - Newest First"}`], [], headers,
+    ...records.map((record) => { const details = reAssignedFileDetails(record.file); return [record.index, record.client, record.service, excelDateValue(record.file.fileReceivedDate), details.firstAllottedTo, excelDateValue(details.firstAllottedDate), details.reAllottedTo, excelDateValue(details.reAllotDate), details.reassignedBy, record.status, details.remarks]; })];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+  worksheet["!merges"] = ["A1:K1", "A2:K2", "A3:K3", "A4:K4", "A5:K5"].map(XLSX.utils.decode_range);
+  const border = { style: "thin", color: { rgb: "CBD5E1" } };
+  const styleRange = (address, style) => { const range = XLSX.utils.decode_range(address); for (let r = range.s.r; r <= range.e.r; r += 1) for (let c = range.s.c; c <= range.e.c; c += 1) { const cell = XLSX.utils.encode_cell({ r, c }); worksheet[cell] ||= { t: "s", v: "" }; worksheet[cell].s = style; } };
+  styleRange("A1:K1", { font: { name: "Aptos Display", sz: 16, bold: true, color: { rgb: "0F2A5F" } }, alignment: { horizontal: "center" } });
+  styleRange("A2:K2", { font: { name: "Aptos", sz: 10, color: { rgb: "475569" } }, alignment: { horizontal: "center" } });
+  styleRange("A3:K3", { font: { name: "Aptos Display", sz: 14, bold: true, color: { rgb: "6D28D9" } }, alignment: { horizontal: "center" }, border: { bottom: { style: "medium", color: { rgb: "8B5CF6" } } } });
+  styleRange("A4:K5", { fill: { patternType: "solid", fgColor: { rgb: "F5F3FF" } }, font: { name: "Aptos", sz: 9, color: { rgb: "334155" } }, alignment: { wrapText: true }, border: { top: border, bottom: border } });
+  styleRange("A7:K7", { fill: { patternType: "solid", fgColor: { rgb: "0F2A5F" } }, font: { name: "Aptos", sz: 9, bold: true, color: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: { top: border, bottom: border, left: border, right: border } });
+  const lastRow = 7 + records.length;
+  for (let row = 8; row <= lastRow; row += 1) {
+    styleRange(`A${row}:K${row}`, { fill: { patternType: "solid", fgColor: { rgb: row % 2 ? "F8FAFC" : "FFFFFF" } }, font: { name: "Aptos", sz: 9, color: { rgb: "0F172A" } }, alignment: { vertical: "center", wrapText: true }, border: { bottom: border } });
+    [3, 5, 7].forEach((column) => { const cell = worksheet[XLSX.utils.encode_cell({ r: row - 1, c: column })]; if (cell) { cell.z = "dd-mm-yyyy"; cell.s.alignment = { horizontal: "center", vertical: "center" }; } });
+  }
+  worksheet["!autofilter"] = { ref: `A7:K${lastRow}` }; worksheet["!freeze"] = { xSplit: 0, ySplit: 7, topLeftCell: "A8", activePane: "bottomLeft", state: "frozen" };
+  worksheet["!cols"] = [6, 31, 25, 15, 20, 17, 20, 17, 20, 18, 38].map((wch) => ({ wch })); worksheet["!rows"] = rows.map((_, index) => ({ hpt: index === 0 ? 26 : index === 2 ? 24 : index === 6 ? 28 : index >= 7 ? 38 : 20 }));
+  const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, "Re Assigned Files");
+  XLSX.writeFile(workbook, `${fileListPdfFileName("Re Assigned Files")}.xlsx`, { cellDates: true, cellStyles: true });
+  toast("Re Assigned Files Excel downloaded");
+}
+
 async function exportFilteredFilesPdf(files, button) {
   if (!rolePerm().export) return toast("This role cannot export data.");
   const sourceFiles = Array.isArray(files) ? files : sortFilesForDisplay(filteredFiles());
@@ -22220,6 +22412,7 @@ async function exportFilteredFilesPdf(files, button) {
   const completedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "completed";
   const notCheckedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "notChecked";
   const correctionRequiredFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "correctionRequired";
+  const reAssignedFilesPdf = (state.filters.listView || state.filters.dashboardKind) === "reAssigned";
   const feeReceivedPdf = (state.filters.listView || state.filters.dashboardKind) === "feeReceived";
   const rows = fileListReportRows(sourceFiles);
   const headers = Object.keys(rows[0] || {});
@@ -22270,6 +22463,16 @@ async function exportFilteredFilesPdf(files, button) {
       }
       doc.save(`${fileListPdfFileName(sectionTitle)}.pdf`);
       toast("Correction Required Files PDF downloaded");
+      return;
+    }
+    if (reAssignedFilesPdf) {
+      const { doc, records } = await createReAssignedFilesPdfDocument(sourceFiles);
+      if (!records.length) {
+        toast("No re-assigned files available for the selected filters.");
+        return;
+      }
+      doc.save(`${fileListPdfFileName("Re Assigned Files")}.pdf`);
+      toast("Re Assigned Files PDF downloaded");
       return;
     }
     if (feePendingPdf) {

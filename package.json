@@ -30,6 +30,7 @@
     "test:checking-permissions": "node tools/test-checking-permissions.js",
     "test:asset-cache": "node tools/test-first-party-cache-policy.js",
     "test:correction-required": "node tools/test-correction-required-modernization.js",
+    "test:reassigned-files": "node tools/test-reassigned-files-modernization.js",
     "test:correction-workflow": "node tools/test-correction-workflow.js",
     "test:status-sorting": "node tools/test-status-updated-sorting.js",
     "test:state-safety": "node tools/test-central-state-safety.js",
