@@ -17674,6 +17674,121 @@ function canUseExpenseModule() {
   return ["Admin", "Manager"].includes(state.currentRole);
 }
 
+const transactionLedgerUi = {
+  collections: { view: "today", page: 1, pageSize: 25, sort: "newest", result: null, signature: "", loading: false, exportScope: "filtered" },
+  expenses: { view: "today", page: 1, pageSize: 25, sort: "newest", result: null, signature: "", loading: false, exportScope: "filtered" },
+};
+
+function transactionLedgerState(kind) {
+  return transactionLedgerUi[kind === "expenses" ? "expenses" : "collections"];
+}
+
+function transactionDateRange(kind) {
+  const ui = transactionLedgerState(kind);
+  const today = indiaTodayDate();
+  if (ui.view === "today") return { from: today, to: today, label: `Today - ${displayDate(today)}` };
+  if (ui.view === "last7") {
+    const start = new Date(`${today}T00:00:00+05:30`);
+    start.setDate(start.getDate() - 6);
+    const from = indiaDateKey(start);
+    return { from, to: today, label: `${displayDate(from)} to ${displayDate(today)}` };
+  }
+  if (ui.view === "month") {
+    const from = `${today.slice(0, 7)}-01`;
+    return { from, to: today, label: `${displayDate(from)} to ${displayDate(today)}` };
+  }
+  if (ui.view === "custom") {
+    const prefix = kind === "expenses" ? "expense" : "cash";
+    const from = state.filters[`${prefix}From`] || "";
+    const to = state.filters[`${prefix}To`] || "";
+    return { from, to, label: from || to ? `${displayDate(from) || "Start"} to ${displayDate(to) || "Today"}` : "Select a custom date range" };
+  }
+  return { from: "", to: "", label: "All transaction dates" };
+}
+
+function indiaDateKey(value = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+}
+
+function transactionLedgerFilterValues(kind) {
+  const expense = kind === "expenses";
+  const range = transactionDateRange(kind);
+  return {
+    kind,
+    view: transactionLedgerState(kind).view,
+    from: range.from,
+    to: range.to,
+    search: state.filters[expense ? "expenseParticulars" : "cashParticulars"] || "",
+    paymentMethod: state.filters[expense ? "expenseMode" : "cashMode"] || "",
+    account: state.filters[expense ? "expenseAccount" : "cashAccount"] || "",
+    subtype: state.filters[expense ? "expenseItemFilter" : "cashCollectionTypeFilter"] || "",
+    counterparty: state.filters[expense ? "expensePaidTo" : "cashReceivedFrom"] || "",
+    reference: state.filters[expense ? "expenseVoucher" : "cashVoucher"] || "",
+    enteredBy: state.filters[expense ? "expenseEnteredBy" : "cashCollectedByFilter"] || "",
+    service: expense ? "" : (state.filters.cashService || ""),
+    linkStatus: expense ? "" : (state.filters.cashLinkStatus || ""),
+    minAmount: state.filters[expense ? "expenseMinAmount" : "cashMinAmount"] || "",
+    maxAmount: state.filters[expense ? "expenseMaxAmount" : "cashMaxAmount"] || "",
+    sort: transactionLedgerState(kind).sort,
+    page: transactionLedgerState(kind).page,
+    pageSize: transactionLedgerState(kind).pageSize,
+  };
+}
+
+function transactionLedgerSignature(kind) {
+  return JSON.stringify(transactionLedgerFilterValues(kind));
+}
+
+function invalidateTransactionLedger(kind) {
+  const ui = transactionLedgerState(kind);
+  ui.result = null;
+  ui.signature = "";
+  ui.loading = false;
+  ui.failed = false;
+}
+
+async function requestTransactionLedger(kind, force = false) {
+  if (!isSupabaseMode() || !["collections", "expenses"].includes(kind)) return;
+  const ui = transactionLedgerState(kind);
+  const signature = transactionLedgerSignature(kind);
+  if (!force && (ui.loading || (ui.signature === signature && (ui.result || ui.failed)))) return;
+  ui.loading = true;
+  const requestedSignature = signature;
+  try {
+    const params = new URLSearchParams(transactionLedgerFilterValues(kind));
+    const result = await apiJson(`/api/finance/transactions?${params.toString()}`);
+    if (transactionLedgerSignature(kind) !== requestedSignature) return;
+    ui.result = result;
+    ui.signature = requestedSignature;
+    ui.failed = false;
+    ui.page = Number(result.page || ui.page);
+  } catch (error) {
+    ui.signature = requestedSignature;
+    ui.failed = true;
+    console.error("Transaction register query failed", { kind, message: error.message });
+    if (force) toast(error.message || "Transactions could not be refreshed.");
+  } finally {
+    ui.loading = false;
+    if ((state.filters.expenseTab || "collections") === kind) renderExpensesPage();
+  }
+}
+
+function transactionLedgerData(kind, locallyFiltered) {
+  const ui = transactionLedgerState(kind);
+  if (ui.result && ui.signature === transactionLedgerSignature(kind)) return ui.result;
+  const pageCount = Math.max(1, Math.ceil(locallyFiltered.length / ui.pageSize));
+  ui.page = Math.min(pageCount, Math.max(1, ui.page));
+  const rows = locallyFiltered.slice((ui.page - 1) * ui.pageSize, ui.page * ui.pageSize);
+  const summary = { total: 0, cash: 0, federal_bank: 0, tmb: 0, unclassified_bank: 0 };
+  locallyFiltered.forEach((item) => {
+    const amount = Number(item.amount || 0);
+    const account = transactionAccountKey(item);
+    summary.total += amount;
+    if (Object.hasOwn(summary, account)) summary[account] += amount;
+  });
+  return { rows, total: locallyFiltered.length, totalAmount: summary.total, summary, page: ui.page, pageSize: ui.pageSize, pageCount, ...transactionDateRange(kind) };
+}
+
 function renderExpensesPage() {
   const root = document.querySelector("#expenses");
   if (!root) return;
@@ -17705,6 +17820,7 @@ function renderExpensesPage() {
     </div>
   `;
   bindExpensePage();
+  if (["collections", "expenses"].includes(tab)) requestTransactionLedger(tab);
 }
 
 function renderTransactionDashboardHeader(tab) {
@@ -17819,9 +17935,74 @@ function isCollectionType(item = {}, type) {
   return normalizeCollectionType(item.collectionType || item.collection_type) === type;
 }
 
+function renderTransactionLedgerHeader(kind, data) {
+  const expense = kind === "expenses";
+  const ui = transactionLedgerState(kind);
+  const noun = expense ? "Expenses" : "Collections";
+  const scope = ui.view === "today" ? `Today's ${noun}` : `Filtered ${noun}`;
+  return `<section class="transaction-ledger-head ${expense ? "expense-tone" : "collection-tone"}">
+    <div class="transaction-ledger-title"><span>${expense ? transactionIcon("arrow-up") : transactionIcon("arrow-down")}</span><div><small>Transactions</small><h2>${noun}</h2><p>${expense ? "Track business spending and outgoing payments." : "Track money received across cash and bank accounts."}</p></div></div>
+    <div class="transaction-ledger-kpi"><span>${escapeHtml(scope)}</span><strong>${rupee(data.totalAmount || 0)}</strong><small>${Number(data.total || 0).toLocaleString("en-IN")} transaction${Number(data.total || 0) === 1 ? "" : "s"}</small></div>
+    <div class="transaction-ledger-actions"><button type="button" class="primary-button" data-focus-transaction-form="${kind}">${expense ? "Add Expense" : "Add Collection"}</button><button type="button" class="secondary-button" data-refresh-ledger="${kind}">Refresh</button>${renderTransactionExportMenu(kind)}</div>
+  </section>`;
+}
+
+function renderTransactionExportMenu(kind) {
+  const ui = transactionLedgerState(kind);
+  return `<details class="transaction-export-menu"><summary class="secondary-button">Export <span aria-hidden="true">&#9662;</span></summary><div class="transaction-export-popover"><strong>Export scope</strong>${[["filtered", "Current filtered results"], ["page", "Current page"], ["all", "All authorised transactions"]].map(([value, label]) => `<label><input type="radio" name="${kind}ExportScope" value="${value}" ${ui.exportScope === value ? "checked" : ""}> ${label}</label>`).join("")}<div><button type="button" data-ledger-export="${kind}" data-format="excel">Excel</button><button type="button" data-ledger-export="${kind}" data-format="pdf">PDF</button></div></div></details>`;
+}
+
+function renderTransactionSummary(kind, data) {
+  const expense = kind === "expenses";
+  const summary = data.summary || {};
+  const cards = [
+    [expense ? "Total Expenses" : "Total Collections", summary.total || data.totalAmount || 0, "total"],
+    [expense ? "Cash Expenses" : "Cash Collections", summary.cash || 0, "cash"],
+    [expense ? "Federal Bank Expenses" : "Federal Bank Collections", summary.federal_bank || 0, "federal"],
+    [expense ? "TMB Expenses" : "TMB Collections", summary.tmb || 0, "tmb"],
+  ];
+  if (Number(summary.unclassified_bank || 0)) cards.push([expense ? "Unclassified Expenses" : "Unclassified Collections", summary.unclassified_bank, "unclassified"]);
+  return `<section class="transaction-ledger-summary">${cards.map(([label, amount, tone]) => `<article class="${tone}"><span>${escapeHtml(label)}</span><strong>${rupee(amount)}</strong>${tone === "unclassified" ? `<small>Needs account classification</small>` : ""}</article>`).join("")}</section>`;
+}
+
+function renderTransactionDateViews(kind) {
+  const ui = transactionLedgerState(kind);
+  return `<div class="transaction-date-views" role="group" aria-label="Transaction date view">${[["today", "Today"], ["last7", "Last 7 Days"], ["month", "This Month"], ["custom", "Custom"], ["all", "All Transactions"]].map(([value, label]) => `<button type="button" data-transaction-view="${kind}" data-view="${value}" class="${ui.view === value ? "active" : ""}" aria-pressed="${ui.view === value}">${label}</button>`).join("")}</div>`;
+}
+
+function transactionActiveFilterEntries(kind) {
+  const expense = kind === "expenses";
+  const range = transactionDateRange(kind);
+  const entries = [["view", range.label]];
+  const values = transactionLedgerFilterValues(kind);
+  const labels = expense
+    ? { search: "Search", paymentMethod: "Method", account: "Account", subtype: "Expense Item", counterparty: "Paid To", reference: "Voucher", enteredBy: "Entered By", minAmount: "Min Amount", maxAmount: "Max Amount" }
+    : { search: "Search", paymentMethod: "Method", account: "Account", subtype: "Collection Type", counterparty: "Received From", reference: "Reference", enteredBy: "Collected By", service: "Service / File", linkStatus: "Link Status", minAmount: "Min Amount", maxAmount: "Max Amount" };
+  Object.entries(labels).forEach(([key, label]) => { if (values[key] !== "" && values[key] != null) entries.push([key, `${label}: ${key === "account" ? financeAccountLabel(values[key]) : values[key]}`]); });
+  return entries;
+}
+
+function renderTransactionFilterMeta(kind, data) {
+  const entries = transactionActiveFilterEntries(kind);
+  return `<div class="transaction-filter-meta"><div class="transaction-filter-chips">${entries.map(([key, label]) => `<button type="button" data-remove-transaction-filter="${kind}" data-filter-key="${key}">${escapeHtml(label)} <span aria-hidden="true">&times;</span></button>`).join("")}</div><div class="transaction-filter-result"><span>${entries.length - 1} active filter${entries.length - 1 === 1 ? "" : "s"}</span><strong>${Number(data.total || 0).toLocaleString("en-IN")} result${Number(data.total || 0) === 1 ? "" : "s"}</strong></div></div>`;
+}
+
+function renderTransactionPagination(kind, data) {
+  const ui = transactionLedgerState(kind);
+  return `<nav class="transaction-pagination" aria-label="${kind} pagination"><div><span>Rows per page</span><select data-transaction-page-size="${kind}">${[25, 50, 100].map((size) => `<option value="${size}" ${ui.pageSize === size ? "selected" : ""}>${size}</option>`).join("")}</select></div><span>Page ${Number(data.page || 1)} of ${Number(data.pageCount || 1)}</span><div><button type="button" data-ledger-page="${kind}" data-page="${Math.max(1, Number(data.page || 1) - 1)}" ${Number(data.page || 1) <= 1 ? "disabled" : ""}>Previous</button><button type="button" data-ledger-page="${kind}" data-page="${Math.min(Number(data.pageCount || 1), Number(data.page || 1) + 1)}" ${Number(data.page || 1) >= Number(data.pageCount || 1) ? "disabled" : ""}>Next</button></div></nav>`;
+}
+
+function renderTransactionEmptyState(kind) {
+  const expense = kind === "expenses";
+  const today = transactionLedgerState(kind).view === "today";
+  return `<section class="transaction-empty-state"><span aria-hidden="true">${expense ? transactionIcon("arrow-up") : transactionIcon("arrow-down")}</span><h3>No ${expense ? "expenses" : "collections"} recorded${today ? " today" : " for this view"}</h3><p>${today ? "Historical transactions remain safely available in All Transactions." : "Adjust the filters or return to the complete transaction history."}</p><div><button type="button" class="primary-button" data-focus-transaction-form="${kind}">${expense ? "Add Expense" : "Add Collection"}</button><button type="button" class="secondary-button" data-transaction-view="${kind}" data-view="all">View All Transactions</button></div></section>`;
+}
+
 function renderExpenseEntryTab() {
-  const rows = filteredExpenses();
+  const data = transactionLedgerData("expenses", filteredExpenses());
   return `
+    ${renderTransactionLedgerHeader("expenses", data)}
+    ${renderTransactionSummary("expenses", data)}
     <div class="transaction-workspace">
       <section class="expense-stack transaction-main-column">
         <form id="expenseForm" class="expense-form expense-entry-form">
@@ -17846,15 +18027,15 @@ function renderExpenseEntryTab() {
         </form>
         <div class="expense-tools-card">
           <div class="expense-card-head">
-            <span>Search & Reports</span>
-            <h3>Expense Register</h3>
+            <span>Search &amp; Filters</span>
+            <h3>Find Expense Transactions</h3>
           </div>
-          ${renderExpenseFilters()}
+          ${renderExpenseFilters(data)}
         </div>
       </section>
       ${renderTransactionSidePanel("expenses")}
     </div>
-    ${renderExpenseTable(rows)}
+    ${data.rows.length ? `${renderExpenseTable(data.rows, data)}${renderTransactionPagination("expenses", data)}` : renderTransactionEmptyState("expenses")}
   `;
 }
 
@@ -17927,9 +18108,11 @@ function openOpeningBalanceModal() {
 }
 
 function renderCashCollectionsTab() {
-  const rows = filteredCashCollections();
+  const data = transactionLedgerData("collections", filteredCashCollections());
   const editing = editingCashCollection();
   return `
+    ${renderTransactionLedgerHeader("collections", data)}
+    ${renderTransactionSummary("collections", data)}
     <div class="transaction-workspace">
       <section class="expense-stack transaction-main-column">
         <form id="cashCollectionForm" class="expense-form collection-form collection-form-modern">
@@ -17973,15 +18156,15 @@ function renderCashCollectionsTab() {
         </form>
         <div class="expense-tools-card">
           <div class="expense-card-head">
-            <span>Search & Reports</span>
-            <h3>Client Collection Register</h3>
+            <span>Search &amp; Filters</span>
+            <h3>Find Collection Transactions</h3>
           </div>
-          ${renderCashFilters()}
+          ${renderCashFilters(data)}
         </div>
       </section>
       ${renderTransactionSidePanel("collections")}
     </div>
-    ${renderCashCollectionTable(rows)}
+    ${data.rows.length ? `${renderCashCollectionTable(data.rows, data)}${renderTransactionPagination("collections", data)}` : renderTransactionEmptyState("collections")}
   `;
 }
 
@@ -18011,29 +18194,22 @@ function renderAccountTransfersTab() {
 }
 
 function renderTransactionSidePanel(tab) {
-  const balance = cashBalanceForRange();
-  const today = indiaTodayDate();
-  const collections = activeCashCollections();
-  const todaysCollections = collections.filter((item) => item.date === today);
-  const cashCollections = collections.filter((item) => transactionAccountKey(item) === "cash");
-  const federalCollections = collections.filter((item) => transactionAccountKey(item) === "federal_bank");
-  const tmbCollections = collections.filter((item) => transactionAccountKey(item) === "tmb");
-  const unclassifiedCollections = collections.filter((item) => transactionAccountKey(item) === "unclassified_bank");
-  const otherCollections = collections.filter((item) => !isCollectionType(item, "fee_collection"));
+  const expense = tab === "expenses";
+  const kind = expense ? "expenses" : "collections";
+  const data = transactionLedgerData(kind, expense ? filteredExpenses() : filteredCashCollections());
+  const summary = data.summary || {};
   return `<aside class="transaction-side-column">
     <section class="transaction-side-card">
       <div class="expense-card-head">
-        <span>Today</span>
-        <h3>Collection Summary</h3>
+        <span>${escapeHtml(transactionDateRange(kind).label)}</span>
+        <h3>${expense ? "Expense" : "Collection"} Summary</h3>
       </div>
-      ${transactionInfoRow("Today's Collections", todaysCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "collection")}
-      ${transactionInfoRow("Total Collections", balance.feeCollections + balance.otherCollections, "balance")}
-      ${transactionInfoRow("Cash Collections", cashCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "collection")}
-      ${transactionInfoRow("Federal Bank Collections", federalCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "fee")}
-      ${transactionInfoRow("TMB Collections", tmbCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "fee")}
-      ${unclassifiedCollections.length ? transactionInfoRow("Unclassified Bank Collections", unclassifiedCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "count") : ""}
-      ${transactionInfoRow("Other Collections", otherCollections.reduce((sum, item) => sum + Number(item.amount || 0), 0), "balance")}
-      ${transactionInfoRow("Record Count", tab === "expenses" ? filteredExpenses().length : filteredCashCollections().length, "count", false)}
+      ${transactionInfoRow(`Total ${expense ? "Expenses" : "Collections"}`, summary.total || 0, expense ? "expense" : "collection")}
+      ${transactionInfoRow(`Cash ${expense ? "Expenses" : "Collections"}`, summary.cash || 0, expense ? "expense" : "collection")}
+      ${transactionInfoRow(`Federal Bank ${expense ? "Expenses" : "Collections"}`, summary.federal_bank || 0, "fee")}
+      ${transactionInfoRow(`TMB ${expense ? "Expenses" : "Collections"}`, summary.tmb || 0, "fee")}
+      ${Number(summary.unclassified_bank || 0) ? transactionInfoRow(`Unclassified ${expense ? "Expenses" : "Collections"}`, summary.unclassified_bank, "count") : ""}
+      ${transactionInfoRow("Record Count", data.total || 0, "count", false)}
     </section>
     <section class="transaction-side-card">
       <div class="expense-card-head">
@@ -18238,44 +18414,54 @@ function renderCashApprovalPanel(record) {
   return `<div class="cash-approval-panel"><div class="reconciliation-section-head"><div><span>Approval Workflow</span><h3>${submitted ? "Submitted for review" : "Reconciliation decision"}</h3></div>${cashReconciliationBadge(record)}</div><div class="cash-approval-facts"><div><span>Expected Cash</span><strong>${rupee(record.expectedCash ?? record.systemClosingBalance)}</strong></div><div><span>Physical Cash</span><strong>${rupee(record.physicalCashCount)}</strong></div><div><span>Difference</span><strong class="${difference < 0 ? "negative-amount" : ""}">${rupee(difference)}</strong></div><div><span>Prepared By</span><strong>${escapeHtml(record.submittedBy || record.verifiedBy || "-")}</strong></div><div><span>Prepared At</span><strong>${escapeHtml(formatDateTime(record.submittedAt || record.verificationDate) || "-")}</strong></div><div><span>Remarks</span><strong>${escapeHtml(record.remarks || "-")}</strong></div></div>${state.currentRole === "Admin" && submitted ? `<div class="cash-approval-actions"><button class="primary-button" id="approveCashAdjustment" data-id="${record.id}">Approve</button><button class="secondary-button danger" id="rejectCashAdjustment" data-id="${record.id}">Reject</button></div>` : ""}</div>`;
 }
 
-function renderExpenseFilters() {
-  return `
-    <div class="filters colourful-filters expense-filters expense-search-row">
-      ${expenseFilterInput("expenseParticulars", "Search")}
-      ${expenseFilterInput("expenseFrom", "From Date", "date")}
-      ${expenseFilterInput("expenseTo", "To Date", "date")}
-      ${expenseFilterSelect("expenseMode", "Payment Method", ["", ...paymentModes()])}
-      ${financeAccountFilterSelect("expenseAccount", "Account")}
-      ${expenseFilterInput("expenseItemFilter", "Expense Item")}
-      ${expenseFilterInput("expensePaidTo", "Paid To")}
-      ${expenseFilterInput("expenseEnteredBy", "Entered By")}
-      <div class="field"><label>Apply</label><button class="secondary-button" id="expenseSearch">Apply Filter</button></div>
-      <div class="field"><label>Clear</label><button class="secondary-button" id="expenseReset">Clear Filter</button></div>
-      <div class="field"><label>Excel</label><button class="secondary-button" id="expenseExcel">Excel</button></div>
-      <div class="field"><label>PDF</label><button class="secondary-button" id="expensePdf">PDF</button></div>
-      <div class="field"><label>Print</label><button class="secondary-button" id="expensePrint">Print</button></div>
-    </div>
-  `;
+function renderExpenseFilters(data) {
+  return renderTransactionFilters("expenses", data, `
+    ${expenseFilterInput("expenseFrom", "From Date", "date")}
+    ${expenseFilterInput("expenseTo", "To Date", "date")}
+    ${expenseFilterInput("expenseItemFilter", "Expense Item")}
+    ${expenseFilterInput("expensePaidTo", "Paid To")}
+    ${expenseFilterSelect("expenseMode", "Payment Method", ["", ...paymentModes()])}
+    ${financeAccountFilterSelect("expenseAccount", "Account")}
+    ${expenseFilterInput("expenseVoucher", "Voucher Number")}
+    ${expenseFilterInput("expenseEnteredBy", "Entered By")}
+    ${expenseFilterInput("expenseMinAmount", "Minimum Amount", "number")}
+    ${expenseFilterInput("expenseMaxAmount", "Maximum Amount", "number")}
+  `);
 }
 
-function renderCashFilters() {
-  return `
-    <div class="collection-filter-panel">
-      <div class="collection-filter-grid">
-        <div class="field collection-search-field"><label>Search Collections</label><div class="collection-search-control"><span aria-hidden="true">&#128269;</span><input data-expense-filter="cashParticulars" value="${escapeHtml(state.filters.cashParticulars || "")}" placeholder="Received from, particulars, reference or user"></div></div>
-        ${expenseFilterInput("cashFrom", "From Date", "date")}
-        ${expenseFilterInput("cashTo", "To Date", "date")}
-        ${expenseFilterSelect("cashMode", "Payment Method", ["", ...paymentModes()])}
-        ${financeAccountFilterSelect("cashAccount", "Account")}
-        ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", ...collectionTypeOptions.map((option) => option.label)])}
-        ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
-      </div>
-      <div class="collection-filter-actions">
-        <div><button class="secondary-button" id="cashReset" type="button">Clear Filters</button><button class="primary-button collection-apply-button" id="cashSearch" type="button">Apply Filters</button></div>
-        <div class="collection-export-actions" aria-label="Collection report exports"><button class="secondary-button collection-excel-button" id="cashExcel" type="button">Export Excel</button><button class="secondary-button collection-pdf-button" id="cashPdf" type="button">Export PDF</button><button class="secondary-button collection-print-button" id="cashPrint" type="button">Print</button></div>
-      </div>
+function renderCashFilters(data) {
+  return renderTransactionFilters("collections", data, `
+    ${expenseFilterInput("cashFrom", "From Date", "date")}
+    ${expenseFilterInput("cashTo", "To Date", "date")}
+    ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", ...collectionTypeOptions.map((option) => option.label)])}
+    ${expenseFilterInput("cashReceivedFrom", "Received From")}
+    ${expenseFilterSelect("cashMode", "Payment Method", ["", ...paymentModes()])}
+    ${financeAccountFilterSelect("cashAccount", "Account")}
+    ${expenseFilterInput("cashVoucher", "Reference Number")}
+    ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
+    ${expenseFilterInput("cashService", "Service or File")}
+    ${expenseFilterSelect("cashLinkStatus", "Transaction Link", ["", "Linked", "Unlinked"])}
+    ${expenseFilterInput("cashMinAmount", "Minimum Amount", "number")}
+    ${expenseFilterInput("cashMaxAmount", "Maximum Amount", "number")}
+  `);
+}
+
+function renderTransactionFilters(kind, data, fields) {
+  const expense = kind === "expenses";
+  const ui = transactionLedgerState(kind);
+  const searchKey = expense ? "expenseParticulars" : "cashParticulars";
+  const searchPlaceholder = expense ? "Expense item, paid to, voucher, remarks or user" : "Client, received from, particulars, reference, service or staff";
+  return `<div class="transaction-filter-panel">
+    <div class="transaction-filter-toolbar">
+      <div class="field transaction-global-search"><label>Global Search</label><div><span aria-hidden="true">&#128269;</span><input data-expense-filter="${searchKey}" value="${escapeHtml(state.filters[searchKey] || "")}" placeholder="${searchPlaceholder}"></div></div>
+      <div class="field transaction-sort-field"><label>Sort</label><select data-transaction-sort="${kind}"><option value="newest" ${ui.sort === "newest" ? "selected" : ""}>Transaction Date - Newest First</option><option value="oldest" ${ui.sort === "oldest" ? "selected" : ""}>Transaction Date - Oldest First</option></select></div>
+      <button type="button" class="primary-button" data-apply-transaction-filters="${kind}">Apply Filters</button>
+      <button type="button" class="secondary-button" data-clear-transaction-filters="${kind}">Clear Filters</button>
     </div>
-  `;
+    ${renderTransactionDateViews(kind)}
+    <div class="transaction-advanced-filters">${fields}</div>
+    ${renderTransactionFilterMeta(kind, data)}
+  </div>`;
 }
 
 function expenseInput(id, label, value = "", type = "text", step = "", className = "") {
@@ -18431,8 +18617,67 @@ function bindExpensePage() {
     input.oninput = () => {
       state.filters[input.dataset.expenseFilter] = input.value;
     };
-    input.onchange = input.oninput;
+    input.onchange = () => {
+      input.oninput();
+      if (["expenseFrom", "expenseTo"].includes(input.dataset.expenseFilter)) transactionLedgerState("expenses").view = "custom";
+      if (["cashFrom", "cashTo"].includes(input.dataset.expenseFilter)) transactionLedgerState("collections").view = "custom";
+    };
   });
+  document.querySelectorAll("[data-transaction-view]").forEach((button) => button.addEventListener("click", () => {
+    const kind = button.dataset.transactionView;
+    const ui = transactionLedgerState(kind);
+    ui.view = button.dataset.view || "today";
+    ui.page = 1;
+    invalidateTransactionLedger(kind);
+    renderAll();
+    if (ui.view === "custom") setTimeout(() => document.querySelector(`[data-expense-filter='${kind === "expenses" ? "expenseFrom" : "cashFrom"}']`)?.focus(), 0);
+  }));
+  document.querySelectorAll("[data-apply-transaction-filters]").forEach((button) => button.addEventListener("click", () => {
+    const kind = button.dataset.applyTransactionFilters;
+    transactionLedgerState(kind).page = 1;
+    invalidateTransactionLedger(kind);
+    saveState();
+    renderAll();
+  }));
+  document.querySelectorAll("[data-clear-transaction-filters]").forEach((button) => button.addEventListener("click", () => button.dataset.clearTransactionFilters === "expenses" ? resetExpenseFilters() : resetCashFilters()));
+  document.querySelectorAll("[data-transaction-sort]").forEach((select) => select.addEventListener("change", () => {
+    const ui = transactionLedgerState(select.dataset.transactionSort);
+    ui.sort = select.value;
+    ui.page = 1;
+    invalidateTransactionLedger(select.dataset.transactionSort);
+    renderAll();
+  }));
+  document.querySelectorAll("[data-transaction-page-size]").forEach((select) => select.addEventListener("change", () => {
+    const kind = select.dataset.transactionPageSize;
+    const ui = transactionLedgerState(kind);
+    ui.pageSize = Number(select.value) || 25;
+    ui.page = 1;
+    invalidateTransactionLedger(kind);
+    renderAll();
+  }));
+  document.querySelectorAll("[data-ledger-page]").forEach((button) => button.addEventListener("click", () => {
+    const kind = button.dataset.ledgerPage;
+    transactionLedgerState(kind).page = Number(button.dataset.page) || 1;
+    invalidateTransactionLedger(kind);
+    renderAll();
+  }));
+  document.querySelectorAll("[data-refresh-ledger]").forEach((button) => button.addEventListener("click", async () => {
+    const kind = button.dataset.refreshLedger;
+    button.disabled = true;
+    button.textContent = "Refreshing...";
+    if (isSupabaseMode()) await loadStateFromApi();
+    invalidateTransactionLedger(kind);
+    requestTransactionLedger(kind, true);
+  }));
+  document.querySelectorAll("[data-focus-transaction-form]").forEach((button) => button.addEventListener("click", () => {
+    document.querySelector(button.dataset.focusTransactionForm === "expenses" ? "#expenseForm" : "#cashCollectionForm")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  document.querySelectorAll(".transaction-export-menu input[type='radio']").forEach((radio) => radio.addEventListener("change", () => {
+    const kind = radio.name.startsWith("expenses") ? "expenses" : "collections";
+    transactionLedgerState(kind).exportScope = radio.value;
+  }));
+  document.querySelectorAll("[data-ledger-export]").forEach((button) => button.addEventListener("click", () => exportTransactionLedger(button.dataset.ledgerExport, button.dataset.format)));
+  document.querySelectorAll("[data-remove-transaction-filter]").forEach((button) => button.addEventListener("click", () => removeTransactionFilter(button.dataset.removeTransactionFilter, button.dataset.filterKey)));
   const expenseForm = document.querySelector("#expenseForm");
   if (expenseForm) expenseForm.onsubmit = saveExpenseEntry;
   const openingForm = document.querySelector("#openingBalanceForm");
@@ -18600,6 +18845,10 @@ function bindExpensePage() {
   document.querySelectorAll("[data-classify-bank]").forEach((btn) => btn.onclick = () => classifyLegacyBankTransaction(btn.dataset.transactionType, btn.dataset.classifyBank, btn.dataset.accountKey));
   document.querySelectorAll("[data-edit-cash]").forEach((btn) => btn.onclick = () => { state.filters.editCashId = btn.dataset.editCash; saveState(); renderAll(); });
   document.querySelectorAll("[data-delete-cash]").forEach((btn) => btn.onclick = () => deleteCashCollection(btn.dataset.deleteCash));
+  document.querySelectorAll("[data-view-linked-transaction-file]").forEach((btn) => btn.onclick = () => { document.querySelector("#transactionDetailModal")?.remove(); openFileDrawer(btn.dataset.viewLinkedTransactionFile); });
+  document.querySelectorAll("#expenses [data-billed-menu-toggle]").forEach((toggle) => {
+    toggle.onclick = (event) => { event.preventDefault(); event.stopPropagation(); openBilledActionMenu(toggle); };
+  });
   bindBilledActionMenus();
 }
 
@@ -18653,6 +18902,7 @@ async function saveExpenseEntry(event) {
       rememberExpenseItem(record.particulars);
       state.filters.editExpenseId = "";
       state.filters.expenseItemSelection = "";
+      invalidateTransactionLedger("expenses");
       toast(existing ? "Expense updated and synced" : "Expense saved and synced");
       renderAll();
       return;
@@ -18667,6 +18917,7 @@ async function saveExpenseEntry(event) {
   rememberExpenseItem(record.particulars);
   state.filters.editExpenseId = "";
   state.filters.expenseItemSelection = "";
+  invalidateTransactionLedger("expenses");
   saveState();
   toast(existing ? "Expense updated" : "Expense saved");
   renderAll();
@@ -18836,6 +19087,7 @@ async function saveCashCollectionEntry(event) {
       await saveCashCollectionToApi(record);
       rememberCashReceivedFrom(record.receivedFrom);
       state.filters.editCashId = "";
+      invalidateTransactionLedger("collections");
       toast(existing ? "Cash collection updated and synced" : "Cash collection saved and synced");
       renderAll();
       return;
@@ -18849,6 +19101,7 @@ async function saveCashCollectionEntry(event) {
   rememberCashReceivedFrom(record.receivedFrom);
   state.otherCashCollections = existing ? state.otherCashCollections.map((item) => item.id === existing.id ? record : item) : [record, ...(state.otherCashCollections || [])];
   state.filters.editCashId = "";
+  invalidateTransactionLedger("collections");
   saveState();
   toast(existing ? "Cash collection updated" : "Cash collection saved");
   renderAll();
@@ -18996,16 +19249,29 @@ function handleExpenseItemDropdownChange(event) {
 
 function viewTransactionDetail(type, item) {
   if (!item) return toast("Transaction record not found.");
-  const parts = [
-    `${type}: ${item.particulars || collectionTypeLabel(item.collectionType || item.collection_type) || ""}`,
-    `Date: ${expenseDisplayDate(item.date)}`,
-    `Amount: ${money(item.amount)}`,
-    `Mode: ${item.mode || ""}`,
-    item.receivedFrom ? `Received From: ${item.receivedFrom}` : "",
-    item.paidTo ? `Paid To: ${item.paidTo}` : "",
-    item.voucherNo ? `Reference: ${item.voucherNo}` : "",
-  ].filter(Boolean);
-  alert(parts.join("\n"));
+  document.querySelector("#transactionDetailModal")?.remove();
+  const expense = type === "Expense";
+  const audit = (state.auditLog || []).filter((entry) => JSON.stringify(entry).includes(item.id)).slice(-4).reverse();
+  const linkedFile = (state.files || []).find((file) => file.id === (item.fileId || item.file_id));
+  const facts = [
+    ["Transaction Type", type], ["Date", displayDate(item.date)], ["Amount", rupee(item.amount)],
+    ["Account", financeAccountLabel(transactionAccountKey(item))], ["Payment Method", normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode)],
+    [expense ? "Paid To" : "Received From", expense ? item.paidTo : item.receivedFrom], ["Particulars", item.particulars],
+    [expense ? "Voucher Number" : "Reference Number", item.voucherNo], ["Remarks", item.remarks],
+    ["Linked File", linkedFile?.name || (item.fileId || item.file_id ? "Linked record" : "Not linked")], ["Entered By", item.createdBy || item.enteredBy],
+    ["Created", formatDateTime(item.createdAt || item.created_at)], ["Last Modified", formatDateTime(item.updatedAt || item.updated_at)], ["Status", properCaseName(item.status || "Active")],
+  ];
+  const modal = document.createElement("div");
+  modal.id = "transactionDetailModal";
+  modal.className = "transaction-detail-backdrop";
+  modal.innerHTML = `<section class="transaction-detail-modal" role="dialog" aria-modal="true" aria-labelledby="transactionDetailTitle"><header><div><span>${escapeHtml(type)} Transaction</span><h2 id="transactionDetailTitle">${escapeHtml(expense ? item.particulars || "Expense details" : item.receivedFrom || "Collection details")}</h2><p>Permanent ID: ${escapeHtml(item.id || "-")}</p></div><button type="button" data-close-transaction-detail aria-label="Close transaction details">&times;</button></header><div class="transaction-detail-body"><div class="transaction-detail-amount"><span>${expense ? "Expense Amount" : "Collection Amount"}</span><strong>${rupee(item.amount)}</strong><small>${escapeHtml(displayDate(item.date))}</small></div><div class="transaction-detail-grid">${facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${String(value || "").includes("&#8377;") ? value : escapeHtml(value || "-")}</strong></div>`).join("")}</div><section class="transaction-audit-section"><h3>Audit Information</h3>${audit.length ? audit.map((entry) => `<article><strong>${escapeHtml(entry.action || "Transaction update")}</strong><span>${escapeHtml(entry.user || entry.userName || entry.performedBy || "-")} &middot; ${escapeHtml(formatDateTime(entry.date || entry.timestamp || entry.createdAt || entry.created_at) || "-")}</span></article>`).join("") : `<p>No additional audit events are available to display.</p>`}</section></div><footer>${linkedFile ? `<button type="button" class="secondary-button" data-view-linked-transaction-file="${escapeHtml(linkedFile.id)}">View Linked File</button>` : ""}<button type="button" class="primary-button" data-close-transaction-detail>Close</button></footer></section>`;
+  const close = () => modal.remove();
+  document.body.appendChild(modal);
+  modal.querySelectorAll("[data-close-transaction-detail]").forEach((button) => button.addEventListener("click", close));
+  modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
+  modal.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+  modal.querySelector("[data-view-linked-transaction-file]")?.addEventListener("click", (event) => { const id = event.currentTarget.dataset.viewLinkedTransactionFile; close(); openFileDrawer(id); });
+  modal.querySelector("[data-close-transaction-detail]")?.focus();
 }
 
 function rememberExpenseItem(value) {
@@ -19032,6 +19298,7 @@ async function deleteExpense(id) {
   if (isSupabaseMode()) {
     try {
       await deleteExpenseFromApi(id);
+      invalidateTransactionLedger("expenses");
       toast("Expense deleted and synced");
       renderAll();
       return;
@@ -19041,6 +19308,7 @@ async function deleteExpense(id) {
     }
   }
   state.expenses = (state.expenses || []).filter((item) => item.id !== id);
+  invalidateTransactionLedger("expenses");
   saveState();
   renderAll();
 }
@@ -19057,6 +19325,7 @@ async function deleteCashCollection(id) {
   if (isSupabaseMode()) {
     try {
       await deleteCashCollectionFromApi(id);
+      invalidateTransactionLedger("collections");
       toast(linked ? "Collection deleted and linked file moved to Fee Pending successfully." : "Collection deleted successfully.");
       renderAll();
       return;
@@ -19071,6 +19340,7 @@ async function deleteCashCollection(id) {
     const fileId = collection.fileId || collection.file_id;
     state.files = (state.files || []).map((file) => file.id === fileId ? revertLocalFeeReceipt(file) : file);
   }
+  invalidateTransactionLedger("collections");
   saveState();
   toast(linked ? "Collection deleted and linked file moved to Fee Pending successfully." : "Collection deleted successfully.");
   renderAll();
@@ -19107,24 +19377,32 @@ function cashSearchActive() {
 }
 
 function filteredExpenses() {
+  const range = transactionDateRange("expenses");
   return activeExpenses().filter((item) => {
-    if (state.filters.expenseFrom && item.date < state.filters.expenseFrom) return false;
-    if (state.filters.expenseTo && item.date > state.filters.expenseTo) return false;
-    if (state.filters.expenseParticulars && !item.particulars.toLowerCase().includes(state.filters.expenseParticulars.toLowerCase())) return false;
-    if (state.filters.expenseItemFilter && !item.particulars.toLowerCase().includes(state.filters.expenseItemFilter.toLowerCase())) return false;
+    if (range.from && item.date < range.from) return false;
+    if (range.to && item.date > range.to) return false;
+    if (state.filters.expenseParticulars) {
+      const haystack = [item.particulars, item.paidTo, item.voucherNo, item.remarks, item.createdBy, item.enteredBy, normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), financeAccountLabel(transactionAccountKey(item))].join(" ").toLowerCase();
+      if (!haystack.includes(state.filters.expenseParticulars.toLowerCase())) return false;
+    }
+    if (state.filters.expenseItemFilter && !String(item.particulars || "").toLowerCase().includes(state.filters.expenseItemFilter.toLowerCase())) return false;
     if (state.filters.expenseMode && normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode) !== state.filters.expenseMode) return false;
     if (state.filters.expenseAccount && transactionAccountKey(item) !== state.filters.expenseAccount) return false;
     if (state.filters.expenseCategoryFilter && (item.category || "General") !== state.filters.expenseCategoryFilter) return false;
-    if (state.filters.expensePaidTo && !item.paidTo.toLowerCase().includes(state.filters.expensePaidTo.toLowerCase())) return false;
+    if (state.filters.expensePaidTo && !String(item.paidTo || "").toLowerCase().includes(state.filters.expensePaidTo.toLowerCase())) return false;
+    if (state.filters.expenseVoucher && !String(item.voucherNo || "").toLowerCase().includes(state.filters.expenseVoucher.toLowerCase())) return false;
     if (state.filters.expenseEnteredBy && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.expenseEnteredBy.toLowerCase())) return false;
+    if (state.filters.expenseMinAmount !== "" && state.filters.expenseMinAmount != null && Number(item.amount || 0) < Number(state.filters.expenseMinAmount)) return false;
+    if (state.filters.expenseMaxAmount !== "" && state.filters.expenseMaxAmount != null && Number(item.amount || 0) > Number(state.filters.expenseMaxAmount)) return false;
     return true;
-  }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
+  }).sort((a, b) => transactionNewestComparator(a, b, transactionLedgerState("expenses").sort));
 }
 
 function filteredCashCollections() {
+  const range = transactionDateRange("collections");
   return activeCashCollections().filter((item) => {
-    if (state.filters.cashFrom && item.date < state.filters.cashFrom) return false;
-    if (state.filters.cashTo && item.date > state.filters.cashTo) return false;
+    if (range.from && item.date < range.from) return false;
+    if (range.to && item.date > range.to) return false;
     if (state.filters.cashParticulars) {
       const needle = state.filters.cashParticulars.toLowerCase();
       const haystack = [item.particulars, item.receivedFrom, item.voucherNo, item.createdBy, item.enteredBy, collectionTypeLabel(item.collectionType || item.collection_type), normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), financeAccountLabel(transactionAccountKey(item))].join(" ").toLowerCase();
@@ -19133,15 +19411,32 @@ function filteredCashCollections() {
     if (state.filters.cashMode && normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode) !== state.filters.cashMode) return false;
     if (state.filters.cashAccount && transactionAccountKey(item) !== state.filters.cashAccount) return false;
     if (state.filters.cashCollectionTypeFilter && collectionTypeLabel(item.collectionType || item.collection_type) !== state.filters.cashCollectionTypeFilter) return false;
+    if (state.filters.cashReceivedFrom && !String(item.receivedFrom || "").toLowerCase().includes(state.filters.cashReceivedFrom.toLowerCase())) return false;
+    if (state.filters.cashVoucher && !String(item.voucherNo || "").toLowerCase().includes(state.filters.cashVoucher.toLowerCase())) return false;
     if (state.filters.cashCollectedByFilter && !String(item.createdBy || item.enteredBy || "").toLowerCase().includes(state.filters.cashCollectedByFilter.toLowerCase())) return false;
+    if (state.filters.cashService && ![item.serviceType, item.service_type, item.particulars].join(" ").toLowerCase().includes(state.filters.cashService.toLowerCase())) return false;
+    const linked = Boolean(item.fileId || item.file_id || item.feeReceiptId || item.fee_receipt_id || item.sourceId || item.source_id);
+    if (state.filters.cashLinkStatus === "Linked" && !linked) return false;
+    if (state.filters.cashLinkStatus === "Unlinked" && linked) return false;
+    if (state.filters.cashMinAmount !== "" && state.filters.cashMinAmount != null && Number(item.amount || 0) < Number(state.filters.cashMinAmount)) return false;
+    if (state.filters.cashMaxAmount !== "" && state.filters.cashMaxAmount != null && Number(item.amount || 0) > Number(state.filters.cashMaxAmount)) return false;
     return true;
-  }).sort((a, b) => b.date.localeCompare(a.date) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")) || String(b.voucherNo).localeCompare(String(a.voucherNo)));
+  }).sort((a, b) => transactionNewestComparator(a, b, transactionLedgerState("collections").sort));
 }
 
-function renderExpenseTable(rows) {
+function transactionNewestComparator(a, b, sort = "newest") {
+  const direction = sort === "oldest" ? 1 : -1;
+  const date = String(a.date || "").localeCompare(String(b.date || ""));
+  if (date) return date * direction;
+  const timestamp = String(a.updatedAt || a.updated_at || a.createdAt || a.created_at || "").localeCompare(String(b.updatedAt || b.updated_at || b.createdAt || b.created_at || ""));
+  if (timestamp) return timestamp * direction;
+  return String(a.id || "").localeCompare(String(b.id || "")) * direction;
+}
+
+function renderExpenseTable(rows, data = {}) {
   if (!rows.length) return empty("No expense entries found.");
-  const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Expenses: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th class="wide-col expense-item-column">Expense Item</th><th class="wide-col paid-to-column">Paid To</th><th>Payment Method</th><th>Account</th><th class="ref-col voucher-column">Voucher No.</th><th class="amount-col amount-column">Amount</th><th>Entered By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td class="wide-cell expense-item-cell">${escapeHtml(item.particulars)}</td><td class="wide-cell paid-to-cell">${escapeHtml(item.paidTo)}</td><td>${escapeHtml(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode))}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="ref-cell voucher-cell" title="${escapeHtml(item.voucherNo)}">${escapeHtml(item.voucherNo)}</td><td class="amount-cell amount-column">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-expense="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-expense="${item.id}">Edit</button><button title="Delete" class="mini-button danger" data-delete-expense="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  const start = (Number(data.page || 1) - 1) * Number(data.pageSize || rows.length);
+  return `<section class="transaction-register-modern expense-register-modern"><div class="transaction-table-head transaction-register-head"><div><span>Expense Register</span><p>${Number(data.total || rows.length)} filtered record(s)</p></div><strong>Filtered Total: ${rupee(data.totalAmount ?? rows.reduce((sum, item) => sum + Number(item.amount || 0), 0))}</strong></div><div class="table-wrap transaction-register-wrap"><table class="file-table expense-table transaction-table expense-register-table"><thead><tr><th>SN</th><th>Date</th><th>Expense Item</th><th>Paid To</th><th>Particulars / Remarks</th><th>Payment Method</th><th>Account</th><th>Voucher Number</th><th class="amount-col">Amount</th><th>Entered By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td data-label="SN">${start + index + 1}</td><td data-label="Date">${displayDate(item.date)}</td><td data-label="Expense Item"><strong>${escapeHtml(item.particulars || "-")}</strong></td><td data-label="Paid To">${escapeHtml(item.paidTo || "-")}</td><td data-label="Remarks" class="transaction-remarks-cell">${escapeHtml(item.remarks || "-")}</td><td data-label="Payment Method">${transactionValueBadge(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), "method")}</td><td data-label="Account">${transactionValueBadge(financeAccountLabel(transactionAccountKey(item)), transactionAccountKey(item) === "unclassified_bank" ? "warning" : "account")}</td><td data-label="Voucher Number" class="ref-cell">${escapeHtml(item.voucherNo || "-")}</td><td data-label="Amount" class="amount-cell">${rupee(item.amount)}</td><td data-label="Entered By">${escapeHtml(item.createdBy || item.enteredBy || "-")}</td><td data-label="Actions" class="action-col">${transactionActionsMarkup("expenses", item)}</td></tr>`).join("")}</tbody></table></div></section>`;
 }
 
 function expenseAttachmentLink(item) {
@@ -19152,23 +19447,80 @@ function expenseAttachmentLink(item) {
   return escapeHtml(name);
 }
 
-function renderCashCollectionTable(rows) {
+function renderCashCollectionTable(rows, data = {}) {
   if (!rows.length) return empty("No cash collection entries found.");
-  const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const canDelete = ["Admin", "Manager"].includes(state.currentRole);
-  return `<section class="collection-register-modern"><div class="transaction-table-head collection-register-head"><div><span>Collection Register</span><p>${rows.length} record(s) shown</p></div><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap collection-register-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection</th><th>Received From</th><th>Payment</th><th class="ref-col">Reference</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td data-label="SN">${index + 1}</td><td data-label="Date" class="expense-date-col">${expenseDisplayDate(item.date)}</td><td data-label="Collection"><div class="collection-register-primary"><span class="collection-type-badge">${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</span><strong>${escapeHtml(item.particulars || "-")}</strong></div></td><td data-label="Received From"><strong class="collection-received-from">${escapeHtml(item.receivedFrom || "-")}</strong></td><td data-label="Payment"><div class="collection-payment-cell"><strong>${escapeHtml(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode))}</strong><span>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</span></div></td><td data-label="Reference" class="ref-cell">${escapeHtml(item.voucherNo || "-")}</td><td data-label="Amount" class="amount-cell">${rupee(item.amount)}</td><td data-label="Collected By">${escapeHtml(item.createdBy || item.enteredBy || "-")}</td><td data-label="Actions" class="action-col"><div class="collection-row-actions"><button title="View collection" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit collection" class="mini-button" data-edit-cash="${item.id}">Edit</button>${canDelete ? `<button title="Delete collection" class="mini-button danger" data-delete-cash="${item.id}">Delete</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div></section>`;
+  const start = (Number(data.page || 1) - 1) * Number(data.pageSize || rows.length);
+  return `<section class="transaction-register-modern collection-register-modern"><div class="transaction-table-head transaction-register-head"><div><span>Collection Register</span><p>${Number(data.total || rows.length)} filtered record(s)</p></div><strong>Filtered Total: ${rupee(data.totalAmount ?? rows.reduce((sum, item) => sum + Number(item.amount || 0), 0))}</strong></div><div class="table-wrap transaction-register-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th>Particulars</th><th>Reference Number</th><th>Payment Method</th><th>Account</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td data-label="SN">${start + index + 1}</td><td data-label="Date">${displayDate(item.date)}</td><td data-label="Collection Type">${transactionValueBadge(collectionTypeLabel(item.collectionType || item.collection_type), "type")}</td><td data-label="Received From"><strong>${escapeHtml(item.receivedFrom || "-")}</strong></td><td data-label="Particulars" class="transaction-particulars-cell">${escapeHtml(item.particulars || "-")}</td><td data-label="Reference Number" class="ref-cell">${escapeHtml(item.voucherNo || "-")}</td><td data-label="Payment Method">${transactionValueBadge(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), "method")}</td><td data-label="Account">${transactionValueBadge(financeAccountLabel(transactionAccountKey(item)), transactionAccountKey(item) === "unclassified_bank" ? "warning" : "account")}</td><td data-label="Amount" class="amount-cell">${rupee(item.amount)}</td><td data-label="Collected By">${escapeHtml(item.createdBy || item.enteredBy || "-")}</td><td data-label="Actions" class="action-col">${transactionActionsMarkup("collections", item)}</td></tr>`).join("")}</tbody></table></div></section>`;
+}
+
+function transactionValueBadge(value, tone = "") {
+  return `<span class="transaction-value-badge ${tone}">${escapeHtml(value || "-")}</span>`;
+}
+
+function transactionActionsMarkup(kind, item) {
+  const expense = kind === "expenses";
+  const id = escapeHtml(item.id || "");
+  const primaryAttr = expense ? `data-view-expense="${id}"` : `data-view-cash="${id}"`;
+  const editAttr = expense ? `data-edit-expense="${id}"` : `data-edit-cash="${id}"`;
+  const deleteAttr = expense ? `data-delete-expense="${id}"` : `data-delete-cash="${id}"`;
+  const menuItems = [
+    billedActionMenuItem({ label: "View", icon: "transaction", attrs: primaryAttr }),
+    billedActionMenuItem({ label: "Edit", icon: "edit", attrs: editAttr }),
+  ];
+  if (!expense && (item.fileId || item.file_id)) menuItems.push(billedActionMenuItem({ label: "View Linked File", icon: "file", attrs: `data-view-linked-transaction-file="${escapeHtml(item.fileId || item.file_id)}"` }));
+  if (["Admin", "Manager"].includes(state.currentRole)) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: deleteAttr, danger: true, divider: true }));
+  return `<div class="billed-actions transaction-row-actions" data-billed-actions="${kind}-${id}"><button type="button" class="billed-primary-action view-only" ${primaryAttr}>${billedActionIcon("transaction")}<span>View</span></button><button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${kind}-${id}" aria-label="Open transaction actions" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${kind}-${id}" role="menu">${menuItems.join("")}</div></div>`;
 }
 
 function resetExpenseFilters() {
-  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expenseAccount", "expenseCategoryFilter", "expenseItemFilter", "expensePaidTo", "expenseEnteredBy", "expenseVoucher"].forEach((key) => state.filters[key] = "");
+  ["expenseFrom", "expenseTo", "expenseParticulars", "expenseName", "expenseMode", "expenseAccount", "expenseCategoryFilter", "expenseItemFilter", "expensePaidTo", "expenseEnteredBy", "expenseVoucher", "expenseMinAmount", "expenseMaxAmount"].forEach((key) => state.filters[key] = "");
+  Object.assign(transactionLedgerState("expenses"), { view: "today", page: 1, sort: "newest" });
+  invalidateTransactionLedger("expenses");
   saveState();
   renderAll();
 }
 
 function resetCashFilters() {
-  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashAccount", "cashCollectionTypeFilter", "cashCollectedByFilter", "cashReceivedFrom", "cashVoucher"].forEach((key) => state.filters[key] = "");
+  ["cashFrom", "cashTo", "cashParticulars", "cashMode", "cashAccount", "cashCollectionTypeFilter", "cashCollectedByFilter", "cashReceivedFrom", "cashVoucher", "cashService", "cashLinkStatus", "cashMinAmount", "cashMaxAmount"].forEach((key) => state.filters[key] = "");
+  Object.assign(transactionLedgerState("collections"), { view: "today", page: 1, sort: "newest" });
+  invalidateTransactionLedger("collections");
   saveState();
   renderAll();
+}
+
+function removeTransactionFilter(kind, filterKey) {
+  if (filterKey === "view") transactionLedgerState(kind).view = "today";
+  else {
+    const expense = kind === "expenses";
+    const keyMap = expense
+      ? { search: "expenseParticulars", paymentMethod: "expenseMode", account: "expenseAccount", subtype: "expenseItemFilter", counterparty: "expensePaidTo", reference: "expenseVoucher", enteredBy: "expenseEnteredBy", minAmount: "expenseMinAmount", maxAmount: "expenseMaxAmount" }
+      : { search: "cashParticulars", paymentMethod: "cashMode", account: "cashAccount", subtype: "cashCollectionTypeFilter", counterparty: "cashReceivedFrom", reference: "cashVoucher", enteredBy: "cashCollectedByFilter", service: "cashService", linkStatus: "cashLinkStatus", minAmount: "cashMinAmount", maxAmount: "cashMaxAmount" };
+    if (keyMap[filterKey]) state.filters[keyMap[filterKey]] = "";
+  }
+  transactionLedgerState(kind).page = 1;
+  invalidateTransactionLedger(kind);
+  saveState();
+  renderAll();
+}
+
+function transactionRowsForExport(kind, scope = "filtered") {
+  if (scope === "all") return (kind === "expenses" ? activeExpenses() : activeCashCollections()).slice().sort((a, b) => transactionNewestComparator(a, b, "newest"));
+  const filtered = kind === "expenses" ? filteredExpenses() : filteredCashCollections();
+  if (scope === "page") return transactionLedgerData(kind, filtered).rows;
+  return filtered;
+}
+
+function exportTransactionLedger(kind, format) {
+  const ui = transactionLedgerState(kind);
+  const rows = transactionRowsForExport(kind, ui.exportScope);
+  const expense = kind === "expenses";
+  const title = expense ? "Expense Report" : "Collections Report";
+  const range = ui.exportScope === "all" ? "All authorised transaction dates" : transactionDateRange(kind).label;
+  const filters = transactionActiveFilterEntries(kind).slice(1).map(([, label]) => label).join(" | ") || "No additional filters";
+  const lines = ["Muhammad & Associates,", "Chartered Accountants,", title, `Date Scope: ${range}`, `Filters: ${filters}`, `Export Scope: ${properCaseName(ui.exportScope)}`, `Generated: ${formatDateTime(new Date().toISOString())}`, `Generated By: ${state.currentUser || "-"}`];
+  document.querySelector(`.transaction-export-menu[open]`)?.removeAttribute("open");
+  if (format === "excel") return downloadExcelTable(expense ? "expense-report" : "collection-report", expense ? expenseReportRows(rows, true) : cashReportRows(rows, true), lines);
+  return downloadPdfRows(expense ? "expense-report" : "collection-report", expense ? expenseReportRows(rows) : cashReportRows(rows), lines);
 }
 
 function resetBalanceFilters() {
@@ -19309,14 +19661,16 @@ function renderCashMovementTable() {
   return `<div class="transaction-table-head"><span>${rows.length} movement(s)</span><strong>Cash Movement</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table"><thead><tr><th>SN</th><th>Date</th><th>Time</th><th>Transaction Type</th><th>Particulars</th><th>Reference</th><th class="amount-col">Cash In</th><th class="amount-col">Cash Out</th><th class="amount-col">Running Balance</th><th>Entered By</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${row.sn}</td><td>${expenseDisplayDate(row.date)}</td><td>${escapeHtml(row.time || "")}</td><td>${row.type}</td><td>${escapeHtml(row.particulars)}</td><td>${escapeHtml(row.reference)}</td><td class="amount-cell">${row.cashIn ? rupee(row.cashIn) : ""}</td><td class="amount-cell">${row.cashOut ? rupee(row.cashOut) : ""}</td><td class="amount-cell ${Number(row.runningBalance || 0) < 0 ? "negative-amount" : ""}">${rupee(row.runningBalance)}</td><td>${escapeHtml(row.enteredBy)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
-function expenseReportRows(rows = filteredExpenses()) {
-  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Expense Item": item.particulars, "Paid To": item.paidTo, "Payment Method": normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), Account: financeAccountLabel(transactionAccountKey(item)), "Voucher No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
-  return [...mapped, { SN: "", Date: "", "Expense Item": "", "Paid To": "", "Payment Method": "", Account: "Total", "Voucher No": "", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), "Entered By": "", Remarks: "" }];
+function expenseReportRows(rows = filteredExpenses(), numericAmounts = false) {
+  const amount = (value) => numericAmounts ? Number(value || 0) : money(value);
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: displayDate(item.date), "Expense Item": item.particulars, "Paid To": item.paidTo, "Particulars / Remarks": item.remarks || "", "Payment Method": normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), Account: financeAccountLabel(transactionAccountKey(item)), "Voucher Number": item.voucherNo, Amount: amount(item.amount), "Entered By": item.createdBy || item.enteredBy || "" }));
+  return [...mapped, { SN: "", Date: "", "Expense Item": "", "Paid To": "", "Particulars / Remarks": "", "Payment Method": "", Account: "Total", "Voucher Number": "", Amount: amount(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), "Entered By": "" }];
 }
 
-function cashReportRows(rows = filteredCashCollections()) {
-  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: expenseDisplayDate(item.date), "Collection Type": collectionTypeLabel(item.collectionType || item.collection_type), "Received From": item.receivedFrom, Particulars: item.particulars, "Payment Method": normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), Account: financeAccountLabel(transactionAccountKey(item)), "Reference No": item.voucherNo, Amount: money(item.amount), "Entered By": item.createdBy || item.enteredBy || "", Remarks: item.remarks }));
-  return [...mapped, { SN: "", Date: "", "Collection Type": "", "Received From": "", Particulars: "", "Payment Method": "", Account: "Total", "Reference No": "", Amount: money(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), "Entered By": "", Remarks: "" }];
+function cashReportRows(rows = filteredCashCollections(), numericAmounts = false) {
+  const amount = (value) => numericAmounts ? Number(value || 0) : money(value);
+  const mapped = rows.map((item, index) => ({ SN: index + 1, Date: displayDate(item.date), "Collection Type": collectionTypeLabel(item.collectionType || item.collection_type), "Received From": item.receivedFrom, Particulars: item.particulars, "Reference Number": item.voucherNo, "Payment Method": normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), Account: financeAccountLabel(transactionAccountKey(item)), Amount: amount(item.amount), "Collected By": item.createdBy || item.enteredBy || "" }));
+  return [...mapped, { SN: "", Date: "", "Collection Type": "", "Received From": "", Particulars: "", "Reference Number": "", "Payment Method": "", Account: "Total", Amount: amount(rows.reduce((sum, item) => sum + Number(item.amount || 0), 0)), "Collected By": "" }];
 }
 
 function transactionReportDateLine(fromKey, toKey) {
@@ -19347,8 +19701,8 @@ function balanceReportRows() {
   ];
 }
 
-function exportExpenseExcel() { downloadExcelTable("expense-report", expenseReportRows(), expenseReportTitleLines("Expense Report")); }
-function exportCashExcel() { downloadExcelTable("cash-collection-report", cashReportRows(), cashCollectionReportTitleLines()); }
+function exportExpenseExcel() { downloadExcelTable("expense-report", expenseReportRows(filteredExpenses(), true), expenseReportTitleLines("Expense Report")); }
+function exportCashExcel() { downloadExcelTable("cash-collection-report", cashReportRows(filteredCashCollections(), true), cashCollectionReportTitleLines()); }
 function exportBalanceExcel() { downloadExcelTable("cash-balance-report", balanceReportRows()); }
 async function exportExpensePdf() { await downloadPdfRows("expense-report", expenseReportRows(), expenseReportTitleLines("Expense Report")); }
 async function exportCashPdf() { await downloadPdfRows("cash-collection-report", cashReportRows(), cashCollectionReportTitleLines()); }

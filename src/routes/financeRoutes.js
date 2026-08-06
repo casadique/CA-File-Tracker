@@ -20,6 +20,7 @@ const {
   FINANCE_ACCOUNTS,
   PAYMENT_METHODS,
   accountSummary,
+  queryFinanceTransactions,
   saveAccountTransfer,
   deleteAccountTransfer,
   classifyLegacyBankTransaction,
@@ -59,6 +60,13 @@ router.get("/daily-report-summary", requireAuth, requireRole(...financeRoles), a
   } catch (error) {
     next(error);
   }
+});
+
+router.get("/transactions", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
+  try {
+    const state = await getAppState();
+    res.json({ ok: true, ...queryFinanceTransactions(state, req.query || {}) });
+  } catch (error) { next(error); }
 });
 
 router.post("/reconciliations", requireAuth, requireRole(...financeRoles), async (req, res, next) => {

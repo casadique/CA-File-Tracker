@@ -25,6 +25,93 @@ function normalizePaymentMethod(value = "") {
   return aliases[key] || (PAYMENT_METHODS.includes(raw) ? raw : "Other");
 }
 
+function indiaBusinessDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(date);
+}
+
+function queryFinanceTransactions(state = {}, input = {}) {
+  const kind = input.kind === "expenses" ? "expenses" : "collections";
+  const source = kind === "expenses" ? (state.expenses || []) : (state.otherCashCollections || []);
+  const today = indiaBusinessDate();
+  const view = ["today", "last7", "month", "custom", "all"].includes(input.view) ? input.view : "today";
+  let from = String(input.from || "").slice(0, 10);
+  let to = String(input.to || "").slice(0, 10);
+  if (view === "today") from = to = today;
+  if (view === "last7") {
+    const start = new Date(`${today}T00:00:00+05:30`);
+    start.setDate(start.getDate() - 6);
+    from = indiaBusinessDate(start);
+    to = today;
+  }
+  if (view === "month") {
+    from = `${today.slice(0, 7)}-01`;
+    to = today;
+  }
+  if (view === "all") from = to = "";
+  const search = String(input.search || "").trim().toLowerCase();
+  const paymentMethod = String(input.paymentMethod || "").trim();
+  const account = String(input.account || "").trim();
+  const subtype = kind === "collections" && input.subtype ? normalizeCollectionType(input.subtype) : String(input.subtype || "").trim().toLowerCase();
+  const counterparty = String(input.counterparty || "").trim().toLowerCase();
+  const reference = String(input.reference || "").trim().toLowerCase();
+  const enteredBy = String(input.enteredBy || "").trim().toLowerCase();
+  const service = String(input.service || "").trim().toLowerCase();
+  const linkStatus = String(input.linkStatus || "").trim().toLowerCase();
+  const minAmount = input.minAmount === "" || input.minAmount == null ? null : Number(input.minAmount);
+  const maxAmount = input.maxAmount === "" || input.maxAmount == null ? null : Number(input.maxAmount);
+  const filtered = source.filter((item) => {
+    if (!isActiveTransaction(item)) return false;
+    const date = String(item.date || item.expense_date || item.collection_date || "").slice(0, 10);
+    if (from && date < from) return false;
+    if (to && date > to) return false;
+    const method = normalizePaymentMethod(item.paymentMethod || item.payment_method || item.mode);
+    const accountKey = financeAccountOf(item);
+    const typeValue = kind === "expenses" ? String(item.particulars || item.expenseItem || "") : normalizeCollectionType(item.collectionType || item.collection_type);
+    const counterpartyValue = kind === "expenses" ? String(item.paidTo || item.paid_to || "") : String(item.receivedFrom || item.received_from || "");
+    const referenceValue = String(item.voucherNo || item.voucher_number || item.reference_number || item.billNo || "");
+    const enteredByValue = String(item.createdBy || item.enteredBy || item.created_by || "");
+    const linked = Boolean(item.fileId || item.file_id || item.feeReceiptId || item.fee_receipt_id || item.sourceId || item.source_id);
+    const searchable = [typeValue, counterpartyValue, item.particulars, item.remarks, referenceValue, enteredByValue, method, financeAccountName(accountKey), item.serviceType, item.service_type, item.fy, item.panRegNo, item.pan_reg_no].join(" ").toLowerCase();
+    if (search && !searchable.includes(search)) return false;
+    if (paymentMethod && method !== paymentMethod) return false;
+    if (account && accountKey !== account) return false;
+    if (subtype && !String(typeValue).toLowerCase().includes(subtype)) return false;
+    if (counterparty && !counterpartyValue.toLowerCase().includes(counterparty)) return false;
+    if (reference && !referenceValue.toLowerCase().includes(reference)) return false;
+    if (enteredBy && !enteredByValue.toLowerCase().includes(enteredBy)) return false;
+    if (service && ![item.serviceType, item.service_type, item.particulars].join(" ").toLowerCase().includes(service)) return false;
+    if (linkStatus === "linked" && !linked) return false;
+    if (linkStatus === "unlinked" && linked) return false;
+    const amount = Number(item.amount || 0);
+    if (Number.isFinite(minAmount) && minAmount !== null && amount < minAmount) return false;
+    if (Number.isFinite(maxAmount) && maxAmount !== null && amount > maxAmount) return false;
+    return true;
+  }).sort((a, b) => {
+    const direction = input.sort === "oldest" ? 1 : -1;
+    const dateCompare = String(a.date || "").localeCompare(String(b.date || ""));
+    if (dateCompare) return dateCompare * direction;
+    const timeCompare = String(a.updatedAt || a.updated_at || a.createdAt || a.created_at || "").localeCompare(String(b.updatedAt || b.updated_at || b.createdAt || b.created_at || ""));
+    if (timeCompare) return timeCompare * direction;
+    return String(a.id || "").localeCompare(String(b.id || "")) * direction;
+  });
+  const pageSize = [25, 50, 100].includes(Number(input.pageSize)) ? Number(input.pageSize) : 25;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, Number(input.page) || 1));
+  const rows = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const summary = { total: 0, cash: 0, federal_bank: 0, tmb: 0, unclassified_bank: 0 };
+  filtered.forEach((item) => {
+    const amount = Number(item.amount || 0);
+    const key = financeAccountOf(item);
+    summary.total += amount;
+    if (Object.hasOwn(summary, key)) summary[key] += amount;
+  });
+  return { kind, view, from, to, today, rows, total: filtered.length, totalAmount: summary.total, summary, page, pageSize, pageCount };
+}
+
 function transactionAccount(payload = {}, paymentMethod = "Cash") {
   const accountKey = financeAccountOf(payload);
   if (paymentMethod === "Cash") {
@@ -1586,6 +1673,8 @@ module.exports = {
   decideCashReconciliation,
   calculateDailyReportBalanceSummary,
   accountSummary,
+  queryFinanceTransactions,
+  indiaBusinessDate,
   saveAccountTransfer,
   deleteAccountTransfer,
   classifyLegacyBankTransaction,

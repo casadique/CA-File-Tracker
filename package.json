@@ -21,6 +21,7 @@
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
     "test:opening-balance": "node tools/test-opening-balance-layout.js",
     "test:transactions": "node tools/test-transactions-modernization.js",
+    "test:transaction-registers": "node tools/test-transaction-registers.js",
     "test:expense-items": "node tools/test-expense-item-dropdown.js",
     "test:fee-collection-editor": "node tools/test-fee-collection-editor.js",
     "test:fee-received": "node tools/test-fee-received-modernization.js",

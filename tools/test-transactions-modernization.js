@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
-for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Collection Details", "Payment &amp; Reference", "Search Collections", "collection-register-modern"]) {
+for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Collection Details", "Payment &amp; Reference", "Find Collection Transactions", "collection-register-modern"]) {
   assert.ok(app.includes(token), `Missing modern Transactions UI token: ${token}`);
 }
 assert.doesNotMatch(app.slice(app.indexOf("function expenseOverviewCard"), app.indexOf("function normalizeCollectionType")), /transactionSparkline\(/,
