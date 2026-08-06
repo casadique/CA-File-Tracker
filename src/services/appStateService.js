@@ -71,12 +71,14 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     throw error;
   }
   const normalized = normalizeServerState(state || emptyState());
+  const previousTime = Date.parse(expectedUpdatedAt) || 0;
+  const nextUpdatedAt = new Date(Math.max(Date.now(), previousTime + 1)).toISOString();
   const { data, error } = await supabaseAdmin
     .from("app_state")
     .update({
       state: normalized,
       updated_by: updatedBy,
-      updated_at: new Date().toISOString(),
+      updated_at: nextUpdatedAt,
     })
     .eq("id", APP_STATE_ID)
     .eq("updated_at", expectedUpdatedAt)
@@ -104,6 +106,8 @@ function assertSafeStateReplacement(currentState = {}, incomingState = {}) {
     "cashReconciliations",
     "chatMessages",
     "fileNotifications",
+    "invoices",
+    "invoiceAuditEvents",
   ];
   const erased = protectedCollections.filter((key) =>
     Array.isArray(currentState[key])
@@ -123,6 +127,27 @@ async function patchAppState(mutator, updatedBy = null) {
   const saved = await saveAppState(next || state, updatedBy);
   perfLog("patchAppState", startedAt);
   return saved;
+}
+
+// Optimistic compare-and-swap mutation for operations that must be serialized
+// against the single central state row (for example, assigning invoice numbers).
+// The mutator is deliberately re-run against the newest state after a conflict.
+async function patchAppStateAtomic(mutator, updatedBy = null, maxAttempts = 6) {
+  const startedAt = perfStart();
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const record = await getAppStateRecord();
+    const next = await mutator(structuredClone(record.state), { attempt });
+    try {
+      const saved = await saveAppStateIfCurrent(next || record.state, updatedBy, record.updatedAt);
+      perfLog("patchAppStateAtomic", startedAt, { attempts: attempt + 1 });
+      return normalizeServerState(saved.state);
+    } catch (error) {
+      if (error.status !== 409 || attempt === maxAttempts - 1) throw error;
+    }
+  }
+  const conflict = new Error("The central record changed repeatedly. Please retry.");
+  conflict.status = 409;
+  throw conflict;
 }
 
 async function migrateNotificationRetention() {
@@ -237,6 +262,10 @@ function emptyState() {
     readChatMessages: [],
     staffDetails: [],
     fileNotifications: [],
+    invoices: [],
+    invoiceSequences: [],
+    invoiceAuditEvents: [],
+    invoiceSettings: {},
     auditLog: [],
     services: [],
     careOfList: [],
@@ -573,6 +602,7 @@ module.exports = {
   saveAppStateIfCurrent,
   assertSafeStateReplacement,
   patchAppState,
+  patchAppStateAtomic,
   backupPayload,
   sortFilesNewestFirst,
   normalizeFileNotifications,

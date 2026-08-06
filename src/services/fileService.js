@@ -194,6 +194,7 @@ const PROTECTED_BILLING_FIELDS = [
   "feeReceived", "fee_received", "feeReceivedDate", "fee_received_date", "feeReceivedAmount", "fee_received_amount",
   "amountReceived", "amount_received", "paymentStatus", "payment_status", "paymentMode", "payment_mode", "receiptMode", "receipt_mode",
   "feeReceiptId", "fee_receipt_id", "feeTransactionId", "fee_transaction_id", "transactionId", "transaction_id",
+  "invoiceId", "invoice_id", "invoiceStatus", "invoice_status", "invoiceIssued", "invoice_issued", "issuedInvoiceNumber", "invoiceTotal", "invoiceOutstandingAmount",
 ];
 
 function assertBillingMutationPermission(before, after, profile = {}) {

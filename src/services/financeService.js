@@ -285,8 +285,14 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
     const receiptId = receiptPayload.feeReceiptId || receiptPayload.id || crypto.randomUUID();
     const existingReceipt = (state.feeReceipts || []).find((item) => item.id === receiptId);
     const previousSummary = feeReceiptSummary(original, (state.feeReceipts || []).filter((item) => item.id !== receiptId));
+    if (original.invoiceIssued && discountAmount > 0) {
+      const error = new Error("A payment discount cannot directly alter an issued invoice. Use the authorised credit-note workflow.");
+      error.status = 409;
+      throw error;
+    }
     const billedAmount = Number(
-      receiptPayload.billedAmount
+      (original.invoiceIssued && original.invoiceTotal)
+      || receiptPayload.billedAmount
       || receiptPayload.billed_amount
       || original.billedAmount
       || original.billed_amount
@@ -406,6 +412,7 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
     };
     state.feeReceipts = upsertById(state.feeReceipts || [], receipt).sort(financeNewestFirst);
     state.files[fileIndex] = applyFeeReceiptSummary(original, state.feeReceipts, now, profile, receiptPayload);
+    syncIssuedInvoicePayment(state, state.files[fileIndex], now);
     appendAudit(state, shouldPush ? "Fee receipt saved with linked collection" : "Fee receipt saved", {
       ...receipt,
       clientName: original.name || "",
@@ -800,6 +807,7 @@ async function reverseFeeReceipt(receiptId, reason, userId, profile) {
     }
 
     state.files[fileIndex] = applyFeeReceiptSummary(state.files[fileIndex], state.feeReceipts, now, profile);
+    syncIssuedInvoicePayment(state, state.files[fileIndex], now);
     appendAudit(state, linkedCollection
       ? "Fee receipt marked Not Received and linked collection reversed"
       : "Fee receipt marked Not Received", {
@@ -921,7 +929,8 @@ function applyFeeReceiptSummary(file, receipts, now, profile, billingPayload = {
   const summary = feeReceiptSummary(file, receipts);
   const latest = summary.latest || {};
   const billedAmount = Number(
-    billingPayload.billedAmount
+    (file.invoiceIssued && file.invoiceTotal)
+    || billingPayload.billedAmount
     || billingPayload.billed_amount
     || file.billedAmount
     || file.billed_amount
@@ -986,6 +995,20 @@ function applyFeeReceiptSummary(file, receipts, now, profile, billingPayload = {
     updated_at: now.toISOString(),
     lastUpdatedBy: profile?.name || file.lastUpdatedBy || "",
   };
+}
+
+function syncIssuedInvoicePayment(state, file = {}, now = new Date()) {
+  if (!file.invoiceIssued || !Array.isArray(state.invoices)) return;
+  const invoiceIndex = state.invoices.findIndex((invoice) => invoice.status === "Issued" && ((file.invoiceId && invoice.invoiceId === file.invoiceId) || invoice.fileId === file.id));
+  if (invoiceIndex < 0) return;
+  const invoice = state.invoices[invoiceIndex];
+  const amountReceived = Math.max(Number(file.amountReceived || file.amount_received || file.feeReceivedAmount || 0), 0);
+  const outstandingAmount = Math.max(Number(invoice.invoiceTotal || 0) - amountReceived, 0);
+  state.invoices[invoiceIndex] = { ...invoice, advanceReceived: amountReceived, outstandingAmount, paymentStatus: amountReceived <= 0 ? "Pending" : (outstandingAmount > 0 ? "Partially Received" : "Received"), updatedAt: now.toISOString() };
+  if (Number(invoice.advanceReceived || 0) !== amountReceived || Number(invoice.outstandingAmount || 0) !== outstandingAmount) {
+    state.invoiceAuditEvents = [...(state.invoiceAuditEvents || []), { id: crypto.randomUUID(), invoiceId: invoice.invoiceId, fileId: file.id, invoiceNumber: invoice.invoiceNumber, action: "Invoice Payment Position Updated", previousValue: { amountReceived: Number(invoice.advanceReceived || 0), outstandingAmount: Number(invoice.outstandingAmount || 0) }, newValue: { amountReceived, outstandingAmount }, user: { name: file.lastUpdatedBy || "System", role: "Finance" }, dateTime: now.toISOString() }];
+  }
+  file.invoiceOutstandingAmount = outstandingAmount;
 }
 
 function isActiveTransaction(item = {}) {

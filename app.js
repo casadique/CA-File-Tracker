@@ -5077,7 +5077,7 @@ function activeExpenses() {
 
 function dashboardFileAmount(file, kind = "billed") {
   const received = Number(file.amount_received || file.amountReceived || file.feeReceivedAmount || 0);
-  const billed = Number(file.feeAmount || file.billAmount || file.amount || file.billedAmount || received || 0);
+  const billed = Number((file.invoiceIssued && file.invoiceTotal) || file.feeAmount || file.billAmount || file.amount || file.billedAmount || received || 0);
   return kind === "received" ? received : billed;
 }
 
@@ -5678,7 +5678,10 @@ function renderBilledFilesFilterPanel(files) {
 
 function billedFilesActionToolbar() {
   return `<div class="billed-filter-toolbar">
-    <div><button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button></div>
+    <div class="billed-toolbar-left"><button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button>
+      <button class="secondary-button file-action-button" type="button" data-invoice-register>${navIcon("invoice")}Invoice Register</button>
+      ${normalizeRole(state.currentRole) === "Admin" ? `<button class="secondary-button file-action-button" type="button" data-invoice-settings>${navIcon("settings")}Invoice Settings</button>` : ""}
+    </div>
     <div class="billed-export-actions">
       ${rolePerm().export ? `<button class="secondary-button file-action-button file-action-excel" id="exportFiltered">${navIcon("spreadsheet")}Export Filtered Excel</button>` : ""}
       ${rolePerm().export ? `<button class="secondary-button file-action-button pdf-export-button file-action-pdf" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
@@ -7853,7 +7856,7 @@ function billedDesktopRow(file, index) {
     <td class="billed-service-cell"><strong>${escapeHtml(file.serviceType || "-")}</strong><span class="subtext">FY ${escapeHtml(fileFy(file) || "NA")}</span></td>
     <td class="billed-timeline-cell"><span><b>Received</b>${displayDate(file.fileReceivedDate) || "-"}</span><span><b>Allotted</b>${displayDate(file.workAllotmentDate || file.fileReceivedDate) || "-"}</span><span><b>Completed</b>${displayDate(completedDate) || "-"}</span></td>
     <td class="billed-careof-cell">${escapeHtml(file.careOf || "Direct")}</td>
-    <td class="billed-billing-cell"><span>Bill No. ${escapeHtml(billNo)}</span><span class="billed-amount">${rupee(payment.summary.billedAmount)}</span><span class="subtext">${displayDate(billDate) || "-"}</span></td>
+    <td class="billed-billing-cell"><span>Bill No. ${escapeHtml(billNo)}</span><span class="billed-amount">${rupee(payment.summary.billedAmount)}</span><span class="subtext">${displayDate(billDate) || "-"}</span>${window.InvoiceUI?.statusBadge?.(file) || `<span class="invoice-status-badge is-not-issued">${escapeHtml(file.invoiceStatus || "Not Issued")}</span>`}</td>
     <td class="billed-payment-cell"><div class="billed-payment-badges"><span class="billed-payment-badge ${payment.statusClass}"><i></i>${escapeHtml(payment.status)}</span>${payment.linkedCollection ? `<span class="billed-linked-badge">Transaction Linked</span>` : ""}</div><span class="billed-payment-amount">${rupee(payment.summary.totalReceived)}</span><span class="subtext">${displayDate(payment.summary.latestReceiptDate) || "-"} · ${escapeHtml(payment.modeAndAccount)}</span>${payment.paymentOverdue ? `<span class="billed-overdue-label">Payment overdue · ${displayDate(file.dueDate)}</span>` : ""}</td>
     <td class="billed-staff-cell">${escapeHtml(file.completedBy || file.workDoneBy || file.assignedStaff || "Not Assigned")}</td>
     <td class="billed-actions-column"><div class="action-row">${billedFileActions(file)}</div></td>
@@ -7864,7 +7867,7 @@ function billedMobileCard(file, index) {
   const payment = billedPaymentDetails(file);
   return `<article class="billed-mobile-card${index % 2 ? " is-alt" : ""}">
     <div class="billed-mobile-head"><button type="button" class="billed-expand-toggle" data-billed-row-toggle aria-label="Expand details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
-    <div class="billed-mobile-summary"><div><span>Billed</span><strong>${rupee(payment.summary.billedAmount)}</strong></div><div><span>Received</span><strong>${rupee(payment.summary.totalReceived)}</strong></div><div><span>Mode / Account</span><strong>${escapeHtml(payment.modeAndAccount)}</strong></div><div><span>Status</span><strong><span class="billed-payment-badge ${payment.statusClass}"><i></i>${escapeHtml(payment.status)}</span></strong></div></div>
+    <div class="billed-mobile-summary"><div><span>Billed</span><strong>${rupee(payment.summary.billedAmount)}</strong></div><div><span>Received</span><strong>${rupee(payment.summary.totalReceived)}</strong></div><div><span>Mode / Account</span><strong>${escapeHtml(payment.modeAndAccount)}</strong></div><div><span>Payment</span><strong><span class="billed-payment-badge ${payment.statusClass}"><i></i>${escapeHtml(payment.status)}</span></strong></div><div><span>Invoice</span><strong>${window.InvoiceUI?.statusBadge?.(file) || escapeHtml(file.invoiceStatus || "Not Issued")}</strong></div></div>
     ${payment.linkedCollection ? `<span class="billed-linked-badge">Transaction Linked</span>` : ""}
     <div class="billed-mobile-actions">${billedFileActions(file)}</div>
     <div class="billed-mobile-details" hidden>${billedExpandedDetails(file, payment)}</div>
@@ -8886,7 +8889,7 @@ function feeReceiptRecordStatus(receipt = {}) {
 function feeReceiptSummaryForFile(file = {}) {
   const receipts = feeReceiptRecordsForFile(file);
   const hasReceiptHistory = (indexedFeeReceipts().get(file.id) || []).length > 0;
-  const billedAmount = Number(file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || 0);
+  const billedAmount = Number((file.invoiceIssued && file.invoiceTotal) || file.billedAmount || file.billed_amount || file.billAmount || file.feeAmount || file.amount || 0);
   const legacyReceived = Number(file.feeReceivedAmount || file.amountReceived || file.amount_received || dashboardFileAmount(file, "received") || 0);
   const legacyDiscount = Number(file.discountAmount || file.discount_amount || file.discount || 0);
   const totalReceived = receipts.length
@@ -9166,6 +9169,8 @@ function billedFileActions(file = {}, options = {}) {
   const feePendingContext = options.context === "feePending";
   const receiveLabel = hasReceivedAmount ? "Receive Balance" : "Mark Received";
 
+  if (window.InvoiceUI?.menuItems) menuItems.push(...window.InvoiceUI.menuItems(file));
+
   if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
   if (canManageBilling && !hasReceivedAmount && !activeReceipt && !linkedCollection) menuItems.push(billedActionMenuItem({ label: "Mark Non-Billable", icon: "nonbillable", attrs: `data-fee-non-billable="${fileId}"` }));
   if (canManageReceipt && linkedCollection?.id) menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linkedCollection.id)}"` }));
@@ -9177,16 +9182,16 @@ function billedFileActions(file = {}, options = {}) {
     menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete-billed="${fileId}"`, danger: true, divider: true }));
   }
 
-  let primaryAction = "";
-  if (linkedCollection?.id && canManageReceipt) {
+  let primaryAction = window.InvoiceUI?.actionMarkup?.(file) || "";
+  if (!primaryAction && linkedCollection?.id && canManageReceipt) {
     primaryAction = `<button type="button" class="billed-primary-action transaction" data-go-fee-transaction="${escapeHtml(linkedCollection.id)}">${billedActionIcon("transaction")}<span>View Transaction</span></button>`;
-  } else if (summary.outstandingAmount > 0 && canManageBilling) {
+  } else if (!primaryAction && summary.outstandingAmount > 0 && canManageBilling) {
     primaryAction = `<button type="button" class="billed-primary-action mark-received" data-mark-received="${fileId}">${billedActionIcon("received")}<span>${escapeHtml(feePendingContext ? receiveLabel : "Mark Received")}</span></button>`;
-  } else if (isSettled || hasReceivedAmount) {
+  } else if (!primaryAction && (isSettled || hasReceivedAmount)) {
     primaryAction = `<button type="button" class="billed-primary-action received" data-billed-receipt-details="${fileId}">${billedActionIcon("received")}<span>Received</span></button>`;
-  } else if (canEdit) {
+  } else if (!primaryAction && canEdit) {
     primaryAction = `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`;
-  } else {
+  } else if (!primaryAction) {
     primaryAction = `<span class="billed-payment-state">${isSettled || hasReceivedAmount ? "Received" : "Pending"}</span>`;
   }
 
@@ -9958,6 +9963,7 @@ function bindFileActions() {
       openBilledActionMenu(toggle);
     };
   });
+  window.InvoiceUI?.bind?.(document);
   document.querySelectorAll("[data-fee-received-row-toggle]").forEach((button) => {
     button.onclick = (event) => {
       event.preventDefault();
@@ -10826,32 +10832,47 @@ function openBilledFileModal(fileId) {
   const drawer = document.querySelector("#fileDrawer");
   drawer.innerHTML = `
     <div class="drawer-head">
-      <div><h3>Mark File as Billed</h3><p class="small-muted">Save billing details without changing the completed status.</p></div>
+      <div><h3>Mark File as Billed</h3><p class="small-muted">Billing and invoice issuance are separate. Issuing an invoice remains optional.</p></div>
       <button class="icon-button" id="closeBillingModal" title="Close">X</button>
     </div>
+    <div class="billing-tab-list" role="tablist"><button type="button" class="billing-tab active" id="billingDetailsTab" role="tab" aria-selected="true">Billing Details</button><button type="button" class="billing-tab" id="issueInvoiceTab" role="tab" aria-selected="false">Issue Invoice</button></div>
     <form id="billingForm" class="drawer-body">
+      <div class="billing-tab-panel" id="billingDetailsPanel" role="tabpanel">
       <div class="checking-summary"><strong>${escapeHtml(file.name || "")}</strong><span>${escapeHtml(file.serviceType || "")}${file.fy ? ` · FY ${escapeHtml(file.fy)}` : ""}</span></div>
       <div class="billing-primary-row">
         ${formField("billingDate", "Bill Date", todayDate(), "date")}
-        ${formField("billAmount", "Amount", file.billedAmount || file.billAmount || file.feeAmount || "", "number")}
-        ${formField("invoiceNumber", "Invoice No.", file.invoiceNumber || file.billReference || "", "text", false)}
+        ${formField("billAmount", "Billed Amount", file.billedAmount || file.billAmount || file.feeAmount || "", "number")}
+        ${formField("billNumber", "Bill No. (optional)", file.billNo || file.bill_number || file.billReference || "", "text", false)}
       </div>
-      <div class="field"><label>Billing Remarks</label><textarea name="billingRemarks" rows="4">${escapeHtml(file.billingRemarks || "")}</textarea></div>
+      <div class="field"><label>Billing Remarks</label><textarea name="billingRemarks" rows="4">${escapeHtml(file.billingRemarks || "")}</textarea></div></div>
+      <div class="billing-tab-panel" id="issueInvoicePanel" role="tabpanel" hidden><div class="billing-invoice-intro"><h4>Issue a GST invoice after saving billing details</h4><p>The file will first be saved as billed with invoice status <strong>Not Issued</strong>. The invoice workspace will prefill client, service, billing and firm settings for review.</p><div class="billing-invoice-separation"><span><strong>Billed = Yes</strong><br>Existing Billed Files workflow continues.</span><span><strong>Invoice Issued = No</strong><br>No number is consumed until final issue.</span></div></div></div>
     </form>
     <div class="drawer-actions">
       <button class="secondary-button" id="cancelBilling">Cancel</button>
-      <button class="primary-button" id="confirmBilling">Confirm Billed</button>
+      <button class="secondary-button" id="confirmBilling">Save as Billed</button>
+      <button class="primary-button" id="continueInvoice">Continue to Issue Invoice</button>
     </div>`;
   drawer.classList.add("open");
   document.querySelector("#backdrop").classList.add("show");
   document.querySelector("#closeBillingModal").onclick = closeOverlays;
   document.querySelector("#cancelBilling").onclick = closeOverlays;
-  document.querySelector("#confirmBilling").onclick = () => submitBilledFile(file.id);
+  const selectTab = (invoiceTab) => {
+    document.querySelector("#billingDetailsTab").classList.toggle("active", !invoiceTab);
+    document.querySelector("#issueInvoiceTab").classList.toggle("active", invoiceTab);
+    document.querySelector("#billingDetailsTab").setAttribute("aria-selected", String(!invoiceTab));
+    document.querySelector("#issueInvoiceTab").setAttribute("aria-selected", String(invoiceTab));
+    document.querySelector("#billingDetailsPanel").hidden = invoiceTab;
+    document.querySelector("#issueInvoicePanel").hidden = !invoiceTab;
+  };
+  document.querySelector("#billingDetailsTab").onclick = () => selectTab(false);
+  document.querySelector("#issueInvoiceTab").onclick = () => selectTab(true);
+  document.querySelector("#confirmBilling").onclick = () => submitBilledFile(file.id, false);
+  document.querySelector("#continueInvoice").onclick = () => submitBilledFile(file.id, true);
 }
 
-async function submitBilledFile(fileId) {
+async function submitBilledFile(fileId, continueToInvoice = false) {
   const form = document.querySelector("#billingForm");
-  const button = document.querySelector("#confirmBilling");
+  const button = document.querySelector(continueToInvoice ? "#continueInvoice" : "#confirmBilling");
   if (!form || !button) return;
   const data = new FormData(form);
   const billingDate = String(data.get("billingDate") || "").trim();
@@ -10870,17 +10891,24 @@ async function submitBilledFile(fileId) {
     billAmount,
     feeAmount: billAmount,
     balanceAmount: billAmount,
-    invoiceNumber: String(data.get("invoiceNumber") || "").trim(),
-    billReference: String(data.get("invoiceNumber") || "").trim(),
+    billNo: String(data.get("billNumber") || "").trim(),
+    bill_number: String(data.get("billNumber") || "").trim(),
+    billReference: String(data.get("billNumber") || "").trim(),
     billingRemarks: String(data.get("billingRemarks") || "").trim(),
+    invoiceStatus: "Not Issued",
+    invoiceIssued: false,
     feeReceived: false,
     feeReceivedDate: "",
   }, "File marked as billed");
-  if (ok) closeOverlays();
+  if (ok) {
+    closeOverlays();
+    if (continueToInvoice) window.InvoiceUI?.open?.(fileId);
+  }
   else {
     button.disabled = false;
-    button.textContent = "Confirm Billed";
+    button.textContent = continueToInvoice ? "Continue to Issue Invoice" : "Save as Billed";
   }
+  return ok;
 }
 
 function billingChangeText(before, after) {

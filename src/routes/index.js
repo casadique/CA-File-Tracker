@@ -13,6 +13,7 @@ const legacyRoutes = require("./legacyRoutes");
 const dashboardRoutes = require("./dashboardRoutes");
 const clientRoutes = require("./clientRoutes");
 const notificationRoutes = require("./notificationRoutes");
+const invoiceRoutes = require("./invoiceRoutes");
 const { env } = require("../config/env");
 
 const router = express.Router();
@@ -38,5 +39,6 @@ router.use("/visitors", visitorRoutes);
 router.use("/users", userRoutes);
 router.use("/storage", storageRoutes);
 router.use("/exports", exportRoutes);
+router.use("/invoices", invoiceRoutes);
 
 module.exports = router;
