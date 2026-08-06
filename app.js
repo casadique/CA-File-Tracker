@@ -4546,7 +4546,11 @@ function renderAll() {
 }
 
 function renderActivePage() {
-  if (activePage !== "staffDetails") staffDetailsFormOpen = false;
+  if (activePage !== "staffDetails") {
+    staffDetailsFormOpen = false;
+    closeStaffActionMenu();
+    closeStaffProfileModal({ restoreFocus: false });
+  }
   const renderers = {
     dashboard: renderDashboard,
     files: renderFilesPage,
@@ -12963,6 +12967,10 @@ function renderStaffManagerPermissionSummary() {
   `;
 }
 
+let activeStaffActionMenu = null;
+let activeStaffProfileModal = null;
+let staffActionMenuEventsBound = false;
+
 function renderStaffDetailsPage() {
   const page = document.querySelector("#staffDetails");
   if (!page) return;
@@ -13020,7 +13028,6 @@ function renderStaffDetailsPage() {
         </div>
         ${renderStaffDetailsTable(rows)}
       </section>
-      <section class="panel staff-profile-panel" id="staffProfilePanel">${renderStaffProfile()}</section>
     </div>
   `;
   bindStaffDetailsPage();
@@ -13200,8 +13207,8 @@ function renderStaffDetailsTable(rows) {
 }
 
 function staffDetailsActions(row) {
-  const inactive = ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus);
-  return `<div class="staff-row-actions"><button type="button" class="staff-primary-action" data-view-staff="${row.id}">View Profile</button>${canManageStaffDetails() ? `<details class="staff-action-menu"><summary aria-label="Open actions for ${escapeHtml(row.staffName)}" title="More actions"><span class="staff-menu-glyph" aria-hidden="true"></span></summary><div role="menu"><button type="button" role="menuitem" data-edit-staff="${row.id}">Edit</button><button type="button" role="menuitem" data-toggle-staff="${row.id}">${inactive ? "Reactivate" : "Deactivate"}</button><button type="button" role="menuitem" class="danger" data-delete-staff="${row.id}">Delete</button></div></details>` : ""}</div>`;
+  const staffId = escapeHtml(row.id || "");
+  return `<div class="staff-row-actions"><button type="button" class="staff-primary-action" data-view-staff="${staffId}">View Profile</button>${canManageStaffDetails() ? `<button type="button" class="staff-menu-toggle" data-staff-menu-toggle="${staffId}" aria-label="Open actions for ${escapeHtml(row.staffName)}" aria-haspopup="menu" aria-expanded="false" title="More actions"><span class="staff-menu-glyph" aria-hidden="true"></span></button>` : ""}</div>`;
 }
 
 function staffDetailsMobileCard(row, index) {
@@ -13217,38 +13224,167 @@ function staffManagerName(id) {
   return state.users.find((user) => user.id === id)?.name || "";
 }
 
-function renderStaffProfile() {
-  const row = staffDetailsVisibleRows().find((item) => item.id === state.filters.staffProfileId);
-  if (!row) return `<div class="dashboard-empty-state">Select a staff record to view the employee profile.</div>`;
+function renderStaffProfile(row) {
+  if (!row) return "";
   const anniversaryDate = staffEventDateForYear(row.dateOfJoining, currentIndiaYearMonth().year);
   const years = staffCompletedYears(row.dateOfJoining, anniversaryDate);
   return `<div class="staff-profile">
     <div class="staff-profile-summary">${staffAvatar(row)}<div><h3>${escapeHtml(row.staffName)}</h3><p>${escapeHtml(row.position || "")}${row.department ? ` · ${escapeHtml(row.department)}` : ""}</p><span class="staff-status">${escapeHtml(row.employmentStatus || "Active")}</span></div></div>
     <div class="staff-profile-grid">
-      ${staffProfileBlock("Employment Information", [["EMP ID", row.staffCode], ["DOJ", displayDate(row.dateOfJoining)], ["Years of Service", `${years} ${years === 1 ? "Year" : "Years"}`], ["EMP TYPE", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Status", row.employmentStatus]])}
-      ${staffProfileBlock("Personal Details", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Gender", row.gender], ["BG", row.bloodGroup || "Not Known"]])}
+      ${staffProfileBlock("Employment Information", [["EMP ID", row.staffCode], ["Position", row.position], ["Department", row.department], ["DOJ", safeStaffProfileDate(row.dateOfJoining)], ["Years of Service", row.dateOfJoining ? `${years} ${years === 1 ? "Year" : "Years"}` : "Not Recorded"], ["EMP TYPE", row.employmentType], ["Reporting to", staffManagerName(row.reportingManagerId)], ["Status", row.employmentStatus]])}
+      ${staffProfileBlock("Personal Information", [["DOB", safeStaffProfileDate(row.dateOfBirth, !canManageStaffDetails())], ["Gender", row.gender], ["BG", row.bloodGroup]])}
       ${staffProfileBlock("Qualifications", [["Qualifications", row.qualifications]])}
       ${staffProfileBlock("Contact Information", [["Email", row.email], ["Contact", row.mobile], ["Address", row.address], ["Emergency Contact", [row.emergencyContactName, row.emergencyContactNumber, row.emergencyContactRelationship].filter(Boolean).join(" - ")]])}
-      ${staffProfileBlock("Important Dates", [["DOB", canManageStaffDetails() ? displayDate(row.dateOfBirth) : staffShortDate(row.dateOfBirth)], ["Next Birthday", staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year))], ["Next Work Anniversary", staffShortDate(anniversaryDate)], ["Completed Years", `${years} ${years === 1 ? "Year" : "Years"}`]])}
-      ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", new Date(row.createdAt).toLocaleString("en-IN")], ["Last Updated By", row.updatedByUserName], ["Last Updated On", new Date(row.updatedAt).toLocaleString("en-IN")]])}
+      ${staffProfileBlock("Important Dates", [["Next Birthday", row.dateOfBirth ? staffShortDate(staffEventDateForYear(row.dateOfBirth, currentIndiaYearMonth().year)) : "Not Recorded"], ["Next Work Anniversary", row.dateOfJoining ? staffShortDate(anniversaryDate) : "Not Recorded"], ["Completed Years", row.dateOfJoining ? `${years} ${years === 1 ? "Year" : "Years"}` : "Not Recorded"]])}
+      ${staffProfileBlock("Audit Information", [["Created By", row.createdByUserName], ["Created On", safeStaffProfileDateTime(row.createdAt)], ["Last Updated By", row.updatedByUserName], ["Last Updated On", safeStaffProfileDateTime(row.updatedAt)]])}
+      ${staffProfileBlock("Additional Information", [["Remarks", row.remarks]])}
     </div>
   </div>`;
 }
 
 function staffProfileBlock(title, rows) {
-  return `<section><h4>${escapeHtml(title)}</h4>${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong></div>`).join("")}</section>`;
+  return `<section><h4>${escapeHtml(title)}</h4>${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(staffProfileValue(value))}</strong></div>`).join("")}</section>`;
+}
+
+function staffProfileValue(value, fallback = "Not Recorded") {
+  const text = String(value ?? "").trim();
+  return !text || ["undefined", "null", "invalid date", "-"].includes(text.toLowerCase()) ? fallback : text;
+}
+
+function safeStaffProfileDate(value, short = false) {
+  if (!value || !staffDateParts(value)) return "Not Recorded";
+  return staffProfileValue(short ? staffShortDate(value) : displayDate(value));
+}
+
+function safeStaffProfileDateTime(value) {
+  const date = value ? new Date(value) : null;
+  return !date || Number.isNaN(date.getTime()) ? "Not Recorded" : date.toLocaleString("en-IN");
+}
+
+function closeStaffActionMenu({ restoreFocus = false } = {}) {
+  if (!activeStaffActionMenu) return;
+  const { portal, trigger } = activeStaffActionMenu;
+  portal?.remove();
+  trigger?.setAttribute("aria-expanded", "false");
+  activeStaffActionMenu = null;
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
+}
+
+function positionStaffActionMenu() {
+  if (!activeStaffActionMenu) return;
+  const { portal, trigger } = activeStaffActionMenu;
+  if (!portal?.isConnected || !trigger?.isConnected) return closeStaffActionMenu();
+  const rect = trigger.getBoundingClientRect();
+  if (rect.bottom < 0 || rect.top > window.innerHeight) return closeStaffActionMenu();
+  const margin = 10;
+  const gap = 7;
+  const width = Math.min(220, window.innerWidth - margin * 2);
+  portal.style.width = `${width}px`;
+  const height = portal.offsetHeight || 140;
+  const openAbove = rect.bottom + gap + height > window.innerHeight - margin && rect.top - gap - height >= margin;
+  const top = openAbove ? rect.top - gap - height : Math.min(rect.bottom + gap, window.innerHeight - height - margin);
+  const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
+  portal.style.top = `${Math.max(margin, top)}px`;
+  portal.style.left = `${left}px`;
+  portal.classList.toggle("opens-upward", openAbove);
+}
+
+function openStaffActionMenu(trigger) {
+  const staffId = trigger?.dataset.staffMenuToggle || "";
+  const row = staffDetailsVisibleRows().find((item) => item.id === staffId);
+  if (!trigger || !row || !canManageStaffDetails()) return closeStaffActionMenu();
+  if (activeStaffActionMenu?.trigger === trigger) return closeStaffActionMenu({ restoreFocus: true });
+  closeStaffActionMenu();
+  const inactive = ["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus);
+  const portal = document.createElement("div");
+  portal.className = "staff-action-menu-portal";
+  portal.setAttribute("role", "menu");
+  portal.setAttribute("aria-label", `Actions for ${row.staffName || "staff"}`);
+  portal.innerHTML = `<button type="button" role="menuitem" data-portal-edit-staff="${escapeHtml(row.id)}"><span aria-hidden="true">&#9998;</span><span>Edit Staff</span></button><button type="button" role="menuitem" data-portal-toggle-staff="${escapeHtml(row.id)}"><span aria-hidden="true">&#8635;</span><span>${inactive ? "Reactivate" : "Deactivate"}</span></button><div class="staff-menu-divider" role="separator"></div><button type="button" role="menuitem" class="danger" data-portal-delete-staff="${escapeHtml(row.id)}"><span aria-hidden="true">&#128465;</span><span>Delete</span></button>`;
+  document.body.appendChild(portal);
+  trigger.setAttribute("aria-expanded", "true");
+  activeStaffActionMenu = { portal, trigger, staffId };
+  positionStaffActionMenu();
+  portal.querySelector("[data-portal-edit-staff]")?.addEventListener("click", () => {
+    closeStaffActionMenu();
+    state.filters.staffEditingId = row.id;
+    staffDetailsFormOpen = true;
+    renderStaffDetailsPage();
+  });
+  portal.querySelector("[data-portal-toggle-staff]")?.addEventListener("click", () => { closeStaffActionMenu(); toggleStaffStatus(row.id); });
+  portal.querySelector("[data-portal-delete-staff]")?.addEventListener("click", () => { closeStaffActionMenu(); deleteStaffDetail(row.id); });
+  portal.querySelector("button")?.focus();
+  bindStaffActionMenuDocumentEvents();
+}
+
+function bindStaffActionMenuDocumentEvents() {
+  if (staffActionMenuEventsBound) return;
+  staffActionMenuEventsBound = true;
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-staff-menu-toggle]") || event.target.closest(".staff-action-menu-portal")) return;
+    closeStaffActionMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && activeStaffActionMenu) return closeStaffActionMenu({ restoreFocus: true });
+    const item = event.target.closest(".staff-action-menu-portal [role='menuitem']");
+    if (!item || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = [...activeStaffActionMenu.portal.querySelectorAll("[role='menuitem']")];
+    if (!items.length) return;
+    event.preventDefault();
+    const index = items.indexOf(item);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? (index + 1) % items.length : (index - 1 + items.length) % items.length;
+    items[next].focus();
+  });
+  document.addEventListener("scroll", positionStaffActionMenu, true);
+  window.addEventListener("resize", positionStaffActionMenu);
+}
+
+function closeStaffProfileModal({ restoreFocus = true } = {}) {
+  if (!activeStaffProfileModal) return;
+  const { backdrop, returnFocus, previousOverflow } = activeStaffProfileModal;
+  backdrop.remove();
+  document.body.style.overflow = previousOverflow;
+  activeStaffProfileModal = null;
+  if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
+}
+
+function openStaffProfileModal(staffId, returnFocus) {
+  const row = staffDetailsVisibleRows().find((item) => item.id === staffId);
+  if (!row) return toast("Staff record not found.");
+  closeStaffActionMenu();
+  closeStaffProfileModal({ restoreFocus: false });
+  const backdrop = document.createElement("div");
+  backdrop.id = "staffProfileModal";
+  backdrop.className = "staff-profile-backdrop";
+  backdrop.innerHTML = `<section class="staff-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="staffProfileTitle"><header class="staff-profile-dialog-header"><div><span class="dashboard-eyebrow">Employee Profile</span><h2 id="staffProfileTitle">${escapeHtml(staffProfileValue(row.staffName))}</h2><p>${escapeHtml(staffProfileValue(row.staffCode))} &middot; ${escapeHtml(staffProfileValue(row.position))} &middot; ${escapeHtml(staffProfileValue(row.department))}</p><span class="staff-status status-${String(row.employmentStatus || "Active").toLowerCase().replaceAll(" ", "-")}">${escapeHtml(staffProfileValue(row.employmentStatus, "Active"))}</span></div><button type="button" class="icon-button" data-close-staff-profile aria-label="Close staff profile">&#10005;</button></header><div class="staff-profile-dialog-content">${renderStaffProfile(row)}</div><footer class="staff-profile-dialog-actions">${canManageStaffDetails() ? `<button type="button" class="secondary-button" data-profile-toggle-staff="${escapeHtml(row.id)}">${["Inactive", "Resigned", "Terminated"].includes(row.employmentStatus) ? "Reactivate" : "Deactivate"}</button><button type="button" class="primary-button" data-profile-edit-staff="${escapeHtml(row.id)}">Edit Staff</button>` : ""}<button type="button" class="secondary-button" data-close-staff-profile>Close</button></footer></section>`;
+  const previousOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  document.body.appendChild(backdrop);
+  activeStaffProfileModal = { backdrop, returnFocus, previousOverflow, staffId };
+  backdrop.querySelectorAll("[data-close-staff-profile]").forEach((button) => button.addEventListener("click", () => closeStaffProfileModal()));
+  backdrop.addEventListener("click", (event) => { if (event.target === backdrop) closeStaffProfileModal(); });
+  backdrop.querySelector("[data-profile-edit-staff]")?.addEventListener("click", () => {
+    closeStaffProfileModal({ restoreFocus: false });
+    state.filters.staffEditingId = row.id;
+    staffDetailsFormOpen = true;
+    renderStaffDetailsPage();
+  });
+  backdrop.querySelector("[data-profile-toggle-staff]")?.addEventListener("click", () => { closeStaffProfileModal({ restoreFocus: false }); toggleStaffStatus(row.id); });
+  backdrop.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); return closeStaffProfileModal(); }
+    if (event.key !== "Tab") return;
+    const focusable = [...backdrop.querySelectorAll("button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")];
+    if (!focusable.length) return;
+    const first = focusable[0]; const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
+  backdrop.querySelector("[data-close-staff-profile]")?.focus();
 }
 
 function bindStaffDetailsPage() {
-  const staffPage = document.querySelector("#staffDetails");
-  staffPage?.addEventListener("click", (event) => {
-    if (event.target.closest(".staff-action-menu")) return;
-    staffPage.querySelectorAll(".staff-action-menu[open]").forEach((menu) => { menu.open = false; });
-  });
-  staffPage?.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    staffPage.querySelectorAll(".staff-action-menu[open]").forEach((menu) => { menu.open = false; });
-  });
+  closeStaffActionMenu();
+  bindStaffActionMenuDocumentEvents();
   document.querySelector("#showStaffForm")?.addEventListener("click", () => {
     staffDetailsFormOpen = true;
     state.filters.staffEditingId = "";
@@ -13288,11 +13424,18 @@ function bindStaffDetailsPage() {
     renderStaffDetailsPage();
   });
   document.querySelector("#staffDetailsForm")?.addEventListener("submit", saveStaffDetailsForm);
-  document.querySelectorAll("[data-view-staff]").forEach((btn) => btn.addEventListener("click", () => {
-    state.filters.staffProfileId = btn.dataset.viewStaff;
-    saveViewState();
-    renderStaffDetailsPage();
+  document.querySelectorAll("[data-view-staff]").forEach((btn) => btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openStaffProfileModal(btn.dataset.viewStaff, btn);
   }));
+  document.querySelectorAll("[data-staff-menu-toggle]").forEach((btn) => {
+    btn.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); openStaffActionMenu(btn); });
+    btn.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowDown") return;
+      event.preventDefault(); event.stopPropagation(); openStaffActionMenu(btn);
+    });
+  });
   document.querySelectorAll("[data-edit-staff]").forEach((btn) => btn.addEventListener("click", () => {
     state.filters.staffEditingId = btn.dataset.editStaff;
     staffDetailsFormOpen = true;
@@ -13300,14 +13443,6 @@ function bindStaffDetailsPage() {
   }));
   document.querySelectorAll("[data-toggle-staff]").forEach((btn) => btn.addEventListener("click", () => toggleStaffStatus(btn.dataset.toggleStaff)));
   document.querySelectorAll("[data-delete-staff]").forEach((btn) => btn.addEventListener("click", () => deleteStaffDetail(btn.dataset.deleteStaff)));
-  document.querySelectorAll(".staff-action-menu").forEach((menu) => menu.addEventListener("toggle", () => {
-    if (!menu.open) return;
-    document.querySelectorAll(".staff-action-menu[open]").forEach((other) => { if (other !== menu) other.open = false; });
-  }));
-  document.querySelectorAll(".staff-action-menu button").forEach((button) => button.addEventListener("click", () => {
-    const menu = button.closest(".staff-action-menu");
-    if (menu) menu.open = false;
-  }));
   document.querySelector("#staffDetailsExcel")?.addEventListener("click", exportStaffDetailsExcel);
   document.querySelector("#staffDetailsPdf")?.addEventListener("click", exportStaffDetailsPdf);
   document.querySelector("#staffDetailsPrint")?.addEventListener("click", printStaffDetailsReport);
