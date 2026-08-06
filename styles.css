@@ -9418,7 +9418,7 @@ textarea {
 
 .fee-received-expanded-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(105px, 1fr)) minmax(220px, 2fr);
   gap: 12px;
   padding: 14px 18px 14px 66px;
 }
@@ -9440,10 +9440,6 @@ textarea {
   color: #1e293b;
   font-size: 12px;
   overflow-wrap: anywhere;
-}
-
-.fee-received-expanded-remarks {
-  grid-column: 1 / -1;
 }
 
 .fee-received-modern-table tfoot td {
@@ -9584,9 +9580,6 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  .fee-received-expanded-remarks {
-    grid-column: auto;
-  }
 }
 
 /* Modern main File List workspace */

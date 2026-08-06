@@ -34,6 +34,10 @@ assert.match(expandedDetails, /<span>Discount<\/span><strong>\$\{rupee\(row\.dis
   "Expanded Discount must render through the currency formatter");
 assert.doesNotMatch(expandedDetails, /escapeHtml\(rupee\(/,
   "Expanded Discount must not double-escape the rupee symbol into visible entity text");
+assert.match(expandedDetails, /<span>Reference<\/span>/,
+  "Expanded receipt details must use the compact Reference label");
+assert.doesNotMatch(expandedDetails, /<span>Transaction Reference<\/span>/,
+  "Expanded receipt details must not use the long Transaction Reference label");
 
 for (const requirement of [
   /function feeReceivedDisplayRow/,
@@ -61,6 +65,10 @@ for (const selector of [
 
 assert.match(styles, /\.fee-received-modern-table \.fee-received-client\s*\{[\s\S]*?position:\s*sticky/);
 assert.match(styles, /\.fee-received-actions-column\s*\{[\s\S]*?position:\s*sticky/);
+assert.match(styles, /\.fee-received-expanded-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,[^;]+\)\s+minmax\(220px,\s*2fr\)/,
+  "Desktop expanded receipt details must keep all six fields on one line");
+assert.doesNotMatch(styles, /\.fee-received-expanded-remarks\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/,
+  "Remarks must not span a separate row in expanded receipt details");
 assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.fee-received-modern-table\s*\{\s*display:\s*none[\s\S]*?\.fee-received-mobile-list\s*\{\s*display:\s*grid/);
 
 console.log("Fee Received responsive layout, transaction state, actions and receipt filtering checks passed.");
