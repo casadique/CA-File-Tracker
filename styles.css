@@ -1560,45 +1560,32 @@ th {
   box-shadow: 0 2px 6px rgba(15, 42, 95, .12);
 }
 
-.correction-required-modern-table :is(th, td).correction-required-expand {
-  position: sticky;
-  left: 55px;
-  z-index: 4;
-  width: 44px;
-  min-width: 44px;
-  max-width: 44px;
-  padding: 8px !important;
-  text-align: center !important;
-  background: #fff !important;
-  box-shadow: 1px 0 0 #d7e1ef;
-}
-
-.correction-required-modern-table thead .correction-required-expand {
-  z-index: 7;
-  background: #e8eef7 !important;
-}
-
 .correction-required-modern-table thead .correction-required-sn { z-index: 7; background: #e8eef7; }
 
 .correction-required-modern-table :is(th, td).correction-required-client {
   position: sticky;
-  left: 99px;
+  left: 55px;
   z-index: 3;
-  width: 260px;
-  min-width: 260px;
-  max-width: 260px;
+  width: 270px;
+  min-width: 270px;
+  max-width: 270px;
   padding: 10px 12px !important;
   box-shadow: 1px 0 0 #cbd8ea;
 }
 
 .correction-required-modern-table thead .correction-required-client { z-index: 7; background: #e8eef7; }
+.correction-required-client-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
 .correction-required-client-content {
-  display: flex;
-  min-height: 42px;
   min-width: 0;
   overflow: hidden;
-  flex-direction: column;
-  justify-content: center;
   text-align: left;
 }
 .correction-required-client-content .client-name {
@@ -1657,9 +1644,6 @@ th {
   background: #f4f8ff !important;
   border-left: 3px solid #ef4444;
 }
-
-.correction-required-file-row:nth-of-type(4n + 3) .correction-required-expand { background: #f8fafc !important; }
-.correction-required-file-row:hover .correction-required-expand { background: #eff6ff !important; }
 
 .correction-required-expanded-grid {
   display: grid;
