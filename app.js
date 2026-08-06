@@ -391,6 +391,7 @@ const clientMasterUi = {
   total: 0,
   rows: [],
   loading: false,
+  renderRequestId: 0,
   masters: null,
   moreFiltersOpen: false,
 };
@@ -1795,7 +1796,8 @@ async function refreshCentralState(options = {}) {
     dashboardCountsSnapshot = payload.dashboardCounts || null;
     const chatOpen = options.preserveDraft && document.querySelector("#teamChatPanel")?.classList.contains("open");
     const userIsScrollingDashboard = activePage === "dashboard" && Date.now() - lastDashboardScrollAt < 700;
-    applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard });
+    const preserveIndependentPage = activePage === "clientMaster" && Boolean(document.querySelector("#clientMaster .client-master-shell"));
+    applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard && !preserveIndependentPage });
     updateTopActionBadges();
     dispatchLocalDesktopNotifications();
     if (userIsScrollingDashboard && !chatOpen) scheduleDashboardRefreshRender();
@@ -11341,11 +11343,15 @@ function selectClientForFile(client) {
 
 async function renderClientMasterPage() {
   const page = document.querySelector("#clientMaster");
-  page.innerHTML = `<div class="panel-card client-master-loading">Loading Client Master...</div>`;
+  const requestId = Number(clientMasterUi.renderRequestId || 0) + 1;
+  clientMasterUi.renderRequestId = requestId;
+  const alreadyRendered = Boolean(page.querySelector(".client-master-shell"));
+  if (!alreadyRendered) page.innerHTML = `<div class="panel-card client-master-loading">Loading Client Master...</div>`;
   const [mastersResult, clientsResult] = await Promise.allSettled([
     loadClientMasters(),
     apiJson(`/api/clients?${clientMasterQuery()}`),
   ]);
+  if (activePage !== "clientMaster" || requestId !== clientMasterUi.renderRequestId) return;
   if (mastersResult.status === "rejected") { page.innerHTML = `<div class="permission-note">${escapeHtml(mastersResult.reason.message)}</div>`; return; }
   const masters = clientMasterUi.masters || { clientTypes: [], constitutions: [], careOf: [] };
   const optionList = (values, selected, getName = (item) => item.name) => values.map((item) => {

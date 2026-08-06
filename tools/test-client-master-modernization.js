@@ -70,6 +70,10 @@ assert.match(routes, /clientsForExport\(req\.query, canUseCredentials\(req, "vie
 
 assert.match(page, /Promise\.allSettled\(\[[\s\S]*?loadClientMasters\(\)[\s\S]*?apiJson\(`\/api\/clients\?\$\{clientMasterQuery\(\)\}`\)/,
   "Client rows and filter masters must load in parallel.");
+assert.match(page, /renderRequestId[\s\S]*?alreadyRendered[\s\S]*?activePage !== "clientMaster" \|\| requestId !== clientMasterUi\.renderRequestId/,
+  "Client Master rendering must ignore stale async responses and preserve an already-rendered page.");
+assert.match(source, /preserveIndependentPage = activePage === "clientMaster"[\s\S]*?rerender: !chatOpen && !userIsScrollingDashboard && !preserveIndependentPage/,
+  "Background central-state refreshes must not rebuild and blink the independent Client Master page.");
 assert.match(service, /CLIENT_MASTER_CACHE_TTL_MS[\s\S]*?clientMastersInflight[\s\S]*?state->careOfList/,
   "Client master filters must reuse a short cache and fetch only the required care-of state field.");
 assert.match(service, /prepareImportedClientTypes\(rows\)[\s\S]*?skipDuplicateChecks:\s*true[\s\S]*?skipTypeAssignment:\s*true[\s\S]*?assignImportedClientTypes\(created, typeIdCache\)/,
