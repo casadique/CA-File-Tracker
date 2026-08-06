@@ -1484,8 +1484,17 @@ th {
   overflow-wrap: anywhere;
 }
 
-.not-checked-expanded-remarks {
-  grid-column: 1 / -1;
+.not-checked-expanded-remarks,
+.not-checked-expanded-response {
+  grid-column: span 3;
+  padding: 10px 12px;
+  border: 1px solid #d8e5f4;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.not-checked-expanded-response {
+  border-left: 3px solid #2563eb;
 }
 
 /* Modern Correction Required Files workspace */
@@ -1859,6 +1868,11 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 12px 0 0;
   }
+
+  .not-checked-expanded-remarks,
+  .not-checked-expanded-response {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 430px) {
@@ -1867,7 +1881,8 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .not-checked-expanded-remarks {
+  .not-checked-expanded-remarks,
+  .not-checked-expanded-response {
     grid-column: auto;
   }
 }

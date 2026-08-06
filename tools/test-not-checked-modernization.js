@@ -26,6 +26,7 @@ assert.match(matcher, /canCheckFile\(file\)/);
 assert.match(matcher, /notCheckedCorrectionHistory/);
 
 const table = source.match(/function notCheckedExpandedDetails[\s\S]*?(?=\nfunction renderFeePendingFileTable)/)?.[0] || "";
+const expandedDetails = source.match(/function notCheckedExpandedDetails[\s\S]*?(?=\nfunction notCheckedDesktopRows)/)?.[0] || "";
 for (const requirement of [
   /function notCheckedDesktopRows/,
   /function notCheckedMobileCard/,
@@ -37,7 +38,11 @@ for (const requirement of [
   />Actions</,
   /data-not-checked-row-toggle/,
   /not-checked-mobile-list/,
+  /Response to Correction/,
+  /file\.correctionResponse \|\| file\.correction_response \|\| correction\?\.response \|\| correction\?\.correctionResponse \|\| correction\?\.correction_response/,
 ]) assert.match(table, requirement);
+assert.doesNotMatch(expandedDetails, /currentRole|isStaffLogin|canManageChecking|rolePerm/,
+  "Correction responses must be visible in the expanded row for every permitted role");
 
 const actions = source.match(/function notCheckedFileActions[\s\S]*?(?=\nfunction removeBilledFileLocally)/)?.[0] || "";
 for (const requirement of [
@@ -66,6 +71,8 @@ for (const selector of [
 assert.match(styles, /\.not-checked-modern-table \.not-checked-client\s*\{[\s\S]*?position:\s*sticky/);
 assert.match(styles, /\.not-checked-actions-column\s*\{[\s\S]*?position:\s*sticky[\s\S]*?right:\s*0/);
 assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.not-checked-modern-table\s*\{\s*display:\s*none[\s\S]*?\.not-checked-mobile-list\s*\{\s*display:\s*grid/);
+assert.match(styles, /\.not-checked-expanded-remarks,\s*\.not-checked-expanded-response\s*\{[\s\S]*?grid-column:\s*span 3/,
+  "Remarks and correction response must share the expanded desktop row");
 
 const report = source.match(/function notCheckedCheckedByText[\s\S]*?(?=\nconst BILLED_PDF_DISCOUNT_KEYS)/)?.[0] || "";
 for (const requirement of [
