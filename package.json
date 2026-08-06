@@ -10,6 +10,7 @@
     "test:dashboard": "node tools/test-dashboard-counts.js",
     "test:daily-report-pdf": "node tools/test-daily-report-pdf.js",
     "test:file-completion": "node tools/test-file-completion-save.js",
+    "test:received-assignment": "node tools/test-received-assignment-rule.js",
     "test:file-list": "node tools/test-file-list-modernization.js",
     "test:active-files": "node tools/test-active-files-modernization.js",
     "test:active-files-report": "node tools/test-active-files-report-modernization.js",

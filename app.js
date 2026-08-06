@@ -11709,6 +11709,7 @@ function openFileDrawer(id) {
   } : null;
   if (id ? !canEditFileRecord(file) : !canCreateFile()) return toast("You do not have permission to edit this file.");
   const canAssignThisFile = canAssignFile(id ? file : null);
+  const workflowAllowsAssignment = currentWorkflowStage(file) !== "Received";
   const drawer = document.querySelector("#fileDrawer");
   drawer.innerHTML = `
     <div class="drawer-head">
@@ -11729,11 +11730,11 @@ function openFileDrawer(id) {
         ${selectField("mode", "Mode", modeDropdownOptions(file.mode), file.mode || "Whatsapp")}
         ${formField("fileReceivedDate", "File Received Date", file.fileReceivedDate, "date")}
         ${workflowStatusField(file)}
-        ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile)}
+        ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile || !workflowAllowsAssignment)}
         ${formField("workAllotmentDate", "Work Allotment Date", file.workAllotmentDate || "", "date", false)}
         ${formField("dueDate", "Due Date", file.dueDate, "date")}
         ${selectField("priority", "Priority", ["Low", "Medium", "High", "Urgent"], file.priority)}
-        ${staffAssignField("reAssignedStaff", "Re Assigned", "", !canAssignThisFile, true, true, {
+        ${staffAssignField("reAssignedStaff", "Re Assigned", "", !canAssignThisFile || !workflowAllowsAssignment, true, true, {
           currentAssignee: currentFileAssignee(file),
           disableCurrentAssignee: true,
           allowNewStaff: false,
@@ -11797,6 +11798,7 @@ function openFileDrawer(id) {
   };
   bindStaffPicker("assignedStaff");
   bindStaffPicker("reAssignedStaff");
+  bindWorkflowAssignmentAvailability(canAssignThisFile);
   bindAllotmentDateDefaults();
   document.querySelector("#attachmentsInput").onchange = (e) => {
     const existing = JSON.parse(drawer.dataset.attachments || "[]");
@@ -12086,6 +12088,35 @@ function visibleWorkflowStages(file) {
   }).sort((a, b) => fileSerialSortValue(a) - fileSerialSortValue(b));
 }
 
+function bindWorkflowAssignmentAvailability(canAssignThisFile) {
+  const workflowSelect = document.querySelector("#workflowStatus");
+  const assignedSelect = document.querySelector("#assignedStaffSelect");
+  const reassignedSelect = document.querySelector("#reAssignedStaffSelect");
+  const assignedInput = document.querySelector("#assignedStaffNewInput");
+  const reassignedInput = document.querySelector("#reAssignedStaffNewInput");
+  if (!workflowSelect || !assignedSelect) return;
+
+  const syncAssignmentControls = () => {
+    const isReceived = workflowSelect.value === "Received";
+    const shouldDisable = !canAssignThisFile || !workflowSelect.value || isReceived;
+    [assignedSelect, reassignedSelect].filter(Boolean).forEach((select) => {
+      select.disabled = shouldDisable;
+      select.setAttribute("aria-disabled", String(shouldDisable));
+    });
+    if (isReceived) {
+      assignedSelect.value = "Not Assigned";
+      if (reassignedSelect) reassignedSelect.value = "";
+      [assignedInput, reassignedInput].filter(Boolean).forEach((input) => {
+        input.value = "";
+        input.classList.add("hidden");
+      });
+    }
+  };
+
+  workflowSelect.addEventListener("change", syncAssignmentControls);
+  syncAssignmentControls();
+}
+
 function currentWorkflowStage(file = {}) {
   if (isRemovedFileRecord(file)) return "Removed";
   const normalized = normalizeStages(file);
@@ -12260,9 +12291,10 @@ async function saveFileFromDrawer() {
     return toast("Please enter FY.");
   }
   const canAssignThisFile = canAssignFile(existingFile || {});
+  const workflowAllowsAssignment = selectedWorkflowStatus !== "Received";
   const previousCurrentAssignee = existingFile ? currentFileAssignee(existingFile).name : "";
   const previousCurrentAssigneeIdentity = existingFile ? currentFileAssignee(existingFile) : {};
-  const selectedReAssignedStaff = canAssignThisFile ? resolveAssignedStaff(data.get("reAssignedStaff"), "reAssignedStaffNewInput", "") : "";
+  const selectedReAssignedStaff = canAssignThisFile && workflowAllowsAssignment ? resolveAssignedStaff(data.get("reAssignedStaff"), "reAssignedStaffNewInput", "") : "";
   const selectedReAssignedUser = findUserByStaffIdentity(selectedReAssignedStaff) || {};
   if (existingFile && hasAssignedStaffValue(selectedReAssignedStaff) && staffAssigneeMatches({
     name: selectedReAssignedStaff,
@@ -12273,19 +12305,21 @@ async function saveFileFromDrawer() {
     return toast("This file is already assigned to this staff member. Please select a different staff member.");
   }
   const reAssignedStaff = canonicalStaffName(
-    canAssignThisFile
+    canAssignThisFile && workflowAllowsAssignment
       ? (hasAssignedStaffValue(selectedReAssignedStaff) ? selectedReAssignedStaff : (existingFile?.reAssignedStaff || ""))
-      : (existingFile?.reAssignedStaff || ""),
+      : (workflowAllowsAssignment ? (existingFile?.reAssignedStaff || "") : ""),
     "",
   );
-  let reAssignedDate = canAssignThisFile ? data.get("reAssignedDate") : (existingFile?.reAssignedDate || "");
+  let reAssignedDate = canAssignThisFile && workflowAllowsAssignment ? data.get("reAssignedDate") : (workflowAllowsAssignment ? (existingFile?.reAssignedDate || "") : "");
   if (hasAssignedStaffValue(selectedReAssignedStaff) && !reAssignedDate) reAssignedDate = todayDate();
-  if (!hasAssignedStaffValue(selectedReAssignedStaff)) reAssignedDate = existingFile?.reAssignedDate || "";
-  const selectedAssignedStaff = canonicalStaffName(canAssignThisFile ? resolveAssignedStaff(data.get("assignedStaff"), "assignedStaffNewInput", "Not Assigned") : (existingFile?.assignedStaff || state.currentUser), "Not Assigned");
-  const originalAssignedStaff = existingFile && isReassignedFile(existingFile)
+  if (!hasAssignedStaffValue(selectedReAssignedStaff)) reAssignedDate = workflowAllowsAssignment ? (existingFile?.reAssignedDate || "") : "";
+  const selectedAssignedStaff = canonicalStaffName(canAssignThisFile && workflowAllowsAssignment ? resolveAssignedStaff(data.get("assignedStaff"), "assignedStaffNewInput", "Not Assigned") : (workflowAllowsAssignment ? (existingFile?.assignedStaff || state.currentUser) : "Not Assigned"), "Not Assigned");
+  const originalAssignedStaff = workflowAllowsAssignment && existingFile && isReassignedFile(existingFile)
     ? originalAllottedTo(existingFile)
     : selectedAssignedStaff;
-  const currentAssignedStaff = canAssignThisFile
+  const currentAssignedStaff = !workflowAllowsAssignment
+    ? "Not Assigned"
+    : canAssignThisFile
     ? (hasAssignedStaffValue(reAssignedStaff) ? reAssignedStaff : selectedAssignedStaff)
     : currentFileAssignee(existingFile || { assignedStaff: state.currentUser }).name;
   const assigned = originalAssignedStaff;

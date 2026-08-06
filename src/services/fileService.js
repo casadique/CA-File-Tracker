@@ -232,6 +232,21 @@ function assertCorrectionWorkflow(before, record) {
   }
 }
 
+function assertReceivedAssignmentConsistency(record = {}) {
+  if (workflowStatusLabel(record) !== "Received") return;
+  const assignedValues = [
+    record.assignedStaff,
+    record.assigned_staff,
+    record.currentAssignedStaff,
+    record.current_assigned_to,
+    record.reAssignedStaff,
+    record.re_assigned_staff,
+  ];
+  if (assignedValues.some(hasAssignedStaffValue)) {
+    throw httpError("Assigned Staff cannot be selected while Status / Workflow is Received.", 400);
+  }
+}
+
 async function upsertFile(file, userId, profile = {}) {
   return patchAppState((state) => {
     const now = Date.now();
@@ -267,6 +282,7 @@ async function upsertFile(file, userId, profile = {}) {
     }
     assertBillingMutationPermission(before, { ...(before || {}), ...record }, profile);
     assertCorrectionWorkflow(before, record);
+    assertReceivedAssignmentConsistency(record);
     preserveCheckingDetailsForGeneralSave(record, before);
     validateReassignmentTarget(before, file);
     const nowIso = new Date(now).toISOString();
