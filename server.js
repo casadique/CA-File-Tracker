@@ -63,6 +63,11 @@ app.use((req, res, next) => {
     res.set("Cache-Control", "no-cache, must-revalidate");
   } else if (req.path === "/" || req.path.endsWith(".html")) {
     res.set("Cache-Control", "no-store");
+  } else if (req.path === "/app.js" || req.path === "/styles.css") {
+    // The main application assets change on nearly every deployment. Always
+    // revalidate them so an accidentally reused query version cannot leave
+    // staff devices running an older permission or workflow bundle.
+    res.set("Cache-Control", "no-cache, must-revalidate");
   } else if (req.path.endsWith(".js") || req.path.endsWith(".css")) {
     res.set("Cache-Control", req.query.v ? "public, max-age=31536000, immutable" : "no-cache, must-revalidate");
   }

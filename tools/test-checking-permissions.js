@@ -44,11 +44,11 @@ require.cache[appStatePath] = {
 };
 
 const service = require(path.join(root, "src/services/fileService.js"));
-const checker = (name) => ({ id: `${name.toLowerCase()}-id`, name, email: `${name.toLowerCase()}@example.com`, role: "Staff Manager" });
+const checker = (name, role = "Staff Manager") => ({ id: `${name.toLowerCase()}-id`, name, email: `${name.toLowerCase()}@example.com`, role });
 
 async function main() {
   for (const name of ["Althaf", "Nisha", "Rizwana"]) {
-    const profile = checker(name);
+    const profile = checker(name, "Staff");
     await service.markFileChecked(`other-work-${name.toLowerCase()}`, {
       checkingDate: "2026-08-05",
       checkingRemarks: `Verified by ${name}`,
@@ -57,6 +57,13 @@ async function main() {
     assert.equal(file.checkedBy, name);
     assert.equal(file.checkingRemarks, `Verified by ${name}`);
   }
+
+  centralState.files.push(pendingFile("staff-manager-check", "Rabiyath", "Althaf"));
+  await service.markFileChecked("staff-manager-check", {
+    checkingDate: "2026-08-05",
+    checkingRemarks: "Verified through Staff Manager compatibility",
+  }, checker("Althaf").id, checker("Althaf"));
+  assert.equal(centralState.files.find((row) => row.id === "staff-manager-check").checkedBy, "Althaf");
 
   await assert.rejects(
     () => service.markFileChecked("own-work", { checkingDate: "2026-08-05", checkingRemarks: "Self check" }, checker("Althaf").id, checker("Althaf")),
