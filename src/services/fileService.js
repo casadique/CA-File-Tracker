@@ -225,7 +225,21 @@ function correctionResponseOf(file = {}) {
   ).trim();
 }
 
+function correctionReasonOf(file = {}) {
+  const correction = latestCorrection(file) || {};
+  return String(file.correctionRemarks || correction.correctionReason || correction.correction_reason || "").trim();
+}
+
 function assertCorrectionWorkflow(before, record) {
+  const enteringCorrection = hasOpenCorrection(record) && (!before || !hasOpenCorrection(before));
+  if (enteringCorrection) {
+    const expectedCorrectionDate = strictDateOnly(record.expectedCorrectionDate || record.expected_correction_date);
+    if (!correctionReasonOf(record)) throw httpError("Correction remarks are required.", 400);
+    if (!expectedCorrectionDate) throw httpError("Expected correction date is required in YYYY-MM-DD format.", 400);
+    if (expectedCorrectionDate < new Date().toISOString().slice(0, 10)) {
+      throw httpError("Expected correction date cannot be earlier than today.", 400);
+    }
+  }
   if (!before || !hasOpenCorrection(before)) return;
   if (isCompletedFile(record) && !isCorrectedCompleted(record)) {
     throw httpError("A returned file cannot be marked Completed. Select Corrected & Completed.", 400);

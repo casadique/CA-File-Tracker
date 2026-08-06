@@ -11758,6 +11758,7 @@ function openFileDrawer(id) {
         })}
         ${formField("reAssignedDate", "Re Assigned Date", file.reAssignedDate || "", "date", false)}
       </div>
+      ${correctionWorkflowFields(file)}
       <div class="two-col">
         ${formField("completionDate", "Completed Date", file.completionDate || "", "date", false)}
       </div>
@@ -11816,6 +11817,7 @@ function openFileDrawer(id) {
   bindStaffPicker("assignedStaff");
   bindStaffPicker("reAssignedStaff");
   bindWorkflowAssignmentAvailability(canAssignThisFile);
+  bindCorrectionWorkflowFields();
   bindAllotmentDateDefaults();
   document.querySelector("#attachmentsInput").onchange = (e) => {
     const existing = JSON.parse(drawer.dataset.attachments || "[]");
@@ -11855,6 +11857,38 @@ function bindCompletionDateDefault() {
   };
   workflowSelect.addEventListener("change", syncCompletedDate);
   syncCompletedDate();
+}
+
+function correctionWorkflowFields(file = {}) {
+  const correction = latestCorrectionForFile(file) || {};
+  const open = hasOpenCorrection(file);
+  const reason = correction.correctionReason || correction.correction_reason || file.correctionRemarks || "";
+  const expected = correction.expectedCorrectionDate || correction.expected_correction_date || file.expectedCorrectionDate || file.expected_correction_date || "";
+  return `<div class="two-col correction-workflow-fields ${open ? "" : "hidden"}" id="correctionWorkflowFields">
+    ${formField("correctionRemarks", "Correction Remarks", reason, "text", open)}
+    ${formField("expectedCorrectionDate", "Expected Correction Date", expected, "date", open)}
+  </div>`;
+}
+
+function bindCorrectionWorkflowFields() {
+  const workflowSelect = document.querySelector("#workflowStatus");
+  const fields = document.querySelector("#correctionWorkflowFields");
+  if (!workflowSelect || !fields) return;
+  const inputs = [...fields.querySelectorAll("input")];
+  const sync = () => {
+    const active = workflowSelect.value === "Correction Required";
+    fields.classList.toggle("hidden", !active);
+    inputs.forEach((input) => {
+      input.disabled = !active;
+      input.required = active;
+    });
+    if (active) {
+      const date = fields.querySelector("[name='expectedCorrectionDate']");
+      if (date && !date.value) date.value = todayDate();
+    }
+  };
+  workflowSelect.addEventListener("change", sync);
+  sync();
 }
 
 function blankFile() {
@@ -12207,6 +12241,22 @@ async function saveFileFromDrawer() {
   const existingStages = normalizeStages(existingFile || {});
   const originalWorkflowStatus = existingFile ? currentWorkflowStage(existingFile) : "Received";
   let selectedWorkflowStatus = data.get("workflowStatus") || originalWorkflowStatus || "Received";
+  const markingCorrectionRequired = selectedWorkflowStatus === "Correction Required" && (!existingFile || !hasOpenCorrection(existingFile));
+  const correctionSelectionActive = selectedWorkflowStatus === "Correction Required";
+  const selectedCorrectionRemarks = String(data.get("correctionRemarks") || existingFile?.correctionRemarks || "").trim();
+  const selectedExpectedCorrectionDate = normalizeImportDate(data.get("expectedCorrectionDate") || existingFile?.expectedCorrectionDate || existingFile?.expected_correction_date || "");
+  if (correctionSelectionActive && !selectedCorrectionRemarks) {
+    restoreSaveFileButton(saveButton);
+    return toast("Correction remarks are required.");
+  }
+  if (correctionSelectionActive && !selectedExpectedCorrectionDate) {
+    restoreSaveFileButton(saveButton);
+    return toast("Expected correction date is required.");
+  }
+  if (markingCorrectionRequired && selectedExpectedCorrectionDate < todayDate()) {
+    restoreSaveFileButton(saveButton);
+    return toast("Expected correction date cannot be earlier than today.");
+  }
   let pendingNewRemovalReason = "";
   if (existingFile && hasOpenCorrection(existingFile) && selectedWorkflowStatus === "Completed") {
     restoreSaveFileButton(saveButton);
@@ -12357,6 +12407,27 @@ async function saveFileFromDrawer() {
   const wasReturned = Boolean(existingFile?.stages?.["Correction Required"]);
   const justCompleted = stagesObj.Completed && (!wasCompleted || wasReturned);
   const justCorrectedCompleted = selectedWorkflowStatus === "Corrected & Completed" && workflowStatusChanged;
+  const correctionMarkedAt = markingCorrectionRequired ? new Date().toISOString() : "";
+  const newCorrectionEntry = markingCorrectionRequired ? {
+    id: crypto.randomUUID(),
+    fileId: existingFile?.id || data.get("id"),
+    file_id: existingFile?.id || data.get("id"),
+    correctionReason: selectedCorrectionRemarks,
+    correction_reason: selectedCorrectionRemarks,
+    expectedCorrectionDate: selectedExpectedCorrectionDate,
+    expected_correction_date: selectedExpectedCorrectionDate,
+    returnedBy: state.currentUser || "",
+    returnedById: state.session?.userId || "",
+    returnedByEmail: state.session?.userEmail || "",
+    returnedTo: currentAssignedStaff || assigned || "",
+    returnedToId: findUserByStaffIdentity(currentAssignedStaff || assigned)?.id || "",
+    returnedToEmail: findUserByStaffIdentity(currentAssignedStaff || assigned)?.email || "",
+    returnedAt: correctionMarkedAt,
+    returned_at: correctionMarkedAt,
+    returnedDate: todayDate(),
+    status: "Returned for Correction",
+    response: "",
+  } : null;
   const correctedCompletedAt = justCorrectedCompleted ? new Date().toISOString() : (existingFile?.correctedCompletedAt || existingFile?.corrected_completed_at || "");
   let completionDate = normalizeImportDate(data.get("completionDate")) || existingFile?.completionDate || "";
   if (stagesObj.Completed && !completionDate) completionDate = todayDate();
@@ -12463,18 +12534,20 @@ async function saveFileFromDrawer() {
     createdAt: existingFile?.createdAt || new Date().toISOString(),
     editedBy: state.currentUser || "",
     editedAt: new Date().toISOString(),
-    correctionRemarks: existingFile?.correctionRemarks || "",
-    returnedBy: existingFile?.returnedBy || "",
-    returnedById: existingFile?.returnedById || "",
-    returnedByEmail: existingFile?.returnedByEmail || "",
-    returnedTo: existingFile?.returnedTo || "",
-    returnedToId: existingFile?.returnedToId || "",
-    returnedToEmail: existingFile?.returnedToEmail || "",
-    returnedDate: existingFile?.returnedDate || "",
-    correctionStatus: justCorrectedCompleted ? "Corrected & Completed" : (justCompleted && wasReturned ? "Resubmitted for Checking" : (existingFile?.correctionStatus || "")),
+    correctionRemarks: correctionSelectionActive ? selectedCorrectionRemarks : (existingFile?.correctionRemarks || ""),
+    expectedCorrectionDate: correctionSelectionActive ? selectedExpectedCorrectionDate : (existingFile?.expectedCorrectionDate || existingFile?.expected_correction_date || ""),
+    expected_correction_date: correctionSelectionActive ? selectedExpectedCorrectionDate : (existingFile?.expected_correction_date || existingFile?.expectedCorrectionDate || ""),
+    returnedBy: markingCorrectionRequired ? (state.currentUser || "") : (existingFile?.returnedBy || ""),
+    returnedById: markingCorrectionRequired ? (state.session?.userId || "") : (existingFile?.returnedById || ""),
+    returnedByEmail: markingCorrectionRequired ? (state.session?.userEmail || "") : (existingFile?.returnedByEmail || ""),
+    returnedTo: markingCorrectionRequired ? (newCorrectionEntry?.returnedTo || "") : (existingFile?.returnedTo || ""),
+    returnedToId: markingCorrectionRequired ? (newCorrectionEntry?.returnedToId || "") : (existingFile?.returnedToId || ""),
+    returnedToEmail: markingCorrectionRequired ? (newCorrectionEntry?.returnedToEmail || "") : (existingFile?.returnedToEmail || ""),
+    returnedDate: markingCorrectionRequired ? todayDate() : (existingFile?.returnedDate || ""),
+    correctionStatus: markingCorrectionRequired ? "Returned for Correction" : (justCorrectedCompleted ? "Corrected & Completed" : (justCompleted && wasReturned ? "Resubmitted for Checking" : (existingFile?.correctionStatus || ""))),
     correctionResponse: justCorrectedCompleted ? correctionResponse : (existingFile?.correctionResponse || existingFile?.correction_response || ""),
     correction_response: justCorrectedCompleted ? correctionResponse : (existingFile?.correction_response || existingFile?.correctionResponse || ""),
-    correctionHistory: justCorrectedCompleted ? markLatestCorrectionResubmitted(existingFile, "Corrected & Completed", correctionResponse) : (justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || [])),
+    correctionHistory: markingCorrectionRequired ? [...(existingFile?.correctionHistory || []), newCorrectionEntry] : (justCorrectedCompleted ? markLatestCorrectionResubmitted(existingFile, "Corrected & Completed", correctionResponse) : (justCompleted && wasReturned ? markLatestCorrectionResubmitted(existingFile) : (existingFile?.correctionHistory || []))),
     remarks: data.get("remarks").trim(),
     attachments: JSON.parse(document.querySelector("#fileDrawer").dataset.attachments || "[]"),
     lastUpdatedDate: todayDate(),
@@ -12592,6 +12665,7 @@ async function saveFileFromDrawer() {
       serviceType: record.serviceType,
     });
   }
+  if (newCorrectionEntry) state.correctionHistory = [...(state.correctionHistory || []), newCorrectionEntry];
   const becameChecked = existingFile && checkingStatusOf(existingFile).label !== "Checked" && checkingStatusOf(record).label === "Checked";
   if (becameChecked) queueFileCheckedNotification(record, existingFile);
   if (existingFile && assignedChanged && hasAssignedStaffValue(record.reAssignedStaff)) queueReassignmentNotifications(record, previousCurrentAssignee);

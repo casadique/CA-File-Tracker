@@ -34,6 +34,15 @@ const staff = { id: "staff-1", name: "Test Staff", email: "staff@example.com", r
 
 async function main() {
   await assert.rejects(
+    () => service.upsertFile({
+      ...centralState.files[0],
+      filed: false,
+      correctionRemarks: "Correct the computation",
+      stages: { ...centralState.files[0].stages, Completed: false, "Correction Required": true },
+    }, manager.id, manager),
+    /Expected correction date is required/
+  );
+  await assert.rejects(
     () => service.returnFileForCorrection("file-1", { correctionReason: "Correct the computation" }, manager.id, manager),
     /Expected correction date is required/
   );
@@ -68,6 +77,10 @@ async function main() {
 
   const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
   assert.match(appSource, /Expected correction date \(YYYY-MM-DD\)/);
+  assert.match(appSource, /formField\("expectedCorrectionDate", "Expected Correction Date"/);
+  assert.match(appSource, /bindCorrectionWorkflowFields\(\)/);
+  assert.match(appSource, /Expected Correction Date/);
+  assert.match(appSource, /markingCorrectionRequired[\s\S]*?newCorrectionEntry/);
   assert.match(appSource, /Select Corrected & Completed instead of Completed/);
   assert.match(appSource, /Describe the correction completed \/ correction response/);
   assert.match(appSource, /markLatestCorrectionResubmitted\(existingFile, "Corrected & Completed", correctionResponse\)/);
