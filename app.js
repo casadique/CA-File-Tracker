@@ -275,8 +275,8 @@ const permissions = {
 };
 
 const checkingStaffNames = new Set(["nisha", "rizwana", "althaf"]);
+const checkingStaffEmails = new Set(["nishagireesh986@gmail.com", "rizwanashir06@gmail.com", "althafmk2210@gmail.com"]);
 const fileCreatorStaffNames = new Set(["nisha", "anusree"]);
-const notCheckedStaffManagerNames = new Set(["nisha", "rizwana", "althaf"]);
 
 function isRemovedStaff(name) {
   return ["sadiya", "najuma"].includes((name || "").trim().toLowerCase());
@@ -3464,16 +3464,19 @@ function canEditCheckedDate() {
 }
 
 function isAuthorisedCheckingStaff(user = loggedInUser()) {
-  return ["Staff", "Staff Manager"].includes(state.currentRole) && checkingStaffNames.has(normalizePersonName(user?.name || state.currentUser));
+  if (!["Staff", "Staff Manager"].includes(normalizeRole(state.currentRole))) return false;
+  const nameVariants = staffNameVariants(user?.name || state.currentUser);
+  const email = normalizeEmail(user?.email || state.session?.userEmail);
+  return [...checkingStaffNames].some((name) => nameVariants.has(name)) || checkingStaffEmails.has(email);
 }
 
 function isSpecialFileCreator(user = loggedInUser()) {
   return ["Staff", "Staff Manager"].includes(state.currentRole) && fileCreatorStaffNames.has(normalizePersonName(user?.name || state.currentUser));
 }
 
-function canViewNotCheckedFiles(user = loggedInUser()) {
+function canViewNotCheckedFiles() {
   return ["Admin", "Manager"].includes(state.currentRole)
-    || (["Staff", "Staff Manager"].includes(state.currentRole) && notCheckedStaffManagerNames.has(normalizePersonName(user?.name || state.currentUser)));
+    || ["Staff", "Staff Manager"].includes(normalizeRole(state.currentRole));
 }
 
 function fileCreatedByCurrentUser(file = {}) {
@@ -4730,7 +4733,6 @@ function filterStaffPerformanceFiles(files) {
 
 function navGroupDefinitions() {
   if (isStaffLogin()) {
-    const notCheckedItem = canViewNotCheckedFiles() ? [navItem("not-checked-files", "pending", "Not Checked Files", "notChecked")] : [];
     return [
       { key: "main", label: "Main", collapsible: false, items: [
         navItem("dashboard", "dashboard", "Dashboard"),
@@ -4738,7 +4740,7 @@ function navGroupDefinitions() {
       ] },
       { key: "files", label: "File Management", collapsible: true, items: [
         navItem("active-files", "folder", "Active Files", "active"),
-        ...notCheckedItem,
+        navItem("not-checked-files", "pending", "Not Checked Files", "notChecked"),
         navItem("correction-required-files", "pending", "Correction Required", "correctionRequired"),
         navItem("re-assigned-files", "users", "Re Assigned Files", "reAssigned"),
         navItem("completed-files", "check", "Completed Files", "completed"),
@@ -6662,7 +6664,7 @@ function bindStaffActiveFilters() {
 
 function staffPageFiles(listView) {
   if (listView === "notChecked" && !canViewNotCheckedFiles()) return [];
-  const ownFiles = listView === "notChecked" && canManageChecking() ? (state.files || []) : visibleFiles();
+  const ownFiles = listView === "notChecked" && isAuthorisedCheckingStaff() ? (state.files || []) : visibleFiles();
   const rows = ownFiles.filter((file) => {
     if (state.filters.overdue === "Yes" && !isOverdue(file)) return false;
     if (state.filters.pendingApproval === "Yes" && !pendingApproval(file)) return false;

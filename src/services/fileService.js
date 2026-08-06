@@ -34,6 +34,9 @@ const WORKFLOW_STAGES = [
   "Removed",
 ];
 
+const AUTHORISED_CHECKING_STAFF_NAMES = new Set(["nisha", "rizwana", "althaf"]);
+const AUTHORISED_CHECKING_STAFF_EMAILS = new Set(["nishagireesh986@gmail.com", "rizwanashir06@gmail.com", "althafmk2210@gmail.com"]);
+
 async function listFiles(state, options = {}) {
   const sorted = sortFilesForRequest(state.files || [], options);
   const pageSize = Math.max(0, Number.parseInt(options.pageSize || options.limit || "0", 10) || 0);
@@ -732,17 +735,45 @@ function reliableCompletionTimestamp(file = {}) {
 
 function assertCheckingPermission(profile = {}) {
   const role = String(profile?.role || "").trim();
-  const authorisedStaff = new Set(["nisha", "rizwana", "althaf"]);
   if (["Admin", "Manager"].includes(role)) return;
-  if (["Staff", "Staff Manager"].includes(role) && authorisedStaff.has(normalizeStaffIdentity(profile?.name))) return;
+  if (["Staff", "Staff Manager"].includes(role) && isAuthorisedCheckingProfile(profile)) return;
   throw httpError("Only authorised checkers can check completed files.", 403);
+}
+
+function isAuthorisedCheckingProfile(profile = {}) {
+  const name = normalizeStaffIdentity(profile?.name);
+  const firstName = name.split(" ").filter(Boolean)[0] || "";
+  const email = String(profile?.email || "").trim().toLowerCase();
+  return AUTHORISED_CHECKING_STAFF_NAMES.has(name)
+    || AUTHORISED_CHECKING_STAFF_NAMES.has(firstName)
+    || AUTHORISED_CHECKING_STAFF_EMAILS.has(email);
+}
+
+function canonicalCheckingIdentity(value) {
+  const normalized = normalizeStaffIdentity(value);
+  if (!normalized) return "";
+  if (AUTHORISED_CHECKING_STAFF_EMAILS.has(String(value || "").trim().toLowerCase())) {
+    if (normalized.startsWith("nishagireesh986")) return "nisha";
+    if (normalized.startsWith("rizwanashir06")) return "rizwana";
+    if (normalized.startsWith("althafmk2210")) return "althaf";
+  }
+  for (const name of AUTHORISED_CHECKING_STAFF_NAMES) {
+    if (normalized === name || normalized.startsWith(`${name} `)) return name;
+  }
+  return normalized;
+}
+
+function sameCheckingIdentity(left, right) {
+  const cleanLeft = canonicalCheckingIdentity(left);
+  const cleanRight = canonicalCheckingIdentity(right);
+  return Boolean(cleanLeft && cleanRight && cleanLeft === cleanRight);
 }
 
 function fileWasCompletedBy(file = {}, profile = {}) {
   const checker = [profile.id, profile.auth_user_id, profile.email, profile.name].filter(Boolean);
   const workers = [file.completedById, file.completedByEmail, file.completedBy, file.workDoneById, file.workDoneByEmail, file.workDoneBy].filter(Boolean);
   const identitiesToCheck = workers.length ? workers : [file.assignedStaffId, file.assignedStaffEmail, file.assignedStaff].filter(Boolean);
-  return checker.some((identity) => identitiesToCheck.some((worker) => exactIdentity(identity, worker) || sameStaffIdentity(identity, worker)));
+  return checker.some((identity) => identitiesToCheck.some((worker) => exactIdentity(identity, worker) || sameStaffIdentity(identity, worker) || sameCheckingIdentity(identity, worker)));
 }
 
 function httpError(message, status) {
