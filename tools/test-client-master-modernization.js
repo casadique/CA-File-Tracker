@@ -68,4 +68,13 @@ assert.match(service, /if \(!decrypted\.startsWith\(GST_CREDENTIAL_BUNDLE_PREFIX
 assert.match(routes, /clientsForExport\(req\.query, canUseCredentials\(req, "view_client_credentials"\)\)/,
   "GST User export must remain protected by credential-view permission.");
 
-console.log("Client Master filters, toolbar, GST User import/export, responsive layout and action menu checks passed.");
+assert.match(page, /Promise\.allSettled\(\[[\s\S]*?loadClientMasters\(\)[\s\S]*?apiJson\(`\/api\/clients\?\$\{clientMasterQuery\(\)\}`\)/,
+  "Client rows and filter masters must load in parallel.");
+assert.match(service, /CLIENT_MASTER_CACHE_TTL_MS[\s\S]*?clientMastersInflight[\s\S]*?state->careOfList/,
+  "Client master filters must reuse a short cache and fetch only the required care-of state field.");
+assert.match(service, /prepareImportedClientTypes\(rows\)[\s\S]*?skipDuplicateChecks:\s*true[\s\S]*?skipTypeAssignment:\s*true[\s\S]*?assignImportedClientTypes\(created, typeIdCache\)/,
+  "Excel import must prepare master values once and batch client-type assignments.");
+assert.match(source, /showClientImportProgress\(clients\.length\)[\s\S]*?Importing Client Master/,
+  "Longer Client Master imports must show a clear in-progress state.");
+
+console.log("Client Master filters, toolbar, GST User import/export, performance, responsive layout and action menu checks passed.");

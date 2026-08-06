@@ -11292,7 +11292,11 @@ function selectClientForFile(client) {
 async function renderClientMasterPage() {
   const page = document.querySelector("#clientMaster");
   page.innerHTML = `<div class="panel-card client-master-loading">Loading Client Master...</div>`;
-  try { await loadClientMasters(); } catch (error) { page.innerHTML = `<div class="permission-note">${escapeHtml(error.message)}</div>`; return; }
+  const [mastersResult, clientsResult] = await Promise.allSettled([
+    loadClientMasters(),
+    apiJson(`/api/clients?${clientMasterQuery()}`),
+  ]);
+  if (mastersResult.status === "rejected") { page.innerHTML = `<div class="permission-note">${escapeHtml(mastersResult.reason.message)}</div>`; return; }
   const masters = clientMasterUi.masters || { clientTypes: [], constitutions: [], careOf: [] };
   const optionList = (values, selected, getName = (item) => item.name) => values.map((item) => {
     const value = getName(item);
@@ -11331,7 +11335,7 @@ async function renderClientMasterPage() {
   `;
   document.querySelector("#clientMasterStatus").value = clientMasterUi.status;
   bindClientMasterPage();
-  loadClientMaster();
+  loadClientMaster(clientsResult.status === "fulfilled" ? clientsResult.value : null, clientsResult.status === "rejected" ? clientsResult.reason : null);
 }
 
 function clientMasterQuery(includePaging = true) {
@@ -11380,7 +11384,7 @@ function bindClientMasterPage() {
   document.querySelector("#clientMastersButton")?.addEventListener("click", openClientMasterManager);
 }
 
-async function loadClientMaster() {
+async function loadClientMaster(prefetchedPayload = null, prefetchedError = null) {
   const body = document.querySelector("#clientMasterRows");
   const cards = document.querySelector("#clientMasterCards");
   if (!body || clientMasterUi.loading) return;
@@ -11388,8 +11392,8 @@ async function loadClientMaster() {
   body.innerHTML = `<tr><td colspan="9">Loading clients...</td></tr>`;
   if (cards) cards.innerHTML = `<div class="client-master-mobile-loading">Loading clients...</div>`;
   try {
-    const query = clientMasterQuery();
-    const payload = await apiJson(`/api/clients?${query}`);
+    if (prefetchedError) throw prefetchedError;
+    const payload = prefetchedPayload || await apiJson(`/api/clients?${clientMasterQuery()}`);
     clientMasterUi.rows = payload.clients || []; clientMasterUi.total = payload.total || 0;
     body.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterRow).join("") : `<tr><td colspan="9" class="client-empty-state">No clients match the selected filters.</td></tr>`;
     if (cards) cards.innerHTML = clientMasterUi.rows.length ? clientMasterUi.rows.map(clientMasterMobileCard).join("") : `<div class="client-empty-state">No clients match the selected filters.</div>`;
@@ -11710,6 +11714,9 @@ async function exportClientMasterPdf() {
 
 async function importClientWorkbook(event) {
   const file = event.target.files?.[0]; if (!file) return;
+  let progress = null;
+  const importButton = document.querySelector("#clientImportButton");
+  const originalButtonText = importButton?.textContent || "Import Excel";
   try {
     await loadSheetJs(); const book = XLSX.read(await file.arrayBuffer(), { type: "array" }); const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { defval: "" });
     const containsCredentials = rows.some((row) => ["IT PW", "GST User", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
@@ -11741,9 +11748,23 @@ async function importClientWorkbook(event) {
       address: value(row, "Address"),
       remarks: value(row, "Remarks"),
     }));
+    if (importButton) { importButton.disabled = true; importButton.textContent = "Importing..."; }
+    progress = showClientImportProgress(clients.length);
     const result = await apiJson("/api/clients/import", { method: "POST", body: JSON.stringify({ clients }) });
     showClientImportResult(result); loadClientMaster();
-  } catch (error) { toast(error.message || "Unable to import client workbook."); } finally { event.target.value = ""; }
+  } catch (error) { toast(error.message || "Unable to import client workbook."); } finally {
+    progress?.remove();
+    if (importButton) { importButton.disabled = false; importButton.textContent = originalButtonText; }
+    event.target.value = "";
+  }
+}
+
+function showClientImportProgress(total) {
+  const modal = document.createElement("div");
+  modal.className = "client-modal-backdrop client-import-progress-backdrop";
+  modal.innerHTML = `<div class="client-modal client-import-progress" role="status" aria-live="polite"><div class="client-import-spinner" aria-hidden="true"></div><div><h3>Importing Client Master</h3><p>Validating and saving ${Number(total || 0)} client(s). Please keep this window open.</p></div></div>`;
+  document.body.appendChild(modal);
+  return modal;
 }
 
 function previewClientImport(rows) {

@@ -11325,8 +11325,10 @@ textarea {
 
 .staff-import-modal {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 14px;
   width: min(980px, 100%);
+  height: min(88dvh, 820px);
   max-height: min(88dvh, 820px);
   overflow: hidden;
   padding: 18px;
@@ -11342,6 +11344,15 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.staff-import-modal > footer {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding-top: 12px;
+  border-top: 1px solid #d7e3f1;
+  background: #ffffff;
 }
 
 .staff-import-modal header h3,
@@ -11388,7 +11399,8 @@ textarea {
 }
 
 .staff-import-preview {
-  min-height: 180px;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   border: 1px solid #d7e3f1;
   border-radius: 8px;
@@ -11411,9 +11423,10 @@ textarea {
 
 @media (max-width: 680px) {
   .staff-import-backdrop { padding: 8px; }
-  .staff-import-modal { padding: 13px; max-height: 94dvh; }
+  .staff-import-modal { height: 94dvh; padding: 13px; max-height: 94dvh; }
   .staff-import-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .staff-import-modal > footer { flex-wrap: wrap; }
+  .staff-import-modal > footer button { flex: 1 1 140px; min-height: 44px; }
 }
 
 .admin-opening-balance .opening-balance-list .amount-col,
@@ -15971,6 +15984,44 @@ textarea,
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 18px 55px rgba(15, 23, 42, 0.2);
+}
+
+.client-import-progress-backdrop {
+  z-index: 1450;
+}
+
+.client-import-progress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(460px, 94vw);
+  padding: 22px;
+  overflow: hidden;
+}
+
+.client-import-progress h3,
+.client-import-progress p {
+  margin: 0;
+}
+
+.client-import-progress p {
+  margin-top: 5px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.client-import-spinner {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border: 4px solid #dbeafe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: client-import-spin 0.8s linear infinite;
+}
+
+@keyframes client-import-spin {
+  to { transform: rotate(360deg); }
 }
 
 .client-modal .drawer-head {

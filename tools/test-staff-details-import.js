@@ -28,6 +28,7 @@ assert.throws(
 );
 
 const appSource = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
+const stylesSource = fs.readFileSync(path.resolve(__dirname, "..", "styles.css"), "utf8");
 const routeSource = fs.readFileSync(path.resolve(__dirname, "..", "src", "routes", "stateRoutes.js"), "utf8");
 assert.match(appSource, /apiJson\("\/api\/state\/staff-details\/import"/);
 assert.match(appSource, /if \(apiToken\(\)\)/);
@@ -35,5 +36,13 @@ assert.match(appSource, /"EMP ID", "Staff ID", "Staff Code"/);
 assert.match(appSource, /headerRowIndex = previewRows\.slice\(0, 10\)\.findIndex/);
 assert.match(routeSource, /router\.post\("\/staff-details\/import"/);
 assert.doesNotMatch(appSource.match(/async function persistStaffDetailsImportToApi[\s\S]*?\n}/)?.[0] || "", /expectedUpdatedAt/);
+assert.match(appSource, /<footer><button[^>]+id="cancelStaffImport"[\s\S]*?id="commitStaffImport"/,
+  "The staff import review must render Cancel and Import actions");
+assert.match(stylesSource, /\.staff-import-modal\s*\{[\s\S]*?grid-template-rows:\s*auto auto auto minmax\(0, 1fr\) auto[\s\S]*?height:\s*min\(88dvh, 820px\)/,
+  "The import modal must reserve a constrained row for the scrolling preview");
+assert.match(stylesSource, /\.staff-import-preview\s*\{[\s\S]*?min-height:\s*0[\s\S]*?overflow:\s*auto/,
+  "Only the import preview should scroll inside the modal");
+assert.match(stylesSource, /\.staff-import-modal > footer\s*\{[\s\S]*?z-index:\s*2[\s\S]*?border-top:/,
+  "The import action footer must stay visible above the preview");
 
 console.log("Staff Details import persistence tests passed.");

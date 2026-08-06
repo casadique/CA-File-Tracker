@@ -11,6 +11,10 @@ const CREDENTIAL_COLUMNS = {
   tracesPassword: "traces_password_encrypted",
 };
 const GST_CREDENTIAL_BUNDLE_PREFIX = "gst-credentials-v2:";
+const CLIENT_MASTER_CACHE_TTL_MS = 60 * 1000;
+let clientMastersCache = null;
+let clientMastersCacheAt = 0;
+let clientMastersInflight = null;
 
 function cleanText(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
@@ -163,20 +167,49 @@ async function storedGstCredentials(id) {
   return unpackGstCredentials(data?.gst_password_encrypted);
 }
 
-async function replaceClientTypes(clientId, values = []) {
+async function replaceClientTypes(clientId, values = [], options = {}) {
   const names = parseClientTypes(values);
   const rows = [];
   for (const name of names) {
     const normalized = normalizeName(name);
-    const { data, error } = await supabaseAdmin.from("client_types").upsert({ name, normalized_name: normalized, updated_at: new Date().toISOString() }, { onConflict: "normalized_name" }).select("id,name").single();
-    if (error) throw databaseError(error);
-    rows.push({ client_id: clientId, client_type_id: data.id });
+    let type = options.typeIdCache?.get(normalized);
+    if (!type) {
+      const { data, error } = await supabaseAdmin.from("client_types").upsert({ name, normalized_name: normalized, updated_at: new Date().toISOString() }, { onConflict: "normalized_name" }).select("id,name").single();
+      if (error) throw databaseError(error);
+      type = data;
+      options.typeIdCache?.set(normalized, type);
+    }
+    rows.push({ client_id: clientId, client_type_id: type.id });
   }
-  const { error: deleteError } = await supabaseAdmin.from("client_type_assignments").delete().eq("client_id", clientId);
-  if (deleteError) throw databaseError(deleteError);
+  if (!options.skipDelete) {
+    const { error: deleteError } = await supabaseAdmin.from("client_type_assignments").delete().eq("client_id", clientId);
+    if (deleteError) throw databaseError(deleteError);
+  }
   if (!rows.length) return;
   const { error: insertError } = await supabaseAdmin.from("client_type_assignments").insert(rows);
   if (insertError) throw databaseError(insertError);
+}
+
+async function prepareImportedClientTypes(rows = []) {
+  const names = [...new Map(rows.flatMap((row) => parseClientTypes(row.clientTypes || row.clientType || "Other Client"))
+    .map((name) => [normalizeName(name), name])).values()];
+  if (!names.length) return new Map();
+  const now = new Date().toISOString();
+  const { data, error } = await supabaseAdmin.from("client_types")
+    .upsert(names.map((name) => ({ name, normalized_name: normalizeName(name), updated_at: now })), { onConflict: "normalized_name" })
+    .select("id,name,normalized_name");
+  if (error) throw databaseError(error);
+  return new Map((data || []).map((item) => [item.normalized_name || normalizeName(item.name), item]));
+}
+
+async function assignImportedClientTypes(created = [], typeIdCache = new Map()) {
+  const assignments = created.flatMap(({ client, source }) => parseClientTypes(source.clientTypes || source.clientType || client.client_type)
+    .map((name) => typeIdCache.get(normalizeName(name)))
+    .filter(Boolean)
+    .map((type) => ({ client_id: client.id, client_type_id: type.id })));
+  if (!assignments.length) return;
+  const { error } = await supabaseAdmin.from("client_type_assignments").insert(assignments);
+  if (error) throw databaseError(error);
 }
 
 async function hydrateClientTypes(clients = []) {
@@ -293,7 +326,7 @@ async function nextClientCode(prefix) {
 }
 
 async function createClient(input, actorId, options = {}) {
-  const warnings = await duplicateWarnings(input);
+  const warnings = options.skipDuplicateChecks ? [] : await duplicateWarnings(input);
   if (warnings.length && !options.acceptWarnings) {
     const error = validationError("A similar client already exists. Confirm before creating another client.");
     error.warnings = warnings;
@@ -303,36 +336,67 @@ async function createClient(input, actorId, options = {}) {
   const prefix = clientPrefix(input);
   let inserted;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const row = { ...payload, ...credentialInput(input), code_prefix: prefix, client_code: await nextClientCode(prefix), created_by: actorId, updated_by: actorId };
+    const clientCode = attempt === 0 && options.clientCode ? options.clientCode : await nextClientCode(prefix);
+    const row = { ...payload, ...credentialInput(input), code_prefix: prefix, client_code: clientCode, created_by: actorId, updated_by: actorId };
     const { data, error } = await supabaseAdmin.from("clients").insert(row).select(CLIENT_FIELDS).single();
     if (!error) { inserted = data; break; }
     if (error.code !== "23505") throw databaseError(error);
+    if (options.skipDuplicateChecks) await duplicateWarnings(input);
   }
   if (!inserted) throw validationError("Unable to allocate a unique Client ID. Please retry.");
-  await replaceClientTypes(inserted.id, input.clientTypes || input.clientType || inserted.client_type);
-  await ensureCareOfMaster(inserted.care_of, actorId);
-  if (inserted.constitution) await saveClientMasterValue("constitution", { name: inserted.constitution });
-  inserted = await getClient(inserted.id);
-  await auditClient(inserted.id, actorId, "Client created", { clientCode: inserted.client_code });
+  if (!options.skipTypeAssignment) await replaceClientTypes(inserted.id, input.clientTypes || input.clientType || inserted.client_type, { typeIdCache: options.typeIdCache, skipDelete: options.skipTypeDelete });
+  if (!options.skipMasterSync) {
+    await ensureCareOfMaster(inserted.care_of, actorId);
+    if (inserted.constitution) await saveClientMasterValue("constitution", { name: inserted.constitution });
+  }
+  if (!options.skipReload) inserted = await getClient(inserted.id);
+  if (!options.skipAudit) await auditClient(inserted.id, actorId, "Client created", { clientCode: inserted.client_code });
   return { client: inserted, warnings };
 }
 
 async function importClients(rows = [], actorId) {
-  const mastersBefore = await listClientMasters();
+  const mastersBefore = await listClientMasters(true);
   const beforeTypes = new Set(mastersBefore.clientTypes.map((item) => normalizeName(item.name)));
   const beforeConstitutions = new Set(mastersBefore.constitutions.map((item) => normalizeName(item.name)));
   const beforeCareOf = new Set(mastersBefore.careOf.map(normalizeName));
   const summary = { total: rows.length, added: 0, skipped: 0, warnings: [] };
   const importedCareOf = new Set();
+  const importedConstitutions = new Map();
+  const created = [];
+  const typeIdCache = await prepareImportedClientTypes(rows);
+  const prefixes = [...new Set(rows.map(clientPrefix))];
+  const nextCodes = new Map(await Promise.all(prefixes.map(async (prefix) => {
+    const next = await nextClientCode(prefix);
+    return [prefix, Number(String(next).split("/")[1]) || 1];
+  })));
   for (let index = 0; index < rows.length; index += 1) {
     try {
-      const result = await createClient(rows[index], actorId, { acceptWarnings: true });
+      const prefix = clientPrefix(rows[index]);
+      const sequence = nextCodes.get(prefix) || 1;
+      nextCodes.set(prefix, sequence + 1);
+      const result = await createClient(rows[index], actorId, {
+        acceptWarnings: true,
+        skipDuplicateChecks: true,
+        skipTypeAssignment: true,
+        skipMasterSync: true,
+        skipReload: true,
+        skipAudit: true,
+        clientCode: `${prefix}/${String(sequence).padStart(3, "0")}`,
+      });
       if (result.client.care_of) importedCareOf.add(result.client.care_of);
+      if (result.client.constitution) importedConstitutions.set(normalizeName(result.client.constitution), result.client.constitution);
+      created.push({ client: result.client, source: rows[index] });
       summary.added += 1;
     } catch (error) {
       summary.skipped += 1;
       summary.warnings.push({ row: index + 2, message: error.message });
     }
+  }
+  await assignImportedClientTypes(created, typeIdCache);
+  if (importedConstitutions.size) {
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin.from("client_constitutions").upsert([...importedConstitutions.values()].map((name) => ({ name, normalized_name: normalizeName(name), updated_at: now })), { onConflict: "normalized_name" });
+    if (error) throw databaseError(error);
   }
   if (importedCareOf.size) {
     await patchAppState((state) => {
@@ -342,7 +406,12 @@ async function importClients(rows = [], actorId) {
       return state;
     }, actorId);
   }
-  const mastersAfter = await listClientMasters();
+  if (created.length) {
+    const { error } = await supabaseAdmin.from("client_audit_events").insert(created.map(({ client }) => ({ client_id: client.id, actor_user_id: actorId, action: "Client created", details: { clientCode: client.client_code, source: "Excel import" } })));
+    if (error) throw databaseError(error);
+  }
+  invalidateClientMastersCache();
+  const mastersAfter = await listClientMasters(true);
   summary.masterValues = {
     clientTypesAdded: mastersAfter.clientTypes.filter((item) => !beforeTypes.has(normalizeName(item.name))).length,
     constitutionsAdded: mastersAfter.constitutions.filter((item) => !beforeConstitutions.has(normalizeName(item.name))).length,
@@ -433,14 +502,29 @@ async function updateClientCredentials(id, input, actorId) {
   return { ok: true };
 }
 
-async function listClientMasters() {
-  const [{ data: clientTypes, error: typeError }, { data: constitutions, error: constitutionError }] = await Promise.all([
-    supabaseAdmin.from("client_types").select("id,name,is_active,display_order").order("display_order").order("name"),
-    supabaseAdmin.from("client_constitutions").select("id,name,is_active,display_order").order("display_order").order("name"),
-  ]);
-  if (typeError) throw databaseError(typeError); if (constitutionError) throw databaseError(constitutionError);
-  const state = await getAppState();
-  return { clientTypes: clientTypes || [], constitutions: constitutions || [], careOf: state.careOfList || [] };
+function invalidateClientMastersCache() {
+  clientMastersCache = null;
+  clientMastersCacheAt = 0;
+}
+
+async function listClientMasters(force = false) {
+  if (!force && clientMastersCache && Date.now() - clientMastersCacheAt < CLIENT_MASTER_CACHE_TTL_MS) return clientMastersCache;
+  if (!force && clientMastersInflight) return clientMastersInflight;
+  clientMastersInflight = (async () => {
+    const [{ data: clientTypes, error: typeError }, { data: constitutions, error: constitutionError }, { data: appState, error: stateError }] = await Promise.all([
+      supabaseAdmin.from("client_types").select("id,name,is_active,display_order").order("display_order").order("name"),
+      supabaseAdmin.from("client_constitutions").select("id,name,is_active,display_order").order("display_order").order("name"),
+      supabaseAdmin.from("app_state").select("care_of:state->careOfList").eq("id", "default").maybeSingle(),
+    ]);
+    if (typeError) throw databaseError(typeError);
+    if (constitutionError) throw databaseError(constitutionError);
+    if (stateError) throw databaseError(stateError);
+    const result = { clientTypes: clientTypes || [], constitutions: constitutions || [], careOf: Array.isArray(appState?.care_of) ? appState.care_of : [] };
+    clientMastersCache = result;
+    clientMastersCacheAt = Date.now();
+    return result;
+  })();
+  try { return await clientMastersInflight; } finally { clientMastersInflight = null; }
 }
 
 async function saveClientMasterValue(kind, input = {}) {
@@ -449,7 +533,10 @@ async function saveClientMasterValue(kind, input = {}) {
   const name = cleanText(input.name); if (!name) throw validationError("Name is required.");
   const row = { name, normalized_name: normalizeName(name), is_active: input.isActive !== false, display_order: Number(input.displayOrder) || 100, updated_at: new Date().toISOString() };
   const query = input.id ? supabaseAdmin.from(table).update(row).eq("id", input.id) : supabaseAdmin.from(table).upsert(row, { onConflict: "normalized_name" });
-  const { data, error } = await query.select("id,name,is_active,display_order").single(); if (error) throw databaseError(error); return data;
+  const { data, error } = await query.select("id,name,is_active,display_order").single();
+  if (error) throw databaseError(error);
+  invalidateClientMastersCache();
+  return data;
 }
 
 async function ensureCareOfMaster(value, actorId) {
@@ -461,6 +548,7 @@ async function ensureCareOfMaster(value, actorId) {
     state.careOfList = [...values.values()].sort((a, b) => a.localeCompare(b));
     return state;
   }, actorId);
+  invalidateClientMastersCache();
 }
 
 async function setClientStatus(id, status, actorId) {
