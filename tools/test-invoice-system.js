@@ -8,6 +8,7 @@ const {
   amountInWords,
   financialYearForDate,
   drawInvoicePdf,
+  validateInvoice,
 } = require("../src/services/invoiceService");
 
 const root = path.join(__dirname, "..");
@@ -51,6 +52,11 @@ assert.equal(amountInWords(11800), "Rupees Eleven Thousand Eight Hundred Only");
 assert.equal(financialYearForDate("2026-04-01"), "2026-27");
 assert.equal(financialYearForDate("2027-03-31"), "2026-27");
 assert.equal(TEST_GSTIN, "32AVFPM0043F1Z7");
+const unregisteredPreview = { ...base, invoiceDate: "2026-08-06", documentType: "Tax Invoice", placeOfSupply: "Kerala", recipient: { billingName: "Test Client", gstRegistration: "Unregistered", state: "Kerala", stateCode: "32" } };
+assert.doesNotThrow(() => validateInvoice(unregisteredPreview, settings, { issuing: false }),
+  "draft preview must work for an unregistered recipient without GSTIN or billing address");
+assert.throws(() => validateInvoice(unregisteredPreview, settings, { issuing: true }), /Invoice Settings/,
+  "final issue must still require complete supplier settings");
 
 for (const marker of ["Billing Details", "Issue Invoice", "Save as Billed", "Continue to Issue Invoice", 'invoiceStatus: "Not Issued"']) assert.match(app, new RegExp(marker));
 for (const marker of ["Save Draft", "Preview Invoice", "Issue Invoice", "Invoice Register", "Invoice Settings", "confirmTestGstin", "Update Client Master", "Download PDF", "View Invoice History"]) assert.match(client, new RegExp(marker));
@@ -58,6 +64,8 @@ assert.match(client, /scope\.elements\?\.namedItem\?\.\(name\)[\s\S]*scope\.quer
   "invoice line readers must support both forms and service-line containers");
 assert.match(client, /const pdfWindow = reservePdfWindow\(\);[\s\S]*showPdfBlob\(blob, pdfWindow\)/,
   "invoice preview should reserve its PDF window before the async request");
+assert.match(client, /Final issue requires Invoice Settings/);
+assert.match(client, /showPdfError\(pdfWindow, error\?\.message\)/);
 for (const route of ["/settings", "/register", "/file/:fileId/draft", "/file/:fileId/preview", "/file/:fileId/issue", "/:invoiceId/pdf", "/:invoiceId/cancel"]) assert.match(routes, new RegExp(route.replace(/[/:]/g, "\\$&")));
 assert.match(service, /patchAppStateAtomic/);
 assert.match(service, /nextInvoiceNumber/);

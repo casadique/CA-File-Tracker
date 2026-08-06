@@ -92,7 +92,7 @@ function normalizedSettings(value = {}) {
   const merged = { ...defaults, ...(value || {}) };
   merged.stateCode = text(merged.stateCode).padStart(2, "0").slice(-2);
   merged.gstin = text(merged.gstin).toUpperCase();
-  merged.pan = text(merged.pan).toUpperCase();
+  merged.pan = text(merged.pan).toUpperCase() || (GSTIN_PATTERN.test(merged.gstin) ? merged.gstin.slice(2, 12) : "");
   merged.invoicePrefix = text(merged.invoicePrefix || "MA").replace(/[^A-Za-z0-9-]/g, "").toUpperCase() || "MA";
   merged.defaultGstRate = money(merged.defaultGstRate);
   merged.numberPadding = Math.min(8, Math.max(3, Number(merged.numberPadding) || 4));
@@ -288,14 +288,17 @@ function calculateInvoice(input = {}, settingsInput = {}) {
 function validateInvoice(input, settings, { issuing = false } = {}) {
   const errors = [];
   const recipient = input.recipient || {};
-  for (const [label, value] of [["Legal name", settings.legalName], ["Registered address", settings.address], ["State", settings.state], ["State code", settings.stateCode], ["PIN code", settings.pinCode], ["GSTIN", settings.gstin], ["PAN", settings.pan]]) {
-    if (!text(value)) errors.push(`${label} is missing in Invoice Settings.`);
+  if (issuing) {
+    for (const [label, value] of [["Legal name", settings.legalName], ["Registered address", settings.address], ["State", settings.state], ["State code", settings.stateCode], ["PIN code", settings.pinCode], ["GSTIN", settings.gstin], ["PAN", settings.pan]]) {
+      if (!text(value)) errors.push(`${label} is missing in Invoice Settings.`);
+    }
   }
   if (settings.gstin && !GSTIN_PATTERN.test(settings.gstin)) errors.push("Supplier GSTIN format is invalid.");
   if (!isoDate(input.invoiceDate)) errors.push("Invoice date is required.");
   if (!text(input.placeOfSupply)) errors.push("Place of supply is required.");
   if (!text(recipient.billingName || recipient.clientName)) errors.push("Recipient billing name is required.");
-  if (/registered|sez/i.test(recipient.gstRegistration || "")) {
+  const recipientRegistration = text(recipient.gstRegistration).toLowerCase();
+  if (["registered", "sez"].includes(recipientRegistration)) {
     if (!GSTIN_PATTERN.test(text(recipient.gstin).toUpperCase())) errors.push("A valid recipient GSTIN is required for a registered recipient.");
     if (!text(recipient.billingAddress)) errors.push("Recipient billing address is required.");
     if (!text(recipient.state) || !text(recipient.stateCode)) errors.push("Recipient state and state code are required.");
@@ -821,4 +824,5 @@ module.exports = {
   safeInvoiceFilename,
   invoiceHistory,
   drawInvoicePdf,
+  validateInvoice,
 };

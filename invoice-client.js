@@ -21,13 +21,29 @@
   function canWrite() { return ["Admin", "Manager"].includes(role()); }
   function canConfigure() { return role() === "Admin"; }
 
+  function missingInvoiceSettings(settings = {}) {
+    return [["Registered address", settings.address], ["PIN code", settings.pinCode], ["PAN", settings.pan]]
+      .filter(([, fieldValue]) => !String(fieldValue || "").trim())
+      .map(([label]) => label);
+  }
+
   async function request(path, options = {}) {
     if (!isSupabaseMode()) throw new Error("Invoice actions require a central login.");
     return apiJson(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
   }
 
   async function fetchPdf(path, options = {}) {
-    const response = await fetch(path, { ...options, headers: { Authorization: `Bearer ${apiToken()}`, "Content-Type": "application/json", ...(options.headers || {}) } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    let response;
+    try {
+      response = await fetch(path, { ...options, signal: options.signal || controller.signal, headers: { Authorization: `Bearer ${apiToken()}`, "Content-Type": "application/json", ...(options.headers || {}) } });
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error("Invoice PDF generation timed out. Please try again.");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       let message = "Unable to generate the invoice PDF.";
       try { message = (await response.json()).error || message; } catch {}
@@ -56,6 +72,12 @@
       anchor.click();
     }
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  function showPdfError(target, message) {
+    if (!target || target.closed) return;
+    target.document.title = "Invoice PDF could not be prepared";
+    target.document.body.innerHTML = `<main style="max-width:720px;margin:48px auto;padding:24px;font:15px/1.55 Arial;color:#172554"><h2 style="color:#b42318">Invoice PDF could not be prepared</h2><p>${e(message || "Please check the invoice details and try again.")}</p><p>You may close this tab and return to the invoice window.</p></main>`;
   }
 
   function statusForFile(file = {}) {
@@ -123,10 +145,12 @@
     const invoice = data.invoice || {};
     const recipient = invoice.recipient || invoice.recipientSnapshot || {};
     const settings = data.settings || {};
+    const settingsMissing = missingInvoiceSettings(settings);
     return `<div class="invoice-modal-shell" id="invoiceIssueModal" role="dialog" aria-modal="true" aria-labelledby="invoiceIssueTitle">
       <div class="invoice-modal invoice-issue-modal">
         <header class="invoice-modal-head"><div><span class="invoice-eyebrow">${e(invoice.status === "Draft" ? invoice.draftReference : "OPTIONAL INVOICE")}</span><h2 id="invoiceIssueTitle">${invoice.status === "Draft" ? "Continue Invoice Draft" : "Issue Invoice"}</h2><p>${e(data.file.name)} · ${e(data.file.serviceType)}${data.file.fy ? ` · FY ${e(data.file.fy)}` : ""}</p></div><button type="button" class="invoice-close" data-invoice-close aria-label="Close">&times;</button></header>
         ${data.warning ? `<div class="invoice-test-warning"><strong>Test configuration</strong><span>${e(data.warning)}</span></div>` : ""}
+        ${settingsMissing.length ? `<div class="invoice-test-warning invoice-settings-warning"><strong>Final issue requires Invoice Settings</strong><span>Complete: ${e(settingsMissing.join(", "))}. Draft Preview remains available.</span>${canConfigure() ? `<button type="button" class="secondary-button" data-open-invoice-settings>Open Invoice Settings</button>` : `<small>Ask an Admin to complete Invoice Settings.</small>`}</div>` : ""}
         <form id="invoiceIssueForm" class="invoice-form">
           <section class="invoice-section"><div class="invoice-section-title"><span>1</span><div><h3>Invoice Identification</h3><p>Final number is assigned only when issued.</p></div></div><div class="invoice-grid invoice-grid-4">
             ${field("Invoice Reference", "invoiceReference", invoice.invoiceNumber || invoice.draftReference || "Assigned on issue", "text", "disabled")}
@@ -200,6 +224,7 @@
 
   function bindIssueModal(fileId) {
     document.querySelectorAll("[data-invoice-close]").forEach((button) => { button.onclick = () => closeModal("invoiceIssueModal"); });
+    document.querySelector("[data-open-invoice-settings]")?.addEventListener("click", () => { closeModal("invoiceIssueModal"); settings(); });
     const form = document.querySelector("#invoiceIssueForm");
     form.addEventListener("input", updateTotals);
     form.addEventListener("change", updateTotals);
@@ -216,7 +241,7 @@
           const blob = await fetchPdf(`/api/invoices/file/${encodeURIComponent(fileId)}/preview`, { method: "POST", body: JSON.stringify({ invoice: collectInvoice() }) });
           showPdfBlob(blob, pdfWindow);
         } catch (error) {
-          pdfWindow?.close();
+          showPdfError(pdfWindow, error?.message);
           throw error;
         }
       });
@@ -239,7 +264,7 @@
           const result = await request(`/api/invoices/file/${encodeURIComponent(fileId)}/issue`, { method: "POST", body: JSON.stringify({ invoice }) });
           toast(result.warning || `Invoice ${result.invoiceNumber} issued successfully.`); await loadStateFromApi(); closeModal("invoiceIssueModal"); renderAll(); await viewInvoice(result.invoiceId, false, pdfWindow);
         } catch (error) {
-          pdfWindow?.close();
+          showPdfError(pdfWindow, error?.message);
           throw error;
         }
       });
