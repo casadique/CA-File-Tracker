@@ -10687,10 +10687,30 @@ textarea {
 
 .staff-details-table-wrap {
   margin-top: 12px;
+  border: 1px solid #cbd9ec;
+  border-radius: 14px;
+  background: #fff;
 }
 
-.staff-details-table {
-  min-width: 1160px;
+.staff-details-table.staff-table {
+  width: 1540px;
+  min-width: 1540px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.staff-details-table .col-sn { width: 55px; }
+.staff-details-table .col-staff { width: 300px; }
+.staff-details-table .col-position { width: 210px; }
+.staff-details-table .col-employment { width: 195px; }
+.staff-details-table .col-dates { width: 210px; }
+.staff-details-table .col-contact { width: 250px; }
+.staff-details-table .col-personal { width: 150px; }
+.staff-details-table .col-actions { width: 170px; }
+
+.staff-details-table tr {
+  display: table-row;
 }
 
 .staff-name-cell {
@@ -10701,6 +10721,7 @@ textarea {
 
 .staff-details-table th,
 .staff-details-table td {
+  display: table-cell;
   vertical-align: middle;
 }
 
@@ -10745,19 +10766,35 @@ textarea {
   color: #173568;
   font-size: 11px;
   letter-spacing: .02em;
+  border-right: 1px solid #cbd9ec;
+  border-bottom: 1px solid #b9c9df;
+  text-align: left;
+  white-space: normal;
 }
 
-.staff-details-table tbody tr:nth-child(even) {
+.staff-details-table thead th:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 5;
+  border-right: 0;
+  box-shadow: -7px 0 12px rgba(15, 23, 42, .05);
+}
+
+.staff-details-table tbody tr:nth-child(even) td {
   background: #f8fafc;
 }
 
-.staff-details-table tbody tr:hover {
+.staff-details-table tbody tr:hover td {
   background: #eff6ff;
 }
 
 .staff-details-table td {
-  padding: 11px 10px;
+  height: 88px;
+  padding: 12px;
   border-right: 1px solid #e3eaf4;
+  border-bottom: 1px solid #dce5f1;
+  background: #fff;
+  box-shadow: none;
 }
 
 .staff-details-table td:last-child {
@@ -10765,36 +10802,27 @@ textarea {
 }
 
 .staff-sn {
-  width: 48px;
   text-align: center;
   font-weight: 900;
 }
 
-.staff-identity-cell {
-  min-width: 210px;
-}
-
-.staff-name-cell > div,
-.staff-employment-cell,
-.staff-type-cell,
-.staff-contact-cell,
-.staff-personal-cell {
-  display: grid;
-  gap: 4px;
+.staff-cell-stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
   min-width: 0;
 }
 
-.staff-name-cell span,
-.staff-employment-cell span,
-.staff-contact-cell span,
-.staff-personal-cell span {
+.staff-cell-primary {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.staff-cell-secondary {
   color: #64748b;
   font-size: 11px;
   overflow-wrap: anywhere;
-}
-
-.staff-dates-cell {
-  min-width: 132px;
 }
 
 .staff-dates-cell span {
@@ -10814,9 +10842,7 @@ textarea {
 .staff-actions-cell {
   position: sticky;
   right: 0;
-  z-index: 1;
-  min-width: 155px;
-  background: inherit;
+  z-index: 3;
   box-shadow: -7px 0 12px rgba(15, 23, 42, .05);
 }
 
@@ -10868,6 +10894,10 @@ textarea {
 
 .staff-action-menu summary::-webkit-details-marker {
   display: none;
+}
+
+.staff-menu-glyph::before {
+  content: "\22EE";
 }
 
 .staff-action-menu summary:hover,
@@ -10954,14 +10984,14 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.staff-mobile-summary {
+.staff-mobile-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin: 13px 0;
 }
 
-.staff-mobile-summary > div {
+.staff-mobile-details > div {
   display: grid;
   gap: 3px;
   padding: 9px;
@@ -10970,11 +11000,19 @@ textarea {
   background: rgba(255, 255, 255, .8);
 }
 
-.staff-mobile-summary span {
+.staff-mobile-details dt {
   color: #64748b;
   font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.staff-mobile-details dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 760px) {
@@ -10985,6 +11023,13 @@ textarea {
   .staff-row-actions { justify-content: stretch; }
   .staff-primary-action { flex: 1; }
   .staff-action-menu > div { position: fixed; inset: auto 12px 12px; min-width: 0; }
+}
+
+@media (max-width: 1024px) and (min-width: 761px) {
+  .staff-details-table.staff-table {
+    width: 1540px;
+    min-width: 1540px;
+  }
 }
 
 .staff-avatar,

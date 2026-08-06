@@ -51,4 +51,16 @@ assert.match(styles, /\.staff-directory-mobile/);
 assert.match(styles, /\.staff-actions-cell[\s\S]*?position: sticky/);
 assert.match(styles, /\.staff-action-menu summary[\s\S]*?width: 40px[\s\S]*?height: 40px/);
 
-console.log("Staff Details date correction, responsive view, PDF and Excel modernization checks passed.");
+const table = block("function renderStaffDetailsTable", "\nfunction staffDetailsActions");
+const expectedHeaders = ["SN", "Staff", "Position / Department", "Employment Type / Status", "DOJ / DOB", "Contact", "Blood Group / Gender", "Actions"];
+for (const header of expectedHeaders) assert.ok(table.includes(`"${header}"`), `Missing Staff Details header: ${header}`);
+const columns = [...table.matchAll(/<td data-column="([^"]+)"/g)].map((match) => match[1]);
+assert.deepEqual(columns, ["sn", "staff", "position_department", "employment_status", "doj_dob", "contact", "blood_gender", "actions"]);
+assert.equal(columns.length, 8, "Every desktop Staff Details row must render exactly eight cells");
+assert.match(table, /<colgroup><col class="col-sn"><col class="col-staff"><col class="col-position"><col class="col-employment"><col class="col-dates"><col class="col-contact"><col class="col-personal"><col class="col-actions"><\/colgroup>/);
+assert.match(styles, /\.staff-details-table\.staff-table \{[\s\S]*?min-width: 1540px;[\s\S]*?table-layout: fixed;/);
+assert.match(styles, /\.staff-details-table \.col-sn \{ width: 55px; \}/);
+assert.match(styles, /\.staff-details-table \.col-staff \{ width: 300px; \}/);
+assert.doesNotMatch(styles, /\.staff-details-table tr\s*\{[^}]*display:\s*(?:grid|flex|block)/);
+
+console.log("Staff Details eight-column structure, responsive view, date correction, PDF and Excel modernization checks passed.");
