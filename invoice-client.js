@@ -95,10 +95,10 @@
     const status = statusForFile(file);
     const fileId = e(file.id || "");
     const invoiceId = e(file.invoiceId || file.invoice_id || "");
-    if (status === "Issued" && invoiceId) return `<button type="button" class="billed-primary-action invoice-action issued" data-invoice-view="${invoiceId}"><span>View Invoice</span></button>`;
+    if (status === "Issued" && invoiceId) return `<button type="button" class="billed-primary-action invoice-action issued" data-invoice-view="${invoiceId}"><span>View Bill</span></button>`;
     if (status === "Draft") return `<button type="button" class="billed-primary-action invoice-action draft" data-invoice-open="${fileId}"><span>Continue Draft</span></button>`;
     if (status === "Cancelled") return `<button type="button" class="billed-primary-action invoice-action cancelled" data-invoice-history="${invoiceId}"><span>Invoice History</span></button>`;
-    return canWrite() ? `<button type="button" class="billed-primary-action invoice-action" data-invoice-open="${fileId}"><span>Issue Invoice</span></button>` : `<span class="invoice-status-badge is-not-issued">Not Issued</span>`;
+    return canWrite() ? `<button type="button" class="billed-primary-action invoice-action" data-invoice-open="${fileId}"><span>Issue Bill of Supply</span></button>` : `<span class="invoice-status-badge is-not-issued">Not Issued</span>`;
   }
 
   function menuItems(file = {}) {
@@ -106,7 +106,7 @@
     const invoiceId = e(file.invoiceId || file.invoice_id || "");
     const fileId = e(file.id || "");
     if (status === "Issued" && invoiceId) return [
-      billedActionMenuItem({ label: "View Invoice", icon: "transaction", attrs: `data-invoice-view="${invoiceId}"` }),
+      billedActionMenuItem({ label: "View Bill of Supply", icon: "transaction", attrs: `data-invoice-view="${invoiceId}"` }),
       billedActionMenuItem({ label: "Download PDF", icon: "transaction", attrs: `data-invoice-download="${invoiceId}"` }),
       billedActionMenuItem({ label: "Print", icon: "transaction", attrs: `data-invoice-print="${invoiceId}"` }),
       billedActionMenuItem({ label: "View Invoice History", icon: "transaction", attrs: `data-invoice-history="${invoiceId}"` }),
@@ -114,7 +114,7 @@
     ];
     if (status === "Draft") return [billedActionMenuItem({ label: "Continue Draft", icon: "edit", attrs: `data-invoice-open="${fileId}"` }), ...(invoiceId ? [billedActionMenuItem({ label: "Download Draft PDF", icon: "transaction", attrs: `data-invoice-download="${invoiceId}"` }), billedActionMenuItem({ label: "View Invoice History", icon: "transaction", attrs: `data-invoice-history="${invoiceId}"` })] : [])];
     if (status === "Cancelled" && invoiceId) return [billedActionMenuItem({ label: "View Cancelled Invoice", icon: "transaction", attrs: `data-invoice-view="${invoiceId}"` }), billedActionMenuItem({ label: "View Invoice History", icon: "transaction", attrs: `data-invoice-history="${invoiceId}"` })];
-    return canWrite() ? [billedActionMenuItem({ label: "Issue Invoice", icon: "transaction", attrs: `data-invoice-open="${fileId}"` })] : [];
+    return canWrite() ? [billedActionMenuItem({ label: "Issue Bill of Supply", icon: "transaction", attrs: `data-invoice-open="${fileId}"` })] : [];
   }
 
   function field(label, name, inputValue = "", type = "text", attributes = "") {
@@ -122,6 +122,7 @@
   }
 
   function selectField(label, name, inputValue, options) {
+    if (name === "documentType") return field(label, name, "Bill of Supply", "text", "readonly");
     return `<label class="invoice-field"><span>${e(label)}</span><select name="${e(name)}">${options.map((option) => `<option value="${e(option)}" ${String(option) === String(inputValue) ? "selected" : ""}>${e(option)}</option>`).join("")}</select></label>`;
   }
 
@@ -136,7 +137,7 @@
       ${field("Unit", "lineUnit", line.unit || "Service")}
       ${field("Rate", "lineRate", line.rate, "number", "min='0' step='0.01' required")}
       ${field("Discount", "lineDiscount", line.discount || 0, "number", "min='0' step='0.01'")}
-      ${field("GST %", "lineGstRate", line.gstRate ?? workspace?.settings?.defaultGstRate ?? 18, "number", "min='0' max='100' step='0.01' required")}
+      ${field("GST %", "lineGstRate", 0, "number", "min='0' max='0' step='0.01' readonly aria-describedby='billOfSupplyTaxNote'")}
       <button type="button" class="invoice-line-remove" aria-label="Remove service line" ${index === 0 ? "disabled" : ""}>&times;</button>
     </div>`;
   }
@@ -148,16 +149,16 @@
     const settingsMissing = missingInvoiceSettings(settings);
     return `<div class="invoice-modal-shell" id="invoiceIssueModal" role="dialog" aria-modal="true" aria-labelledby="invoiceIssueTitle">
       <div class="invoice-modal invoice-issue-modal">
-        <header class="invoice-modal-head"><div><span class="invoice-eyebrow">${e(invoice.status === "Draft" ? invoice.draftReference : "OPTIONAL INVOICE")}</span><h2 id="invoiceIssueTitle">${invoice.status === "Draft" ? "Continue Invoice Draft" : "Issue Invoice"}</h2><p>${e(data.file.name)} · ${e(data.file.serviceType)}${data.file.fy ? ` · FY ${e(data.file.fy)}` : ""}</p></div><button type="button" class="invoice-close" data-invoice-close aria-label="Close">&times;</button></header>
+        <header class="invoice-modal-head"><div><span class="invoice-eyebrow">${e(invoice.status === "Draft" ? invoice.draftReference : "BILL OF SUPPLY")}</span><h2 id="invoiceIssueTitle">${invoice.status === "Draft" ? "Continue Bill of Supply Draft" : "Issue Bill of Supply"}</h2><p>${e(data.file.name)} · ${e(data.file.serviceType)}${data.file.fy ? ` · FY ${e(data.file.fy)}` : ""}</p></div><button type="button" class="invoice-close" data-invoice-close aria-label="Close">&times;</button></header>
         ${data.warning ? `<div class="invoice-test-warning"><strong>Test configuration</strong><span>${e(data.warning)}</span></div>` : ""}
         ${settingsMissing.length ? `<div class="invoice-test-warning invoice-settings-warning"><strong>Final issue requires Invoice Settings</strong><span>Complete: ${e(settingsMissing.join(", "))}. Draft Preview remains available.</span>${canConfigure() ? `<button type="button" class="secondary-button" data-open-invoice-settings>Open Invoice Settings</button>` : `<small>Ask an Admin to complete Invoice Settings.</small>`}</div>` : ""}
         <form id="invoiceIssueForm" class="invoice-form">
-          <section class="invoice-section"><div class="invoice-section-title"><span>1</span><div><h3>Invoice Identification</h3><p>Final number is assigned only when issued.</p></div></div><div class="invoice-grid invoice-grid-4">
+          <section class="invoice-section"><div class="invoice-section-title"><span>1</span><div><h3>Bill Identification</h3><p>Final number is assigned only when issued.</p></div></div><div class="invoice-grid invoice-grid-4">
             ${field("Invoice Reference", "invoiceReference", invoice.invoiceNumber || invoice.draftReference || "Assigned on issue", "text", "disabled")}
             ${field("Invoice Date", "invoiceDate", invoice.invoiceDate, "date", "required")}
             ${field("Due Date", "dueDate", invoice.dueDate, "date")}
             ${field("Financial Year", "financialYear", invoice.financialYear, "text", "disabled")}
-            ${selectField("Document Type", "documentType", invoice.documentType || settings.documentType, ["Tax Invoice", "Bill of Supply"])}
+            ${field("Document Type", "documentType", "Bill of Supply", "text", "readonly")}
             ${field("Place of Supply", "placeOfSupply", invoice.placeOfSupply || recipient.state, "text", "required")}
             ${field("Place State Code", "placeOfSupplyStateCode", recipient.stateCode || settings.stateCode, "text", "maxlength='2' pattern='[0-9]{2}' required")}
             ${selectField("Reverse Charge", "reverseCharge", invoice.reverseCharge || "No", ["No", "Yes"])}
@@ -172,14 +173,23 @@
             <label class="invoice-field invoice-field-wide"><span>Billing Address</span><textarea name="billingAddress" rows="2">${e(recipient.billingAddress)}</textarea></label>
             ${field("Place", "recipientPlace", recipient.place)}${field("District", "recipientDistrict", recipient.district)}${field("State", "recipientState", recipient.state, "text", "required")}${field("State Code", "recipientStateCode", recipient.stateCode, "text", "maxlength='2' pattern='[0-9]{2}' required")}${field("PIN Code", "recipientPinCode", recipient.pinCode)}${field("Contact Person", "contactPerson", recipient.contactPerson)}${field("Mobile", "recipientMobile", recipient.mobile)}${field("Email", "recipientEmail", recipient.email, "email")}${field("C/o", "careOf", recipient.careOf)}
           </div><label class="invoice-check"><input type="checkbox" name="updateClientMaster"><span>Update Client Master with these corrected invoice details</span></label></section>
-          <section class="invoice-section invoice-lines-section"><div class="invoice-section-title"><span>3</span><div><h3>Service Lines</h3><p>Confirm the SAC and GST rate before issuing.</p></div><button type="button" class="invoice-add-line" id="invoiceAddLine">+ Add Service Line</button></div><div id="invoiceLines">${(invoice.lines || []).map(lineMarkup).join("")}</div></section>
+          <section class="invoice-section invoice-lines-section"><div class="invoice-section-title"><span>3</span><div><h3>Service Lines</h3><p id="billOfSupplyTaxNote">GST is fixed at 0 because tax cannot be collected on this Bill of Supply.</p></div><button type="button" class="invoice-add-line" id="invoiceAddLine">+ Add Service Line</button></div><div id="invoiceLines">${(invoice.lines || []).map(lineMarkup).join("")}</div></section>
           <section class="invoice-section"><div class="invoice-section-title"><span>4</span><div><h3>Adjustments and Totals</h3><p>Payment remains independent from invoice issuance.</p></div></div><div class="invoice-adjustment-grid">
             ${field("Invoice-level Discount", "invoiceDiscount", invoice.invoiceDiscount || 0, "number", "min='0' step='0.01'")}${field("Other Valid Charges", "otherCharges", invoice.otherCharges || 0, "number", "min='0' step='0.01'")}${field("Advance / Already Received", "advanceReceived", invoice.advanceReceived || 0, "number", "min='0' step='0.01' readonly")}
-            <label class="invoice-field invoice-field-wide"><span>Invoice Notes / Billing Remarks</span><textarea name="notes" rows="2">${e(invoice.notes || data.file.billingRemarks || "")}</textarea></label>
+            <label class="invoice-field invoice-field-wide"><span>Bill Notes / Billing Remarks</span><textarea name="notes" rows="2">${e(invoice.notes || data.file.billingRemarks || "")}</textarea></label>
           </div><div class="invoice-totals" id="invoiceTotals" aria-live="polite"></div></section>
+          <section class="invoice-section"><div class="invoice-section-title"><span>5</span><div><h3>Bank Account Details</h3><p>Optional payment details printed on this Bill of Supply. Invoice Settings are used as defaults.</p></div></div><div class="invoice-grid invoice-grid-4">
+            ${field("Bank Name", "bankName", invoice.bankDetails?.bankName || settings.bankName)}
+            ${field("Account Name", "accountName", invoice.bankDetails?.accountName || settings.accountName)}
+            ${field("Account Number", "accountNumber", invoice.bankDetails?.accountNumber || settings.accountNumber)}
+            ${field("IFSC", "ifsc", invoice.bankDetails?.ifsc || settings.ifsc, "text", "autocapitalize='characters'")}
+            ${field("Branch", "branch", invoice.bankDetails?.branch || settings.branch)}
+            ${field("UPI ID", "upiId", invoice.bankDetails?.upiId || settings.upiId)}
+          </div></section>
+          <aside class="invoice-composition-note"><strong>Bill of Supply declaration</strong><span>${e(settings.declaration)}</span></aside>
           ${settings.isTestGstin ? `<label class="invoice-check invoice-test-confirm"><input type="checkbox" name="confirmTestGstin"><span>I understand that <strong>${e(TEST_GSTIN)}</strong> is a TEST GSTIN and must be replaced before production invoicing.</span></label>` : ""}
         </form>
-        <footer class="invoice-modal-actions"><button type="button" class="secondary-button" data-invoice-close>Cancel</button><button type="button" class="secondary-button" id="invoiceSaveDraft">Save Draft</button><button type="button" class="secondary-button" id="invoicePreview">Preview Invoice</button><button type="button" class="primary-button" id="invoiceIssue">Issue Invoice</button></footer>
+        <footer class="invoice-modal-actions"><button type="button" class="secondary-button" data-invoice-close>Cancel</button><button type="button" class="secondary-button" id="invoiceSaveDraft">Save Draft</button><button type="button" class="secondary-button" id="invoicePreview">Preview Bill</button><button type="button" class="primary-button" id="invoiceIssue">Issue Bill of Supply</button></footer>
       </div></div>`;
   }
 
@@ -195,7 +205,9 @@
     return {
       invoiceDate: value(form, "invoiceDate"), dueDate: value(form, "dueDate"), documentType: value(form, "documentType"), placeOfSupply: value(form, "placeOfSupply"), placeOfSupplyStateCode: value(form, "placeOfSupplyStateCode"), reverseCharge: value(form, "reverseCharge"), taxMode: value(form, "taxMode"), fileReference: value(form, "fileReference"),
       recipient: { ...workspace.invoice.recipient, gstRegistration: value(form, "gstRegistration"), billingName: value(form, "billingName"), gstin: value(form, "recipientGstin").toUpperCase(), panRegNo: value(form, "panRegNo").toUpperCase(), billingAddress: value(form, "billingAddress"), place: value(form, "recipientPlace"), district: value(form, "recipientDistrict"), state: value(form, "recipientState"), stateCode: value(form, "recipientStateCode"), pinCode: value(form, "recipientPinCode"), contactPerson: value(form, "contactPerson"), mobile: value(form, "recipientMobile"), email: value(form, "recipientEmail"), careOf: value(form, "careOf") },
-      lines: collectLines(form), invoiceDiscount: amount(value(form, "invoiceDiscount")), otherCharges: amount(value(form, "otherCharges")), advanceReceived: amount(value(form, "advanceReceived")), notes: value(form, "notes"), updateClientMaster: Boolean(byName(form, "updateClientMaster")?.checked), confirmTestGstin: Boolean(byName(form, "confirmTestGstin")?.checked),
+      lines: collectLines(form), invoiceDiscount: amount(value(form, "invoiceDiscount")), otherCharges: amount(value(form, "otherCharges")), advanceReceived: amount(value(form, "advanceReceived")), notes: value(form, "notes"),
+      bankDetails: { bankName: value(form, "bankName"), accountName: value(form, "accountName"), accountNumber: value(form, "accountNumber"), ifsc: value(form, "ifsc").toUpperCase(), branch: value(form, "branch"), upiId: value(form, "upiId") },
+      updateClientMaster: Boolean(byName(form, "updateClientMaster")?.checked), confirmTestGstin: Boolean(byName(form, "confirmTestGstin")?.checked),
     };
   }
 
@@ -256,13 +268,13 @@
         toast(error?.message || "Please complete the invoice details before issuing.");
         return;
       }
-      const confirmation = `Issue Tax Invoice?\n\nA final invoice number will be assigned. After issue, financial values cannot be directly overwritten.\n\nClient: ${invoice.recipient.billingName}\nService: ${invoice.lines.map((line) => line.description).join(", ")}\nTaxable Value: ${currency(totals.taxable)}\nGST: ${currency(totals.tax)}\nInvoice Total: ${currency(totals.total)}`;
+      const confirmation = `Issue Bill of Supply?\n\nA final bill number will be assigned. After issue, financial values cannot be directly overwritten.\n\nClient: ${invoice.recipient.billingName}\nService: ${invoice.lines.map((line) => line.description).join(", ")}\nSupply Value: ${currency(totals.taxable)}\nGST Collected: ${currency(totals.tax)}\nBill Total: ${currency(totals.total)}`;
       if (!window.confirm(confirmation)) return;
       const pdfWindow = reservePdfWindow();
       executeInvoiceButton("invoiceIssue", "Issuing…", async () => {
         try {
           const result = await request(`/api/invoices/file/${encodeURIComponent(fileId)}/issue`, { method: "POST", body: JSON.stringify({ invoice }) });
-          toast(result.warning || `Invoice ${result.invoiceNumber} issued successfully.`); await loadStateFromApi(); closeModal("invoiceIssueModal"); renderAll(); await viewInvoice(result.invoiceId, false, pdfWindow);
+          toast(result.warning || `Bill of Supply ${result.invoiceNumber} issued successfully.`); await loadStateFromApi(); closeModal("invoiceIssueModal"); renderAll(); await viewInvoice(result.invoiceId, false, pdfWindow);
         } catch (error) {
           showPdfError(pdfWindow, error?.message);
           throw error;
@@ -306,7 +318,7 @@
   async function cancel(invoiceId) { const reason = window.prompt("Enter the reason for cancelling this issued invoice. The invoice number will remain permanently reserved:"); if (!reason?.trim()) return; try { await request(`/api/invoices/${encodeURIComponent(invoiceId)}/cancel`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) }); toast("Invoice cancelled. Its number remains in the register and will not be reused."); await loadStateFromApi(); renderAll(); } catch (error) { toast(error.message || "Unable to cancel invoice."); } }
 
   const SETTINGS_FIELDS = [
-    ["Legal Name", "legalName"], ["Trade Name", "tradeName"], ["Professional Description", "professionalDescription"], ["Registered Address", "address", "textarea"], ["District", "district"], ["State", "state"], ["State Code", "stateCode"], ["PIN Code", "pinCode"], ["GSTIN", "gstin"], ["PAN", "pan"], ["Email", "email", "email"], ["Mobile Number", "mobile"], ["Website", "website"], ["Firm Logo URL / Data URL", "firmLogo"], ["Invoice Prefix", "invoicePrefix"], ["Numbering Format", "numberingFormat"], ["Number Padding", "numberPadding", "number"], ["Default SAC", "defaultSac"], ["Default GST Rate", "defaultGstRate", "number"], ["Authorised Signatory", "authorisedSignatory"], ["Signature Image URL / Data URL", "signatureImage"], ["Bank Name", "bankName"], ["Account Name", "accountName"], ["Account Number", "accountNumber"], ["IFSC", "ifsc"], ["Branch", "branch"], ["UPI ID", "upiId"], ["Payment Terms", "paymentTerms"], ["Payment Terms Days", "paymentTermsDays", "number"], ["Default Declaration", "declaration", "textarea"], ["Invoice Footer", "invoiceFooter", "textarea"],
+    ["Legal Name", "legalName"], ["Trade Name", "tradeName"], ["Professional Description", "professionalDescription"], ["Registered Address", "address", "textarea"], ["District", "district"], ["State", "state"], ["State Code", "stateCode"], ["PIN Code", "pinCode"], ["GSTIN", "gstin"], ["PAN", "pan"], ["Email", "email", "email"], ["Mobile Number", "mobile"], ["Website", "website"], ["Firm Logo URL / Data URL", "firmLogo"], ["Invoice Prefix", "invoicePrefix"], ["Numbering Format", "numberingFormat"], ["Number Padding", "numberPadding", "number"], ["Default SAC", "defaultSac"], ["Authorised Signatory", "authorisedSignatory"], ["Signature Image URL / Data URL", "signatureImage"], ["Bank Name", "bankName"], ["Account Name", "accountName"], ["Account Number", "accountNumber"], ["IFSC", "ifsc"], ["Branch", "branch"], ["UPI ID", "upiId"], ["Payment Terms", "paymentTerms"], ["Payment Terms Days", "paymentTermsDays", "number"], ["Invoice Footer", "invoiceFooter", "textarea"],
   ];
 
   async function settings() {

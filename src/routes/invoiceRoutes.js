@@ -59,7 +59,7 @@ router.post("/file/:fileId/preview", requireAuth, requireRole(...writeRoles), as
   try {
     const result = await previewInvoice(req.params.fileId, req.body.invoice || req.body);
     res.set("Content-Type", "application/pdf");
-    res.set("Content-Disposition", "inline; filename=Draft-Invoice-Preview.pdf");
+    res.set("Content-Disposition", "inline; filename=Draft-Bill-of-Supply-Preview.pdf");
     res.send(result.pdf);
   } catch (error) { next(error); }
 });

@@ -10841,7 +10841,7 @@ function openBilledFileModal(fileId) {
       <div><h3>Mark File as Billed</h3><p class="small-muted">Billing and invoice issuance are separate. Issuing an invoice remains optional.</p></div>
       <button class="icon-button" id="closeBillingModal" title="Close">X</button>
     </div>
-    <div class="billing-tab-list" role="tablist"><button type="button" class="billing-tab active" id="billingDetailsTab" role="tab" aria-selected="true">Billing Details</button><button type="button" class="billing-tab" id="issueInvoiceTab" role="tab" aria-selected="false">Issue Invoice</button></div>
+    <div class="billing-tab-list" role="tablist"><button type="button" class="billing-tab active" id="billingDetailsTab" role="tab" aria-selected="true">Billing Details</button><button type="button" class="billing-tab" id="issueInvoiceTab" role="tab" aria-selected="false">Issue Bill of Supply</button></div>
     <form id="billingForm" class="drawer-body">
       <div class="billing-tab-panel" id="billingDetailsPanel" role="tabpanel">
       <div class="checking-summary"><strong>${escapeHtml(file.name || "")}</strong><span>${escapeHtml(file.serviceType || "")}${file.fy ? ` · FY ${escapeHtml(file.fy)}` : ""}</span></div>
@@ -10856,7 +10856,7 @@ function openBilledFileModal(fileId) {
     <div class="drawer-actions">
       <button class="secondary-button" id="cancelBilling">Cancel</button>
       <button class="secondary-button" id="confirmBilling">Save as Billed</button>
-      <button class="primary-button" id="continueInvoice">Continue to Issue Invoice</button>
+      <button class="primary-button" id="continueInvoice">Continue to Issue Bill of Supply</button>
     </div>`;
   drawer.classList.add("open");
   document.querySelector("#backdrop").classList.add("show");
@@ -10912,7 +10912,7 @@ async function submitBilledFile(fileId, continueToInvoice = false) {
   }
   else {
     button.disabled = false;
-    button.textContent = continueToInvoice ? "Continue to Issue Invoice" : "Save as Billed";
+    button.textContent = continueToInvoice ? "Continue to Issue Bill of Supply" : "Save as Billed";
   }
   return ok;
 }

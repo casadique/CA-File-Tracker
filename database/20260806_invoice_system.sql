@@ -19,7 +19,7 @@ create table if not exists public.invoices (
   billing_record_id text not null, file_id text not null, client_id uuid,
   draft_reference text not null unique, invoice_number text unique,
   financial_year text not null, invoice_date date not null, due_date date,
-  document_type text not null default 'Tax Invoice', status text not null default 'Draft',
+  document_type text not null default 'Bill of Supply', status text not null default 'Draft',
   place_of_supply text not null, reverse_charge boolean not null default false,
   tax_inclusive boolean not null default false,
   supplier_snapshot jsonb not null, recipient_snapshot jsonb not null,

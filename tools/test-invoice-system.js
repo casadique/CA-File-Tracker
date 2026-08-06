@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const {
   TEST_GSTIN,
+  PRESUMPTIVE_TAX_DECLARATION,
   defaultInvoiceSettings,
   calculateInvoice,
   amountInWords,
@@ -18,6 +19,14 @@ const routes = fs.readFileSync(path.join(root, "src/routes/invoiceRoutes.js"), "
 const service = fs.readFileSync(path.join(root, "src/services/invoiceService.js"), "utf8");
 
 const settings = { ...defaultInvoiceSettings(), stateCode: "32", roundOffPreference: "None" };
+assert.equal(settings.documentType, "Bill of Supply");
+assert.equal(settings.defaultGstRate, 0);
+assert.equal(settings.declaration, PRESUMPTIVE_TAX_DECLARATION);
+assert.equal(settings.address, "3rd Floor, Grand Mall,\nRly Station Road, Keloth,\nPayyanur");
+assert.equal(settings.district, "Kannur");
+assert.equal(settings.pinCode, "670307");
+assert.equal(settings.email, "info@muhammadandassociates.com");
+assert.equal(settings.mobile, "+91 8089 190 842");
 const base = {
   taxMode: "Exclusive", placeOfSupplyStateCode: "32", recipient: { stateCode: "32" },
   lines: [{ description: "ITR Filing for FY 2025-26", sac: "998221", quantity: 1, unit: "Service", rate: 10000, discount: 0, gstRate: 18 }],
@@ -52,14 +61,17 @@ assert.equal(amountInWords(11800), "Rupees Eleven Thousand Eight Hundred Only");
 assert.equal(financialYearForDate("2026-04-01"), "2026-27");
 assert.equal(financialYearForDate("2027-03-31"), "2026-27");
 assert.equal(TEST_GSTIN, "32AVFPM0043F1Z7");
+const billTotals = calculateInvoice({ ...base, lines: [{ ...base.lines[0], gstRate: 0 }] }, settings);
+assert.equal(billTotals.invoiceTotal, 10000);
+assert.equal(billTotals.cgstAmount + billTotals.sgstAmount + billTotals.igstAmount, 0);
 const unregisteredPreview = { ...base, invoiceDate: "2026-08-06", documentType: "Tax Invoice", placeOfSupply: "Kerala", recipient: { billingName: "Test Client", gstRegistration: "Unregistered", state: "Kerala", stateCode: "32" } };
 assert.doesNotThrow(() => validateInvoice(unregisteredPreview, settings, { issuing: false }),
   "draft preview must work for an unregistered recipient without GSTIN or billing address");
 assert.throws(() => validateInvoice(unregisteredPreview, settings, { issuing: true }), /Invoice Settings/,
   "final issue must still require complete supplier settings");
 
-for (const marker of ["Billing Details", "Issue Invoice", "Save as Billed", "Continue to Issue Invoice", 'invoiceStatus: "Not Issued"']) assert.match(app, new RegExp(marker));
-for (const marker of ["Save Draft", "Preview Invoice", "Issue Invoice", "Invoice Register", "Invoice Settings", "confirmTestGstin", "Update Client Master", "Download PDF", "View Invoice History"]) assert.match(client, new RegExp(marker));
+for (const marker of ["Billing Details", "Issue Bill of Supply", "Save as Billed", "Continue to Issue Bill of Supply", 'invoiceStatus: "Not Issued"']) assert.match(app, new RegExp(marker));
+for (const marker of ["Save Draft", "Preview Bill", "Issue Bill of Supply", "Invoice Register", "Invoice Settings", "confirmTestGstin", "Update Client Master", "Download PDF", "View Invoice History", "Bank Account Details"]) assert.match(client, new RegExp(marker));
 assert.match(client, /scope\.elements\?\.namedItem\?\.\(name\)[\s\S]*scope\.querySelector\?/,
   "invoice line readers must support both forms and service-line containers");
 assert.match(client, /const pdfWindow = reservePdfWindow\(\);[\s\S]*showPdfBlob\(blob, pdfWindow\)/,
@@ -75,14 +87,17 @@ assert.match(service, /frozenAt/);
 
 (async () => {
   const invoice = {
-    invoiceId: "test", draftReference: "DRAFT-TEST", status: "Draft", documentType: "Tax Invoice", invoiceDate: "2026-08-06", dueDate: "2026-08-06", financialYear: "2026-27", placeOfSupply: "Kerala", reverseCharge: "No", fileReference: "FILE-1",
-    supplierSnapshot: { legalName: "Muhammad & Associates", professionalDescription: "Chartered Accountants", address: "Test address", state: "Kerala", pinCode: "670001", gstin: TEST_GSTIN, pan: "AVFPM0043F", invoiceFooter: "This is a system-generated invoice." },
+    invoiceId: "test", draftReference: "DRAFT-TEST", status: "Draft", documentType: "Bill of Supply", invoiceDate: "2026-08-06", dueDate: "2026-08-06", financialYear: "2026-27", placeOfSupply: "Kerala", reverseCharge: "No", fileReference: "FILE-1",
+    supplierSnapshot: { ...settings, legalName: "Muhammad & Associates", professionalDescription: "Chartered Accountants", gstin: TEST_GSTIN, pan: "AVFPM0043F", bankName: "Federal Bank", accountName: "Muhammad & Associates", accountNumber: "123456", ifsc: "FDRL0000001" },
     recipientSnapshot: { billingName: "Test Client", billingAddress: "Client address", state: "Kerala", stateCode: "32", gstin: "32ABCDE1234F1Z5" },
-    items: intra.lines, ...intra,
-    discountAmount: intra.totalDiscount, outstandingAmount: intra.netAmountPayable,
+    items: billTotals.lines, ...billTotals,
+    discountAmount: billTotals.totalDiscount, outstandingAmount: billTotals.netAmountPayable,
   };
   const pdf = await drawInvoicePdf(invoice, { draft: true });
+  if (process.env.INVOICE_TEST_OUTPUT) fs.writeFileSync(process.env.INVOICE_TEST_OUTPUT, pdf);
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
   assert.ok(pdf.length > 5000, "Professional invoice PDF should contain rendered content");
+  const pageCount = (pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
+  assert.equal(pageCount, 1, "a normal Bill of Supply must render on one A4 page without a blank trailing page");
   console.log("Invoice billing separation, GST calculations, draft/final controls, PDF and register checks passed.");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

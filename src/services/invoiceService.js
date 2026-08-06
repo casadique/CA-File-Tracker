@@ -6,6 +6,7 @@ const { getAppState, patchAppState, patchAppStateAtomic } = require("./appStateS
 const { getClient, updateClient } = require("./clientService");
 
 const TEST_GSTIN = "32AVFPM0043F1Z7";
+const PRESUMPTIVE_TAX_DECLARATION = "Taxable person paying tax in terms of Notification No. 2/2019-Central Tax (Rate) dated 07.03.2019, not eligible to collect tax on supplies.";
 const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const INVOICE_STATUSES = new Set(["Not Issued", "Draft", "Issued", "Cancelled", "Credit Note Issued"]);
 
@@ -51,24 +52,24 @@ function defaultInvoiceSettings() {
     legalName: "Muhammad & Associates",
     tradeName: "",
     professionalDescription: "Chartered Accountants",
-    address: "",
-    district: "",
+    address: "3rd Floor, Grand Mall,\nRly Station Road, Keloth,\nPayyanur",
+    district: "Kannur",
     state: "Kerala",
     stateCode: "32",
-    pinCode: "",
+    pinCode: "670307",
     gstin: TEST_GSTIN,
     pan: "",
-    email: "",
-    mobile: "",
+    email: "info@muhammadandassociates.com",
+    mobile: "+91 8089 190 842",
     website: "",
     firmLogo: "",
     invoicePrefix: "MA",
     numberingFormat: "{PREFIX}/{FY}/{NUMBER}",
     numberPadding: 4,
     defaultSac: "998221",
-    defaultGstRate: 18,
+    defaultGstRate: 0,
     defaultTaxMode: "Exclusive",
-    documentType: "Tax Invoice",
+    documentType: "Bill of Supply",
     authorisedSignatory: "",
     signatureImage: "",
     bankName: "",
@@ -79,8 +80,8 @@ function defaultInvoiceSettings() {
     upiId: "",
     paymentTerms: "Due on receipt",
     paymentTermsDays: 0,
-    declaration: "We declare that this invoice shows the actual price of the services described and that all particulars are true and correct.",
-    invoiceFooter: "This is a system-generated invoice.",
+    declaration: PRESUMPTIVE_TAX_DECLARATION,
+    invoiceFooter: "This is a system-generated Bill of Supply.",
     roundOffPreference: "None",
     updatedAt: "",
     updatedBy: "",
@@ -90,15 +91,24 @@ function defaultInvoiceSettings() {
 function normalizedSettings(value = {}) {
   const defaults = defaultInvoiceSettings();
   const merged = { ...defaults, ...(value || {}) };
+  merged.address = defaults.address;
+  merged.district = defaults.district;
+  merged.pinCode = defaults.pinCode;
+  merged.email = defaults.email;
+  merged.mobile = defaults.mobile;
+  merged.invoiceFooter = defaults.invoiceFooter;
   merged.stateCode = text(merged.stateCode).padStart(2, "0").slice(-2);
   merged.gstin = text(merged.gstin).toUpperCase();
   merged.pan = text(merged.pan).toUpperCase() || (GSTIN_PATTERN.test(merged.gstin) ? merged.gstin.slice(2, 12) : "");
   merged.invoicePrefix = text(merged.invoicePrefix || "MA").replace(/[^A-Za-z0-9-]/g, "").toUpperCase() || "MA";
-  merged.defaultGstRate = money(merged.defaultGstRate);
+  // This installation is registered under Notification No. 2/2019-CTR and
+  // therefore issues Bills of Supply without collecting GST from recipients.
+  merged.defaultGstRate = 0;
   merged.numberPadding = Math.min(8, Math.max(3, Number(merged.numberPadding) || 4));
   merged.paymentTermsDays = Math.max(0, Math.floor(Number(merged.paymentTermsDays) || 0));
   merged.defaultTaxMode = /inclusive/i.test(merged.defaultTaxMode) ? "Inclusive" : "Exclusive";
-  merged.documentType = /bill of supply/i.test(merged.documentType) ? "Bill of Supply" : "Tax Invoice";
+  merged.documentType = "Bill of Supply";
+  merged.declaration = PRESUMPTIVE_TAX_DECLARATION;
   merged.roundOffPreference = /nearest/i.test(merged.roundOffPreference) ? "Nearest Rupee" : "None";
   merged.isTestGstin = merged.gstin === TEST_GSTIN;
   return merged;
@@ -165,6 +175,18 @@ function supplierSnapshot(settings) {
   };
 }
 
+function bankDetailsSnapshot(raw = {}, settings = {}) {
+  const source = raw.bankDetails || raw.supplierSnapshot || {};
+  return {
+    bankName: text(source.bankName ?? settings.bankName),
+    accountName: text(source.accountName ?? settings.accountName),
+    accountNumber: text(source.accountNumber ?? settings.accountNumber),
+    ifsc: text(source.ifsc ?? settings.ifsc).toUpperCase(),
+    branch: text(source.branch ?? settings.branch),
+    upiId: text(source.upiId ?? settings.upiId),
+  };
+}
+
 function activeReceiptAmount(state, fileId) {
   return money((state.feeReceipts || []).filter((row) => {
     const id = row.fileId || row.file_id;
@@ -186,7 +208,7 @@ function defaultInvoicePayload(state, file, existing = null) {
     draftReference: existing?.draftReference || "",
     invoiceNumber: existing?.invoiceNumber || "",
     status: existing?.status || file.invoiceStatus || "Not Issued",
-    documentType: existing?.documentType || settings.documentType,
+    documentType: existing?.status === "Issued" ? existing.documentType : "Bill of Supply",
     invoiceDate,
     dueDate: existing?.dueDate || isoDate(due),
     financialYear: existing?.financialYear || financialYearForDate(invoiceDate),
@@ -206,12 +228,13 @@ function defaultInvoicePayload(state, file, existing = null) {
       unit: "Service",
       rate: billedAmount,
       discount: 0,
-      gstRate: settings.defaultGstRate,
+      gstRate: 0,
     }],
     invoiceDiscount: money(existing?.invoiceDiscount),
     otherCharges: money(existing?.otherCharges),
     advanceReceived: activeReceiptAmount(state, file.id),
     notes: existing?.notes || file.billingRemarks || "",
+    bankDetails: bankDetailsSnapshot(existing || {}, settings),
     updateClientMaster: false,
     irn: existing?.irn || "",
     acknowledgementNumber: existing?.acknowledgementNumber || "",
@@ -327,8 +350,9 @@ function sanitizedInvoiceInput(state, file, raw = {}, existing = null) {
     financialYear: financialYearForDate(raw.invoiceDate || defaults.invoiceDate),
     reverseCharge: raw.reverseCharge === "Yes" ? "Yes" : "No",
     taxMode: /inclusive/i.test(raw.taxMode) ? "Inclusive" : "Exclusive",
-    documentType: /bill of supply/i.test(raw.documentType) ? "Bill of Supply" : "Tax Invoice",
-    lines: (raw.lines || defaults.lines).map((line) => ({ ...line, id: line.id || crypto.randomUUID() })),
+    documentType: "Bill of Supply",
+    lines: (raw.lines || defaults.lines).map((line) => ({ ...line, id: line.id || crypto.randomUUID(), gstRate: 0 })),
+    bankDetails: bankDetailsSnapshot(raw, normalizedSettings(state.invoiceSettings)),
     confirmTestGstin: raw.confirmTestGstin === true,
   };
   const calculation = calculateInvoice(input, state.invoiceSettings);
@@ -417,7 +441,7 @@ function draftRecord(state, file, raw, existing, actor, now) {
     placeOfSupply: calculated.placeOfSupply,
     reverseCharge: calculated.reverseCharge,
     taxMode: calculated.taxMode,
-    supplierSnapshot: supplierSnapshot(settings),
+    supplierSnapshot: { ...supplierSnapshot(settings), ...calculated.bankDetails },
     recipientSnapshot: calculated.recipient,
     items: calculated.lines,
     grossAmount: calculated.grossAmount,
@@ -668,6 +692,11 @@ function pdfMoney(value) {
   return `₹${money(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formattedPinCode(value) {
+  const digits = text(value).replace(/\D/g, "");
+  return digits.length === 6 ? `${digits.slice(0, 3)} ${digits.slice(3)}` : text(value);
+}
+
 function configuredImage(value) {
   const raw = text(value);
   const match = raw.match(/^data:image\/(?:png|jpe?g);base64,([A-Za-z0-9+/=]+)$/i);
@@ -697,24 +726,26 @@ function drawInvoicePdf(invoice, { draft = false } = {}) {
     const heading = invoice.documentType === "Bill of Supply" ? "BILL OF SUPPLY" : "TAX INVOICE";
     const ensureSpace = (height) => { if (doc.y + height > doc.page.height - 70) doc.addPage(); };
     const line = (y) => doc.moveTo(36, y).lineTo(doc.page.width - 36, y).strokeColor("#AFC0D8").stroke();
-    const logo = configuredImage(supplier.firmLogo);
+    const bundledCaLogo = path.join(__dirname, "../../assets/ca-india-logo.png");
+    const logo = configuredImage(supplier.firmLogo) || (fs.existsSync(bundledCaLogo) ? bundledCaLogo : null);
     if (logo) { try { doc.image(logo, 36, 34, { fit: [52, 48], align: "center", valign: "center" }); } catch {} }
     const supplierX = logo ? 98 : 36;
     doc.font(boldFont).fillColor(blue).fontSize(18).text(supplier.legalName || "Firm Name", supplierX, 35, { width: 366 - supplierX });
     doc.font(regularFont).fillColor("#334155").fontSize(9).text(supplier.professionalDescription || "", supplierX, 58, { width: 366 - supplierX });
     doc.font(boldFont).fillColor(blue).fontSize(15).text(heading, 390, 38, { width: 168, align: "right" });
-    doc.font(regularFont).fillColor("#475569").fontSize(8).text([supplier.address, supplier.district, supplier.state && `${supplier.state} - ${supplier.pinCode || ""}`, supplier.gstin && `GSTIN: ${supplier.gstin}`, supplier.pan && `PAN: ${supplier.pan}`, [supplier.email, supplier.mobile].filter(Boolean).join(" | ")].filter(Boolean).join("\n"), 36, 76, { width: pageWidth });
+    const localityLine = [supplier.district, formattedPinCode(supplier.pinCode)].filter(Boolean).join(" - ");
+    doc.font(regularFont).fillColor("#475569").fontSize(8).text([supplier.address, localityLine, supplier.gstin && `GSTIN: ${supplier.gstin}`, supplier.pan && `PAN: ${supplier.pan}`, supplier.email && `Email: ${supplier.email}`, supplier.mobile && `Contact: ${supplier.mobile}`].filter(Boolean).join("\n"), 36, 92, { width: pageWidth });
     doc.y = Math.max(doc.y, 126); line(doc.y); doc.moveDown(0.8);
     const infoY = doc.y;
-    doc.font(boldFont).fillColor(blue).fontSize(9).text("INVOICE DETAILS", 36, infoY);
-    doc.font(regularFont).fillColor("#1e293b").fontSize(8).text(`Invoice No: ${invoice.invoiceNumber || invoice.draftReference || "DRAFT"}\nInvoice Date: ${displayDate(invoice.invoiceDate)}\nDue Date: ${displayDate(invoice.dueDate)}\nFinancial Year: ${invoice.financialYear || "-"}`, 36, infoY + 17, { width: 250 });
+    doc.font(boldFont).fillColor(blue).fontSize(9).text("BILL DETAILS", 36, infoY);
+    doc.font(regularFont).fillColor("#1e293b").fontSize(8).text(`Bill No: ${invoice.invoiceNumber || invoice.draftReference || "DRAFT"}\nBill Date: ${displayDate(invoice.invoiceDate)}\nDue Date: ${displayDate(invoice.dueDate)}\nFinancial Year: ${invoice.financialYear || "-"}`, 36, infoY + 17, { width: 250 });
     doc.font(boldFont).fillColor(blue).fontSize(9).text("BILL TO", 310, infoY);
     doc.font(regularFont).fillColor("#1e293b").fontSize(8).text([recipient.billingName || recipient.clientName, recipient.billingAddress, [recipient.place, recipient.district, recipient.state, recipient.pinCode].filter(Boolean).join(", "), recipient.gstin && `GSTIN: ${recipient.gstin}`, recipient.panRegNo && `PAN/Reg No: ${recipient.panRegNo}`, [recipient.mobile, recipient.email].filter(Boolean).join(" | ")].filter(Boolean).join("\n"), 310, infoY + 17, { width: 248 });
     doc.y = Math.max(doc.y, infoY + 94); line(doc.y); doc.moveDown(0.5);
     doc.font(regularFont).fontSize(8).fillColor("#334155").text(`Place of Supply: ${invoice.placeOfSupply || "-"}    Reverse Charge: ${invoice.reverseCharge || "No"}    File Reference: ${invoice.fileReference || "-"}`, 36, doc.y, { width: pageWidth });
     doc.moveDown(0.7);
-    const columns = [24, 178, 52, 48, 57, 57, 57];
-    const headers = ["SN", "Description / SAC", "Qty", "Rate", "Taxable", "GST", "Total"];
+    const columns = [24, 188, 52, 55, 72, 55, 77];
+    const headers = ["SN", "Description / SAC", "Qty", "Rate", invoice.documentType === "Bill of Supply" ? "Supply Value" : "Taxable", "GST", "Total"];
     const tableHeader = () => {
       const y = doc.y;
       doc.rect(36, y, pageWidth, 22).fill(light);
@@ -737,7 +768,10 @@ function drawInvoicePdf(invoice, { draft = false } = {}) {
     ensureSpace(180);
     doc.moveDown(0.8);
     const totalsX = 342;
-    const totalRows = [["Gross Amount", invoice.grossAmount], ["Discount", invoice.discountAmount], ["Taxable Value", invoice.taxableAmount], ["CGST", invoice.cgstAmount], ["SGST", invoice.sgstAmount], ["IGST", invoice.igstAmount], ["Round Off", invoice.roundOff], ["Invoice Total", invoice.invoiceTotal], ["Advance Received", invoice.advanceReceived], ["Net Amount Payable", invoice.outstandingAmount]];
+    const totalsStartY = doc.y;
+    const totalRows = invoice.documentType === "Bill of Supply"
+      ? [["Gross Amount", invoice.grossAmount], ["Discount", invoice.discountAmount], ["Supply Value", invoice.taxableAmount], ["Round Off", invoice.roundOff], ["Bill Total", invoice.invoiceTotal], ["Advance Received", invoice.advanceReceived], ["Net Amount Payable", invoice.outstandingAmount]]
+      : [["Gross Amount", invoice.grossAmount], ["Discount", invoice.discountAmount], ["Taxable Value", invoice.taxableAmount], ["CGST", invoice.cgstAmount], ["SGST", invoice.sgstAmount], ["IGST", invoice.igstAmount], ["Round Off", invoice.roundOff], ["Invoice Total", invoice.invoiceTotal], ["Advance Received", invoice.advanceReceived], ["Net Amount Payable", invoice.outstandingAmount]];
     totalRows.forEach(([label, value], index) => {
       const y = doc.y;
       const important = index >= totalRows.length - 3;
@@ -746,9 +780,11 @@ function drawInvoicePdf(invoice, { draft = false } = {}) {
       doc.text(pdfMoney(value), totalsX + 123, y + 2, { width: 90, align: "right" });
       doc.y = y + 17;
     });
-    doc.font(boldFont).fillColor(blue).fontSize(8).text("Amount in words", 36, doc.y - 35, { width: 285 });
-    doc.font(regularFont).fillColor("#1e293b").fontSize(8).text(amountInWords(invoice.invoiceTotal), 36, doc.y - 21, { width: 285 });
-    doc.moveDown(0.8); line(doc.y); doc.moveDown(0.6);
+    const totalsEndY = doc.y;
+    doc.font(boldFont).fillColor(blue).fontSize(8).text("Amount in words", 36, totalsStartY + 2, { width: 285 });
+    doc.font(regularFont).fillColor("#1e293b").fontSize(8).text(amountInWords(invoice.invoiceTotal), 36, totalsStartY + 16, { width: 285 });
+    doc.y = Math.max(totalsEndY, totalsStartY + 50);
+    doc.moveDown(1.4);
     doc.font(boldFont).fillColor(blue).fontSize(8).text("Payment Details", 36, doc.y);
     doc.font(regularFont).fillColor("#334155").fontSize(7.5).text([supplier.bankName && `Bank: ${supplier.bankName}`, supplier.accountName && `Account Name: ${supplier.accountName}`, supplier.accountNumber && `Account No: ${supplier.accountNumber}`, supplier.ifsc && `IFSC: ${supplier.ifsc}`, supplier.branch && `Branch: ${supplier.branch}`, supplier.upiId && `UPI: ${supplier.upiId}`].filter(Boolean).join(" | ") || "Payment details not configured", 36, doc.y + 14, { width: pageWidth });
     doc.moveDown(2.2);
@@ -769,7 +805,10 @@ function drawInvoicePdf(invoice, { draft = false } = {}) {
     const pages = doc.bufferedPageRange();
     for (let page = pages.start; page < pages.start + pages.count; page += 1) {
       doc.switchToPage(page);
-      doc.font(regularFont).fontSize(7).fillColor("#64748B").text(`${supplier.invoiceFooter || "This is a system-generated invoice."}    Page ${page + 1} of ${pages.count}`, 36, doc.page.height - 29, { width: pageWidth, align: "center" });
+      const previousBottomMargin = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
+      doc.font(regularFont).fontSize(7).fillColor("#64748B").text(`${supplier.invoiceFooter || "This is a system-generated bill of supply."}    Page ${page + 1} of ${pages.count}`, 36, doc.page.height - 29, { width: pageWidth, align: "center", lineBreak: false });
+      doc.page.margins.bottom = previousBottomMargin;
     }
     doc.end();
   });
@@ -794,7 +833,7 @@ async function invoicePdf(invoiceId) {
 function safeInvoiceFilename(invoice) {
   const client = text(invoice.recipientSnapshot?.billingName || invoice.recipientSnapshot?.clientName || "Client").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
   const reference = text(invoice.invoiceNumber || invoice.draftReference || "Draft").replace(/[^A-Za-z0-9_-]+/g, "-");
-  return `${invoice.status === "Draft" ? "Draft-Invoice" : "Tax-Invoice"}-${reference}-${client || "Client"}.pdf`;
+  return `${invoice.status === "Draft" ? "Draft-Bill-of-Supply" : "Bill-of-Supply"}-${reference}-${client || "Client"}.pdf`;
 }
 
 async function invoiceHistory(invoiceId) {
@@ -804,6 +843,7 @@ async function invoiceHistory(invoiceId) {
 
 module.exports = {
   TEST_GSTIN,
+  PRESUMPTIVE_TAX_DECLARATION,
   GSTIN_PATTERN,
   defaultInvoiceSettings,
   normalizedSettings,
