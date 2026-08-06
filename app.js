@@ -17677,6 +17677,7 @@ function canUseExpenseModule() {
 function renderExpensesPage() {
   const root = document.querySelector("#expenses");
   if (!root) return;
+  document.body.classList.remove("expense-item-modal-open");
   if (!canUseExpenseModule()) {
     root.innerHTML = "";
     return;
@@ -18317,25 +18318,39 @@ function expenseItemField(value = "") {
 
 function renderExpenseItemManager() {
   const removing = state.filters.expenseItemManagerAction === "remove";
+  const title = removing ? "Remove Expense Item" : "Add New Expense Item";
+  const description = removing
+    ? "Choose an unused item. An item linked to an expense entry cannot be removed."
+    : "Create a reusable expense item for future expense entries.";
   return `
-    <div class="modal-backdrop soft-modal-backdrop">
-      <div class="modal-card expense-item-manager">
-        <div class="expense-card-head">
-          <h3>${removing ? "Remove Expense Item" : "Add New Expense Item"}</h3>
-          <p>${removing ? "Select an unused item below. Items with corresponding expense entries cannot be removed." : "Enter the new expense item name."}</p>
+    <div class="soft-modal-backdrop expense-item-modal-backdrop" id="expenseItemManagerModal">
+      <section class="expense-item-manager" role="dialog" aria-modal="true" aria-labelledby="expenseItemManagerTitle" aria-describedby="expenseItemManagerDescription" tabindex="-1">
+        <header class="expense-item-manager-head">
+          <div>
+            <span class="expense-item-manager-eyebrow">Expense settings</span>
+            <h3 id="expenseItemManagerTitle">${title}</h3>
+            <p id="expenseItemManagerDescription">${description}</p>
+          </div>
+          <button class="expense-item-manager-close" id="closeExpenseItemManager" type="button" aria-label="Close expense item manager">&times;</button>
+        </header>
+        <div class="expense-item-manager-body">
+          <label class="expense-item-manager-label" for="newExpenseItem">${removing ? "Selected expense item" : "Expense item name"}</label>
+          <div class="expense-item-manager-grid">
+            <input id="newExpenseItem" ${removing ? "readonly" : ""} autocomplete="off" maxlength="100" placeholder="${removing ? "Select an item from the list below" : "Enter a new expense item"}">
+            ${removing ? "" : `<button class="primary-button expense-item-add-button" id="addExpenseItemNow" type="button">Add Expense Item</button>`}
+          </div>
+          <div class="expense-item-list-section">
+            <div class="expense-item-list-head"><strong>Existing expense items</strong><span>${(state.expenseItems || []).length} item(s)</span></div>
+            <div class="expense-item-list" role="listbox" aria-label="Existing expense items">
+              ${(state.expenseItems || []).map((item) => `<button type="button" role="option" class="expense-item-choice" data-select-expense-item="${escapeHtml(item)}" aria-selected="false" aria-pressed="false">${escapeHtml(item)}</button>`).join("") || `<p class="expense-item-empty">No expense items are available.</p>`}
+            </div>
+          </div>
         </div>
-        <div class="expense-item-manager-grid">
-          <input id="newExpenseItem" placeholder="${removing ? "Select an item below" : "New expense item"}">
-          ${removing ? "" : `<button class="primary-button" id="addExpenseItemNow" type="button">Add Item</button>`}
-        </div>
-        <div class="expense-item-list">
-          ${(state.expenseItems || []).map((item) => `<button class="mini-button" data-select-expense-item="${escapeHtml(item)}">${escapeHtml(item)}</button>`).join("")}
-        </div>
-        <div class="drawer-actions">
-          ${removing ? `<button class="secondary-button danger" id="removeExpenseItemNow" type="button">Remove Selected</button>` : ""}
-          <button class="secondary-button" id="closeExpenseItemManager" type="button">Close</button>
-        </div>
-      </div>
+        <footer class="expense-item-manager-actions">
+          <button class="secondary-button" data-close-expense-item-manager type="button">Cancel</button>
+          ${removing ? `<button class="secondary-button danger expense-item-remove-button" id="removeExpenseItemNow" type="button" disabled>Remove Selected</button>` : ""}
+        </footer>
+      </section>
     </div>
   `;
 }
@@ -18459,12 +18474,43 @@ function bindExpensePage() {
   const expenseItemSelect = document.querySelector("#expenseParticularsEntry");
   expenseItemSelect?.addEventListener("focus", () => { expenseItemSelect.dataset.previousValue = expenseItemSelect.value; });
   expenseItemSelect?.addEventListener("change", handleExpenseItemDropdownChange);
-  document.querySelector("#closeExpenseItemManager")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = ""; state.filters.expenseItemManagerAction = ""; saveState(); renderAll(); });
+  const closeExpenseItemManager = () => {
+    state.filters.manageExpenseItemsOpen = "";
+    state.filters.expenseItemManagerAction = "";
+    document.body.classList.remove("expense-item-modal-open");
+    saveState();
+    renderAll();
+    setTimeout(() => document.querySelector("#expenseParticularsEntry")?.focus(), 0);
+  };
+  const expenseItemModal = document.querySelector("#expenseItemManagerModal");
+  if (expenseItemModal) {
+    document.body.classList.add("expense-item-modal-open");
+    const modalCard = expenseItemModal.querySelector(".expense-item-manager");
+    const modalInput = expenseItemModal.querySelector("#newExpenseItem");
+    setTimeout(() => (state.filters.expenseItemManagerAction === "remove" ? modalCard : modalInput)?.focus(), 0);
+    expenseItemModal.addEventListener("click", (event) => { if (event.target === expenseItemModal) closeExpenseItemManager(); });
+    expenseItemModal.addEventListener("keydown", (event) => { if (event.key === "Escape") closeExpenseItemManager(); });
+  }
+  document.querySelector("#closeExpenseItemManager")?.addEventListener("click", closeExpenseItemManager);
+  document.querySelector("[data-close-expense-item-manager]")?.addEventListener("click", closeExpenseItemManager);
   document.querySelector("#addExpenseItemNow")?.addEventListener("click", addExpenseItem);
+  document.querySelector("#newExpenseItem:not([readonly])")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addExpenseItem();
+  });
   document.querySelector("#removeExpenseItemNow")?.addEventListener("click", removeExpenseItem);
   document.querySelectorAll("[data-select-expense-item]").forEach((btn) => btn.onclick = () => {
     const input = document.querySelector("#newExpenseItem");
     if (input) input.value = btn.dataset.selectExpenseItem || "";
+    document.querySelectorAll("[data-select-expense-item]").forEach((item) => {
+      const selected = item === btn;
+      item.classList.toggle("is-selected", selected);
+      item.setAttribute("aria-pressed", String(selected));
+      item.setAttribute("aria-selected", String(selected));
+    });
+    const removeButton = document.querySelector("#removeExpenseItemNow");
+    if (removeButton) removeButton.disabled = false;
   });
   document.querySelectorAll("[data-transaction-page]").forEach((btn) => {
     btn.onclick = () => {
@@ -18861,8 +18907,11 @@ function editingCashCollection() {
 }
 
 async function addExpenseItem() {
+  const actionButton = document.querySelector("#addExpenseItemNow");
+  if (actionButton?.disabled) return;
   const value = document.querySelector("#newExpenseItem")?.value.trim();
   if (!value) return toast("Enter expense item name.");
+  if (actionButton) { actionButton.disabled = true; actionButton.textContent = "Adding..."; }
   try {
     if (isSupabaseMode()) await addExpenseItemToApi(value);
     else {
@@ -18875,15 +18924,21 @@ async function addExpenseItem() {
     state.filters.expenseItemManagerAction = "";
     toast("Expense item added");
     renderAll();
-  } catch (error) { toast(error.message || "Expense item could not be added."); }
+  } catch (error) {
+    if (actionButton) { actionButton.disabled = false; actionButton.textContent = "Add Expense Item"; }
+    toast(error.message || "Expense item could not be added.");
+  }
 }
 
 async function removeExpenseItem() {
+  const actionButton = document.querySelector("#removeExpenseItemNow");
+  if (actionButton?.dataset.processing === "true") return;
   const value = document.querySelector("#newExpenseItem")?.value.trim() || document.querySelector("#expenseParticularsEntry")?.value;
   if (!value) return toast("Select or enter expense item to remove.");
   const used = (state.expenses || []).some((item) => expenseItemKey(item.particulars) === expenseItemKey(value));
   if (used) return toast("This expense item has corresponding expense entries and cannot be removed.");
   if (!confirm(`Remove the unused expense item "${value}"?`)) return;
+  if (actionButton) { actionButton.dataset.processing = "true"; actionButton.disabled = true; actionButton.textContent = "Removing..."; }
   try {
     if (isSupabaseMode()) await removeExpenseItemFromApi(value);
     else {
@@ -18895,7 +18950,10 @@ async function removeExpenseItem() {
     state.filters.expenseItemManagerAction = "";
     toast("Expense item removed");
     renderAll();
-  } catch (error) { toast(error.message || "Expense item could not be removed."); }
+  } catch (error) {
+    if (actionButton) { actionButton.dataset.processing = "false"; actionButton.disabled = false; actionButton.textContent = "Remove Selected"; }
+    toast(error.message || "Expense item could not be removed.");
+  }
 }
 
 function expenseItemKey(value = "") {
