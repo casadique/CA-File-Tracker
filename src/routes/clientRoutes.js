@@ -21,7 +21,7 @@ function requireClientPermission(permission) {
 }
 
 function containsCredentials(value = {}) {
-  return ["itPassword", "gstPassword", "tracesLogin", "tracesPassword"].some((key) => Object.prototype.hasOwnProperty.call(value, key) && String(value[key] || "") !== "");
+  return ["itPassword", "gstUser", "gstPassword", "tracesLogin", "tracesPassword"].some((key) => Object.prototype.hasOwnProperty.call(value, key) && String(value[key] || "") !== "");
 }
 
 function canUseCredentials(req, permission) {
@@ -35,7 +35,7 @@ router.get("/", requireAuth, requireRole("Admin", "Manager"), async (req, res, n
   try { res.json(await clients.listClients(req.query)); } catch (error) { next(error); }
 });
 router.get("/export", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
-  try { res.json({ clients: await clients.allClients(req.query) }); } catch (error) { next(error); }
+  try { res.json({ clients: await clients.clientsForExport(req.query, canUseCredentials(req, "view_client_credentials")) }); } catch (error) { next(error); }
 });
 router.get("/masters", requireAuth, async (_req, res, next) => {
   try { res.json(await clients.listClientMasters()); } catch (error) { next(error); }

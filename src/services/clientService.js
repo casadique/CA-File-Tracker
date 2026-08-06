@@ -10,6 +10,7 @@ const CREDENTIAL_COLUMNS = {
   tracesLogin: "traces_login_encrypted",
   tracesPassword: "traces_password_encrypted",
 };
+const GST_CREDENTIAL_BUNDLE_PREFIX = "gst-credentials-v2:";
 
 function cleanText(value = "") {
   return String(value || "").trim().replace(/\s+/g, " ");
@@ -58,6 +59,21 @@ function decryptCredential(value) {
   const decipher = crypto.createDecipheriv("aes-256-gcm", credentialKey(), Buffer.from(ivText, "base64"));
   decipher.setAuthTag(Buffer.from(tagText, "base64"));
   return Buffer.concat([decipher.update(Buffer.from(cipherText, "base64")), decipher.final()]).toString("utf8");
+}
+
+function packGstCredentials({ user = "", password = "" } = {}) {
+  return `${GST_CREDENTIAL_BUNDLE_PREFIX}${JSON.stringify({ user: String(user || ""), password: String(password || "") })}`;
+}
+
+function unpackGstCredentials(value) {
+  const decrypted = decryptCredential(value);
+  if (!decrypted.startsWith(GST_CREDENTIAL_BUNDLE_PREFIX)) return { user: "", password: decrypted };
+  try {
+    const parsed = JSON.parse(decrypted.slice(GST_CREDENTIAL_BUNDLE_PREFIX.length));
+    return { user: String(parsed.user || ""), password: String(parsed.password || "") };
+  } catch (_error) {
+    return { user: "", password: "" };
+  }
 }
 
 function validateClientContact(input = {}) {
@@ -126,8 +142,25 @@ function parseClientTypes(value) {
   return [...new Map(values.map(cleanText).filter(Boolean).map((item) => [normalizeName(item), item])).values()];
 }
 
-function credentialInput(input = {}) {
-  return Object.fromEntries(Object.entries(CREDENTIAL_COLUMNS).filter(([key]) => Object.prototype.hasOwnProperty.call(input, key)).map(([key, column]) => [column, encryptCredential(input[key])]));
+function credentialInput(input = {}, existingGstCredentials = {}) {
+  const changes = Object.fromEntries(Object.entries(CREDENTIAL_COLUMNS)
+    .filter(([key]) => key !== "gstPassword" && Object.prototype.hasOwnProperty.call(input, key))
+    .map(([key, column]) => [column, encryptCredential(input[key])]));
+  const hasGstUser = Object.prototype.hasOwnProperty.call(input, "gstUser");
+  const hasGstPassword = Object.prototype.hasOwnProperty.call(input, "gstPassword");
+  if (hasGstUser || hasGstPassword) {
+    changes.gst_password_encrypted = encryptCredential(packGstCredentials({
+      user: hasGstUser ? input.gstUser : existingGstCredentials.user,
+      password: hasGstPassword ? input.gstPassword : existingGstCredentials.password,
+    }));
+  }
+  return changes;
+}
+
+async function storedGstCredentials(id) {
+  const { data, error } = await supabaseAdmin.from("clients").select("gst_password_encrypted").eq("id", id).single();
+  if (error) throw databaseError(error);
+  return unpackGstCredentials(data?.gst_password_encrypted);
 }
 
 async function replaceClientTypes(clientId, values = []) {
@@ -191,6 +224,19 @@ async function allClients({ search = "", status = "All", clientType = "", consti
     page += 1;
   }
   return rows;
+}
+
+async function clientsForExport(filters = {}, includeGstUser = false) {
+  const clients = await allClients(filters);
+  if (!includeGstUser || !clients.length) return clients.map((client) => ({ ...client, gst_user: "" }));
+  const usersById = new Map();
+  for (let offset = 0; offset < clients.length; offset += 100) {
+    const ids = clients.slice(offset, offset + 100).map((client) => client.id);
+    const { data, error } = await supabaseAdmin.from("clients").select("id,gst_password_encrypted").in("id", ids);
+    if (error) throw databaseError(error);
+    for (const row of data || []) usersById.set(row.id, unpackGstCredentials(row.gst_password_encrypted).user);
+  }
+  return clients.map((client) => ({ ...client, gst_user: usersById.get(client.id) || "" }));
 }
 
 async function getClient(id) {
@@ -342,7 +388,8 @@ async function updateClient(id, input, actorId, options = {}) {
     error.warnings = warnings;
     throw error;
   }
-  const credentialChanges = credentialInput(input);
+  const needsGstCredentials = Object.prototype.hasOwnProperty.call(input, "gstUser") || Object.prototype.hasOwnProperty.call(input, "gstPassword");
+  const credentialChanges = credentialInput(input, needsGstCredentials ? await storedGstCredentials(id) : {});
   const { data, error } = await supabaseAdmin.from("clients").update({ ...clientPayload(updateInput), ...credentialChanges, updated_by: actorId, updated_at: new Date().toISOString() }).eq("id", id).select(CLIENT_FIELDS).single();
   if (error) throw databaseError(error);
   await replaceClientTypes(id, input.clientTypes || input.clientType || data.client_type);
@@ -363,7 +410,12 @@ async function getClientCredentials(id, actorId, serviceType = "") {
   const includeGst = !service || /gst/.test(service);
   const includeTraces = !service || /tds|tcs|tan|trace/.test(service);
   if (includeIt) { credentials.pan = data.pan_reg_no || ""; credentials.itPassword = decryptCredential(data.it_password_encrypted); }
-  if (includeGst) { credentials.gstNo = data.gst_no || ""; credentials.gstPassword = decryptCredential(data.gst_password_encrypted); }
+  if (includeGst) {
+    const gstCredentials = unpackGstCredentials(data.gst_password_encrypted);
+    credentials.gstNo = data.gst_no || "";
+    credentials.gstUser = gstCredentials.user;
+    credentials.gstPassword = gstCredentials.password;
+  }
   if (includeTraces) { credentials.tan = data.tan || ""; credentials.tracesLogin = decryptCredential(data.traces_login_encrypted); credentials.tracesPassword = decryptCredential(data.traces_password_encrypted); }
   if (!service || /epf|esi|other/.test(service)) credentials.otherRegnNo = data.other_regn_no || "";
   await auditClient(id, actorId, "Client credentials accessed", { credentialTypes: Object.keys(credentials), serviceType: cleanText(serviceType) || "All" });
@@ -372,7 +424,8 @@ async function getClientCredentials(id, actorId, serviceType = "") {
 
 async function updateClientCredentials(id, input, actorId) {
   await getClient(id);
-  const changes = credentialInput(input);
+  const needsGstCredentials = Object.prototype.hasOwnProperty.call(input, "gstUser") || Object.prototype.hasOwnProperty.call(input, "gstPassword");
+  const changes = credentialInput(input, needsGstCredentials ? await storedGstCredentials(id) : {});
   if (!Object.keys(changes).length) throw validationError("No credential changes were supplied.");
   const { error } = await supabaseAdmin.from("clients").update({ ...changes, updated_by: actorId, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw databaseError(error);
@@ -605,4 +658,4 @@ function validationError(message) { const error = new Error(message); error.stat
 function serviceError(message, status) { const error = new Error(message); error.status = status; return error; }
 function databaseError(error) { if (["42P01", "42703"].includes(error?.code)) { const next = new Error("Client Master secure database migration is required."); next.status = 503; return next; } return error; }
 
-module.exports = { listClients, allClients, backupClientsSecure, getClient, createClient, importClients, restoreClients, updateClient, setClientStatus, clientProfile, clientAudit, recordClientSelection, migrationPreview, applyMigration, linkUnlinkedFiles, syncClientToActiveFiles, getClientCredentials, updateClientCredentials, listClientMasters, saveClientMasterValue, cleanText, normalizeName, normalizePan, normalizeRegistration, parseClientTypes, clientPayload, snapshot };
+module.exports = { listClients, allClients, clientsForExport, backupClientsSecure, getClient, createClient, importClients, restoreClients, updateClient, setClientStatus, clientProfile, clientAudit, recordClientSelection, migrationPreview, applyMigration, linkUnlinkedFiles, syncClientToActiveFiles, getClientCredentials, updateClientCredentials, listClientMasters, saveClientMasterValue, cleanText, normalizeName, normalizePan, normalizeRegistration, parseClientTypes, clientPayload, snapshot };

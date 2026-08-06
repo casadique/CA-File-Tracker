@@ -11459,7 +11459,7 @@ async function openClientEditor(client = null, options = {}) {
         <div class="field"><label>C/o</label><select name="careOf" id="clientCareOfSelect"><option value="">Select C/o</option>${masters.careOf.map((value) => `<option ${value === client?.care_of ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}<option value="__new">+ Add New C/o</option></select><input class="hidden" id="clientNewCareOf" placeholder="Enter new C/o"></div>
         ${clientFormSelect("status", "Status", ["Active", "Inactive"], client?.status || "Active")}
       </div></section>
-      <section class="client-form-section"><h4>Registration Details</h4><p class="small-muted">Registration numbers are standardized in uppercase. Credentials are encrypted and permission restricted.</p><div class="two-col">${clientFormInput("panRegNo", "PAN", client?.pan_reg_no)}${canEditCredentials ? clientCredentialInput("itPassword", "IT PW") : ""}${clientFormInput("tan", "TAN", client?.tan)}${clientFormInput("gstNo", "GST No.", client?.gst_no)}${canEditCredentials ? clientCredentialInput("gstPassword", "GST PW") : ""}${clientFormInput("cin", "CIN", client?.cin)}${clientFormInput("otherRegnNo", "Other Regn No.", client?.other_regn_no)}${canEditCredentials ? clientCredentialInput("tracesLogin", "Traces Login") + clientCredentialInput("tracesPassword", "Traces PW") : ""}</div></section>
+      <section class="client-form-section"><h4>Registration Details</h4><p class="small-muted">Registration numbers are standardized in uppercase. Credentials are encrypted and permission restricted.</p><div class="two-col">${clientFormInput("panRegNo", "PAN", client?.pan_reg_no)}${canEditCredentials ? clientCredentialInput("itPassword", "IT PW") : ""}${clientFormInput("tan", "TAN", client?.tan)}${clientFormInput("gstNo", "GST No.", client?.gst_no)}${canEditCredentials ? clientCredentialInput("gstUser", "GST User") + clientCredentialInput("gstPassword", "GST PW") : ""}${clientFormInput("cin", "CIN", client?.cin)}${clientFormInput("otherRegnNo", "Other Regn No.", client?.other_regn_no)}${canEditCredentials ? clientCredentialInput("tracesLogin", "Traces Login") + clientCredentialInput("tracesPassword", "Traces PW") : ""}</div></section>
       <section class="client-form-section"><h4>Contact Details</h4><div class="two-col">${clientFormInput("contactPerson", "Contact Person", client?.contact_person)}${clientFormInput("contactNumber", "Contact No.", client?.contact_number)}${clientFormInput("email", "Email ID", client?.email, false, "email")}${clientFormInput("place", "Place", client?.place)}</div>${clientFormTextarea("address", "Address", client?.address)}</section>
       <section class="client-form-section"><h4>Additional Details</h4>${clientFormTextarea("remarks", "Remarks", client?.remarks)}</section>
       <div class="client-form-warning hidden" id="clientDuplicateWarning"></div>
@@ -11537,7 +11537,7 @@ async function saveClientEditor(event, client, options, acceptWarnings = false) 
   }
   if (payload.careOf === "__new") payload.careOf = document.querySelector("#clientNewCareOf")?.value.trim() || "";
   if (payload.constitution === "__new") payload.constitution = document.querySelector("#clientNewConstitution")?.value.trim() || "";
-  ["itPassword", "gstPassword", "tracesLogin", "tracesPassword"].forEach((key) => { if (!payload[key]) delete payload[key]; });
+  ["itPassword", "gstUser", "gstPassword", "tracesLogin", "tracesPassword"].forEach((key) => { if (!payload[key]) delete payload[key]; });
   const submit = form.querySelector("button[type=submit]"); submit.disabled = true; submit.textContent = "Saving...";
   try {
     const result = await apiJson(client ? `/api/clients/${client.id}` : "/api/clients", { method: client ? "PUT" : "POST", body: JSON.stringify(payload) });
@@ -11577,8 +11577,8 @@ async function openClientCredentials(id, serviceType = "") {
   document.querySelector("#clientCredentialsModal")?.remove();
   try {
     const data = await apiJson(`/api/clients/${id}/credentials?serviceType=${encodeURIComponent(serviceType || "")}`);
-    const labels = { pan: "PAN", itPassword: "IT PW", gstNo: "GST No.", gstPassword: "GST PW", tan: "TAN", tracesLogin: "Traces Login", tracesPassword: "Traces PW", otherRegnNo: "Other Regn No." };
-    const secretKeys = new Set(["itPassword", "gstPassword", "tracesLogin", "tracesPassword"]);
+    const labels = { pan: "PAN", itPassword: "IT PW", gstNo: "GST No.", gstUser: "GST User", gstPassword: "GST PW", tan: "TAN", tracesLogin: "Traces Login", tracesPassword: "Traces PW", otherRegnNo: "Other Regn No." };
+    const secretKeys = new Set(["itPassword", "gstUser", "gstPassword", "tracesLogin", "tracesPassword"]);
     const modal = document.createElement("div"); modal.id = "clientCredentialsModal"; modal.className = "client-modal-backdrop";
     modal.innerHTML = `<div class="client-modal client-credentials-modal"><div class="drawer-head"><div><h3>Portal Credentials</h3><p class="small-muted">${escapeHtml(data.clientName || "Client")}${serviceType ? ` - ${escapeHtml(serviceType)}` : ""}. Access is audited and values are not cached.</p></div><button class="icon-button" data-close-credentials>X</button></div><div class="client-editor-form"><div class="two-col">${Object.entries(data.credentials || {}).map(([key, value]) => `<div class="field"><label>${escapeHtml(labels[key] || key)}</label><div class="client-secret-input"><input type="${secretKeys.has(key) ? "password" : "text"}" readonly value="${escapeHtml(value || "")}">${secretKeys.has(key) ? `<button type="button" class="mini-button" data-reveal-credential>Show</button>` : ""}</div></div>`).join("") || `<p class="permission-note">No credentials are stored for this service.</p>`}</div></div></div>`;
     document.body.appendChild(modal);
@@ -11590,8 +11590,8 @@ async function openClientCredentials(id, serviceType = "") {
 
 async function downloadClientTemplate() {
   await loadSheetJs();
-  const sheet = XLSX.utils.json_to_sheet([{ "Client Name": "", "Client Type": "Individual | GST Client", "C/o": "", PAN: "", "IT PW": "", TAN: "", "GST No.": "", "GST PW": "", CIN: "", "Other Regn No.": "", Constitution: "", "Contact Person": "", "Contact No.": "", "Email ID": "", "Traces Login": "", "Traces PW": "", Place: "", Status: "Active", Address: "", Remarks: "" }]);
-  sheet["!cols"] = [28, 30, 18, 16, 16, 16, 20, 16, 24, 22, 20, 22, 18, 28, 18, 18, 18, 12, 36, 36].map((wch) => ({ wch }));
+  const sheet = XLSX.utils.json_to_sheet([{ "Client Name": "", "Client Type": "Individual | GST Client", "C/o": "", PAN: "", "IT PW": "", TAN: "", "GST No.": "", "GST User": "", "GST PW": "", CIN: "", "Other Regn No.": "", Constitution: "", "Contact Person": "", "Contact No.": "", "Email ID": "", "Traces Login": "", "Traces PW": "", Place: "", Status: "Active", Address: "", Remarks: "" }]);
+  sheet["!cols"] = [28, 30, 18, 16, 16, 16, 20, 20, 16, 24, 22, 20, 22, 18, 28, 18, 18, 18, 12, 36, 36].map((wch) => ({ wch }));
   const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, "Client Master"); XLSX.writeFile(book, "ca-file-tracker-client-master-template.xlsx");
 }
 
@@ -11614,6 +11614,7 @@ function clientMasterExportRows(clients = []) {
     PAN: client.pan_reg_no || "",
     TAN: client.tan || "",
     "GST No.": client.gst_no || "",
+    "GST User": client.gst_user || client.gstUser || "",
     CIN: client.cin || "",
     "Other Regn No.": client.other_regn_no || "",
     Constitution: client.constitution || "",
@@ -11639,7 +11640,7 @@ async function importClientWorkbook(event) {
   const file = event.target.files?.[0]; if (!file) return;
   try {
     await loadSheetJs(); const book = XLSX.read(await file.arrayBuffer(), { type: "array" }); const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { defval: "" });
-    const containsCredentials = rows.some((row) => ["IT PW", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
+    const containsCredentials = rows.some((row) => ["IT PW", "GST User", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
     if (containsCredentials && !canEditClientCredentials()) {
       throw new Error("This workbook contains protected client credentials. Only an authorised user can import it.");
     }
@@ -11653,6 +11654,7 @@ async function importClientWorkbook(event) {
       itPassword: value(row, "IT PW"),
       tan: value(row, "TAN"),
       gstNo: value(row, "GST No.", "GST No", "GSTIN"),
+      gstUser: value(row, "GST User", "GST Username", "GST Login"),
       gstPassword: value(row, "GST PW"),
       cin: value(row, "CIN"),
       otherRegnNo: value(row, "Other Regn No.", "Other Regn No", "Other Registration No"),
@@ -11676,8 +11678,8 @@ function previewClientImport(rows) {
   return new Promise((resolve) => {
     const modal = document.createElement("div"); modal.className = "client-modal-backdrop";
     const previewRows = rows.slice(0, 10);
-    const containsCredentials = rows.some((row) => ["IT PW", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
-    modal.innerHTML = `<div class="client-modal"><div class="drawer-head"><div><h3>Preview Client Import</h3><p class="small-muted">${rows.length} row(s) found. The first ${previewRows.length} are shown below. Exact PAN, TAN, GST and CIN duplicates are blocked.</p>${containsCredentials ? `<p class="client-secure-import-note">This workbook contains protected credentials. Values are hidden in preview and encrypted by the server during import.</p>` : ""}</div></div><div class="client-editor-form"><div class="table-wrap"><table><thead><tr><th>Row</th><th>Client Name</th><th>PAN</th><th>Type</th><th>Contact</th><th>Credentials</th></tr></thead><tbody>${previewRows.map((row, index) => `<tr><td>${index + 2}</td><td>${escapeHtml(row["Client Name"] || "-")}</td><td>${escapeHtml(row.PAN || row["PAN/Registration No"] || "-")}</td><td>${escapeHtml(row["Client Type"] || "-")}</td><td>${escapeHtml(row["Contact No."] || row["Contact Number"] || "-")}</td><td>${["IT PW", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()) ? "Protected" : "-"}</td></tr>`).join("")}</tbody></table></div><div class="drawer-actions"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-import>Import ${rows.length} Client(s)</button></div></div></div>`;
+    const containsCredentials = rows.some((row) => ["IT PW", "GST User", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()));
+    modal.innerHTML = `<div class="client-modal"><div class="drawer-head"><div><h3>Preview Client Import</h3><p class="small-muted">${rows.length} row(s) found. The first ${previewRows.length} are shown below. Exact PAN, TAN, GST and CIN duplicates are blocked.</p>${containsCredentials ? `<p class="client-secure-import-note">This workbook contains protected credentials. Values are hidden in preview and encrypted by the server during import.</p>` : ""}</div></div><div class="client-editor-form"><div class="table-wrap"><table><thead><tr><th>Row</th><th>Client Name</th><th>PAN</th><th>Type</th><th>Contact</th><th>Credentials</th></tr></thead><tbody>${previewRows.map((row, index) => `<tr><td>${index + 2}</td><td>${escapeHtml(row["Client Name"] || "-")}</td><td>${escapeHtml(row.PAN || row["PAN/Registration No"] || "-")}</td><td>${escapeHtml(row["Client Type"] || "-")}</td><td>${escapeHtml(row["Contact No."] || row["Contact Number"] || "-")}</td><td>${["IT PW", "GST User", "GST PW", "Traces Login", "Traces PW"].some((header) => String(row[header] || "").trim()) ? "Protected" : "-"}</td></tr>`).join("")}</tbody></table></div><div class="drawer-actions"><button class="secondary-button" data-cancel>Cancel</button><button class="primary-button" data-import>Import ${rows.length} Client(s)</button></div></div></div>`;
     document.body.appendChild(modal);
     modal.querySelector("[data-cancel]").onclick = () => { modal.remove(); resolve(false); };
     modal.querySelector("[data-import]").onclick = () => { modal.remove(); resolve(true); };

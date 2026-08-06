@@ -5,6 +5,8 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
+const service = fs.readFileSync(path.join(root, "src", "services", "clientService.js"), "utf8");
+const routes = fs.readFileSync(path.join(root, "src", "routes", "clientRoutes.js"), "utf8");
 
 const page = source.match(/async function renderClientMasterPage[\s\S]*?(?=\nfunction clientMasterQuery)/)?.[0] || "";
 assert.ok(page, "Missing Client Master page renderer");
@@ -53,4 +55,17 @@ assert.match(styles, /\.client-master-table \.client-master-client-column\s*\{[\
 assert.match(styles, /\.client-master-actions-column\s*\{[\s\S]*?position:\s*sticky[\s\S]*?right:\s*0/);
 assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.client-master-table\s*\{\s*display:\s*none[\s\S]*?\.client-master-mobile-list\s*\{\s*display:\s*grid/);
 
-console.log("Client Master filters, toolbar, responsive layout and action menu checks passed.");
+assert.match(source, /"GST No\.": "", "GST User": "", "GST PW": ""/,
+  "The Client Master sample must place GST User immediately after GST No.");
+assert.match(source, /"GST No\.": client\.gst_no \|\| "",\s*"GST User": client\.gst_user/,
+  "The Client Master Excel export must place GST User immediately after GST No.");
+assert.match(source, /gstUser: value\(row, "GST User", "GST Username", "GST Login"\)/,
+  "Client Master import must accept GST User and supported aliases.");
+assert.match(service, /GST_CREDENTIAL_BUNDLE_PREFIX[\s\S]*?packGstCredentials[\s\S]*?unpackGstCredentials/,
+  "GST User must share the existing encrypted GST credential record.");
+assert.match(service, /if \(!decrypted\.startsWith\(GST_CREDENTIAL_BUNDLE_PREFIX\)\) return \{ user: "", password: decrypted \}/,
+  "Existing GST passwords must remain readable after adding GST User.");
+assert.match(routes, /clientsForExport\(req\.query, canUseCredentials\(req, "view_client_credentials"\)\)/,
+  "GST User export must remain protected by credential-view permission.");
+
+console.log("Client Master filters, toolbar, GST User import/export, responsive layout and action menu checks passed.");
