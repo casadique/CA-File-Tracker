@@ -10390,13 +10390,13 @@ textarea {
 }
 
 .balance-opening-summary-grid .opening-balance-entry-wrap {
-  width: 100%;
-  max-width: none;
+  width: min(100%, 560px);
+  max-width: 560px;
 }
 
-.opening-balance-entry-table .opening-date-column { width: 38%; }
-.opening-balance-entry-table .opening-account-column { width: 25%; }
-.opening-balance-entry-table .opening-amount-column { width: 37%; }
+.opening-balance-entry-table .opening-date-column { width: 190px; }
+.opening-balance-entry-table .opening-account-column { width: 150px; }
+.opening-balance-entry-table .opening-amount-column { width: 170px; }
 
 .balance-opening-summary-grid .opening-balance-entry-table th,
 .balance-opening-summary-grid .opening-balance-entry-table td {
@@ -10467,6 +10467,8 @@ textarea {
 
 .opening-balance-entry-table {
   width: 100%;
+  min-width: 0;
+  table-layout: fixed;
   border-collapse: collapse;
   background: #ffffff;
 }
@@ -10495,6 +10497,8 @@ textarea {
 
 .opening-balance-entry-table input {
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   min-height: 42px;
   padding: 8px 10px;
   border: 1px solid #93c5fd;
@@ -10559,8 +10563,17 @@ textarea {
 
 @media (max-width: 760px) {
   .expense-tabs { grid-template-columns: repeat(4, minmax(170px, 1fr)); }
-  .opening-balance-entry-wrap { overflow-x: auto; }
-  .opening-balance-entry-table { min-width: 620px; }
+  .opening-balance-entry-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  .opening-balance-entry-table { min-width: 0; }
+  .opening-balance-entry-table .opening-date-column { width: 44%; }
+  .opening-balance-entry-table .opening-account-column { width: 29%; }
+  .opening-balance-entry-table .opening-amount-column { width: 27%; }
+  .opening-balance-entry-table th,
+  .opening-balance-entry-table td { padding: 7px 6px; }
 }
 
 .staff-summary-grid {

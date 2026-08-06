@@ -19,6 +19,7 @@
     "test:table-scrolling": "node tools/test-shared-table-scrolling.js",
     "test:completed-files": "node tools/test-completed-files-modernization.js",
     "test:finance": "node tools/test-fee-receipt-payment-modes.js",
+    "test:opening-balance": "node tools/test-opening-balance-layout.js",
     "test:expense-items": "node tools/test-expense-item-dropdown.js",
     "test:fee-collection-editor": "node tools/test-fee-collection-editor.js",
     "test:fee-received": "node tools/test-fee-received-modernization.js",
