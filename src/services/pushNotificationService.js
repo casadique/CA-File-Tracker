@@ -24,6 +24,12 @@ function isMissingTable(error) {
   return error?.code === "42P01" || /does not exist|schema cache/i.test(error?.message || "");
 }
 
+function isPendingNotificationMigration(error) {
+  return isMissingTable(error)
+    || ["42703", "PGRST204", "PGRST205"].includes(error?.code)
+    || /could not find.+column|column .+ does not exist/i.test(error?.message || "");
+}
+
 function cleanText(value, max = 180) {
   return String(value || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -73,7 +79,7 @@ async function saveSubscription(userId, subscription, metadata = {}) {
   if (deviceId) {
     const { error: retireError } = await supabaseAdmin.from("push_subscriptions")
       .update({ is_active: false, updated_at: now }).eq("user_id", userId).eq("device_id", deviceId).neq("endpoint", subscription.endpoint);
-    if (retireError && !isMissingTable(retireError)) throw retireError;
+    if (retireError && !isPendingNotificationMigration(retireError)) throw retireError;
   }
   const row = {
     user_id: userId,
@@ -87,8 +93,23 @@ async function saveSubscription(userId, subscription, metadata = {}) {
     last_seen_at: now,
     updated_at: now,
   };
-  const { data, error } = await supabaseAdmin.from("push_subscriptions")
+  let { data, error } = await supabaseAdmin.from("push_subscriptions")
     .upsert(row, { onConflict: "endpoint" }).select("id,user_id,is_active,device_label,device_id,browser_name,last_seen_at,last_successful_delivery_at").single();
+  if (error && isPendingNotificationMigration(error)) {
+    const legacyRow = {
+      user_id: userId,
+      endpoint: subscription.endpoint,
+      subscription,
+      device_label: row.device_label,
+      user_agent: row.user_agent,
+      is_active: true,
+      last_seen_at: now,
+      updated_at: now,
+    };
+    ({ data, error } = await supabaseAdmin.from("push_subscriptions")
+      .upsert(legacyRow, { onConflict: "endpoint" }).select("id,user_id,is_active,device_label,user_agent,last_seen_at").single());
+    if (!error && data) data = { ...data, device_id: deviceId, browser_name: row.browser_name, last_successful_delivery_at: null, legacy_schema: true };
+  }
   if (error) throw error;
   await savePreferences(userId, { desktop_enabled: true });
   return data;
@@ -111,9 +132,15 @@ async function deactivateSubscription(userId, endpoint) {
 }
 
 async function getActiveDevices(userId) {
-  const { data, error } = await supabaseAdmin.from("push_subscriptions")
+  let { data, error } = await supabaseAdmin.from("push_subscriptions")
     .select("id,device_label,device_id,browser_name,last_seen_at,last_successful_delivery_at,created_at")
     .eq("user_id", userId).eq("is_active", true).order("last_seen_at", { ascending: false });
+  if (error && isPendingNotificationMigration(error)) {
+    ({ data, error } = await supabaseAdmin.from("push_subscriptions")
+      .select("id,device_label,user_agent,last_seen_at,created_at")
+      .eq("user_id", userId).eq("is_active", true).order("last_seen_at", { ascending: false }));
+    if (!error) data = (data || []).map((device) => ({ ...device, device_id: "", browser_name: browserFromUserAgent(device.user_agent), last_successful_delivery_at: null, legacy_schema: true }));
+  }
   if (error) {
     if (isMissingTable(error)) return [];
     throw error;
@@ -132,9 +159,15 @@ async function getDeviceDiagnostics(userId, endpoint = "") {
     lastFailure: "",
   };
   if (!endpoint) return diagnostics;
-  const { data: device, error } = await supabaseAdmin.from("push_subscriptions")
+  let { data: device, error } = await supabaseAdmin.from("push_subscriptions")
     .select("id,is_active,device_label,browser_name,last_successful_delivery_at")
     .eq("user_id", userId).eq("endpoint", endpoint).maybeSingle();
+  if (error && isPendingNotificationMigration(error)) {
+    ({ data: device, error } = await supabaseAdmin.from("push_subscriptions")
+      .select("id,is_active,device_label,user_agent")
+      .eq("user_id", userId).eq("endpoint", endpoint).maybeSingle());
+    if (!error && device) device = { ...device, browser_name: browserFromUserAgent(device.user_agent), last_successful_delivery_at: null, legacy_schema: true };
+  }
   if (error) {
     if (isMissingTable(error)) return { ...diagnostics, migrationRequired: true };
     throw error;
@@ -272,8 +305,13 @@ async function sendToUser(userId, notification = {}) {
   let failed = 0;
   let skipped = 0;
   for (const subscription of subscriptions || []) {
-    const { data: existingDelivery, error: existingError } = await supabaseAdmin.from("notification_deliveries")
+    let { data: existingDelivery, error: existingError } = await supabaseAdmin.from("notification_deliveries")
       .select("id,delivery_status,attempted_at,created_at").eq("user_id", userId).eq("subscription_id", subscription.id).eq("notification_id", eventId).maybeSingle();
+    if (existingError && isPendingNotificationMigration(existingError)) {
+      ({ data: existingDelivery, error: existingError } = await supabaseAdmin.from("notification_deliveries")
+        .select("id,delivery_status,created_at").eq("user_id", userId).eq("subscription_id", subscription.id).eq("notification_id", eventId).maybeSingle());
+      if (!existingError && existingDelivery) existingDelivery = { ...existingDelivery, legacy_schema: true };
+    }
     if (existingError && !isMissingTable(existingError)) throw existingError;
     if (["delivered", "opened"].includes(existingDelivery?.delivery_status)) {
       skipped += 1;
@@ -288,13 +326,22 @@ async function sendToUser(userId, notification = {}) {
     }
     let deliveryId = existingDelivery?.id;
     if (deliveryId) {
-      const { error: retryError } = await supabaseAdmin.from("notification_deliveries")
+      let { error: retryError } = await supabaseAdmin.from("notification_deliveries")
         .update({ delivery_status: "pending", error_message: "", event_key: eventKey, attempted_at: new Date().toISOString() }).eq("id", deliveryId);
+      if (retryError && isPendingNotificationMigration(retryError)) {
+        ({ error: retryError } = await supabaseAdmin.from("notification_deliveries")
+          .update({ delivery_status: "pending", error_message: "" }).eq("id", deliveryId));
+      }
       if (retryError) throw retryError;
     } else {
-      const { data: inserted, error: insertError } = await supabaseAdmin.from("notification_deliveries")
+      let { data: inserted, error: insertError } = await supabaseAdmin.from("notification_deliveries")
         .insert({ user_id: userId, subscription_id: subscription.id, notification_id: eventId, event_key: eventKey, category, delivery_status: "pending", attempted_at: new Date().toISOString() })
         .select("id").maybeSingle();
+      if (insertError && isPendingNotificationMigration(insertError)) {
+        ({ data: inserted, error: insertError } = await supabaseAdmin.from("notification_deliveries")
+          .insert({ user_id: userId, subscription_id: subscription.id, notification_id: eventId, category, delivery_status: "pending" })
+          .select("id").maybeSingle());
+      }
       if (insertError?.code === "23505") {
         skipped += 1;
         notificationLog("duplicate_delivery_blocked", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "concurrent_worker" });
@@ -310,7 +357,7 @@ async function sendToUser(userId, notification = {}) {
       const deliveredAt = new Date().toISOString();
       await Promise.all([
         supabaseAdmin.from("notification_deliveries").update({ delivery_status: "delivered", delivered_at: deliveredAt }).eq("id", deliveryId),
-        supabaseAdmin.from("push_subscriptions").update({ last_successful_delivery_at: deliveredAt, last_seen_at: deliveredAt, updated_at: deliveredAt }).eq("id", subscription.id),
+        updateSubscriptionDeliveryTime(subscription.id, deliveredAt),
         event.migrationRequired ? Promise.resolve() : supabaseAdmin.from("notification_events").update({ desktop_status: "sent", sent_at: deliveredAt, error_code: "", updated_at: deliveredAt }).eq("event_id", eventId),
       ]);
       notificationLog("push_delivered", { ...notification, event_id: eventId, event_key: eventKey }, { channel: "desktop", result: "delivered" });
@@ -328,6 +375,17 @@ async function sendToUser(userId, notification = {}) {
   }
   if (!(subscriptions || []).length) return { sent: 0, failed: 0, skipped: true, reason: notification.endpoint ? "current_device_not_registered" : "no_active_subscription", eventId };
   return { sent, failed, skipped, eventId };
+}
+
+async function updateSubscriptionDeliveryTime(subscriptionId, deliveredAt) {
+  let { error } = await supabaseAdmin.from("push_subscriptions")
+    .update({ last_successful_delivery_at: deliveredAt, last_seen_at: deliveredAt, updated_at: deliveredAt }).eq("id", subscriptionId);
+  if (error && isPendingNotificationMigration(error)) {
+    ({ error } = await supabaseAdmin.from("push_subscriptions")
+      .update({ last_seen_at: deliveredAt, updated_at: deliveredAt }).eq("id", subscriptionId));
+  }
+  if (error) throw error;
+  return true;
 }
 
 async function deliverySummary() {

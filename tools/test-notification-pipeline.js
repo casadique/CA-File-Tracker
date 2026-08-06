@@ -65,6 +65,9 @@ assert(workerSource.includes("registration.showNotification"), "service worker m
 assert(workerSource.includes('searchParams.set("notificationEvent"'), "notification click must carry the stable event ID");
 assert(pushSource.includes("already_delivered"), "per-device delivery must block replay");
 assert(pushSource.includes("subscription_expired"), "expired subscriptions must be logged and deactivated");
+assert(pushSource.includes("isPendingNotificationMigration"), "older notification schemas must use the compatibility path instead of returning a server error");
+assert(pushSource.includes("legacy_schema: true"), "legacy device registration must be normalized for the diagnostics UI");
+assert(pushSource.includes("updateSubscriptionDeliveryTime"), "successful delivery timestamps must support both current and legacy schemas");
 assert(pushSource.includes('eq("endpoint", notification.endpoint)'), "test push must target the current physical subscription");
 assert(pushSource.includes("same_day_3h"), "same-day three-hour reminder stage must exist");
 assert(pushSource.includes("fileIsComplete(file)"), "completed files must be revalidated before reminders");
