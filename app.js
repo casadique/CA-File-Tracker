@@ -1688,6 +1688,17 @@ async function saveOpeningBalanceToApi(openingBalance) {
   return result;
 }
 
+async function saveOpeningBalancesBatchToApi(openingBalances, reason) {
+  const result = await apiJson("/api/finance/opening-balances/batch", {
+    method: "POST",
+    body: JSON.stringify({ openingBalances, reason }),
+  });
+  if (result?.openingBalances) state.openingBalances = result.openingBalances;
+  if (result?.auditLog) state.auditLog = result.auditLog;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function deleteOpeningBalanceFromApi(id) {
   const result = await apiJson(`/api/finance/opening-balances/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.openingBalances) state.openingBalances = result.openingBalances;
@@ -17536,50 +17547,84 @@ function renderExpensesPage() {
     return;
   }
   const tab = state.filters.expenseTab || "collections";
-  const balances = financeBalancesForRange();
+  const balances = financeBalancesForRange(state.filters.transactionFrom || "", state.filters.transactionTo || "");
+  const unclassifiedRows = activeUnclassifiedBankEntries();
   root.innerHTML = `
     <div class="expense-shell">
+      ${renderTransactionDashboardHeader(tab)}
       <div class="expense-overview-grid">
-        ${expenseOverviewCard("Cash in Hand", balances.cash.closing, "balance", "Reconciled cash account", "wallet")}
-        ${expenseOverviewCard("Federal Bank", balances.federal_bank.closing, "collection", "Federal Bank balance", "arrow-down")}
-        ${expenseOverviewCard("TMB", balances.tmb.closing, "fee", "TMB balance", "receipt")}
-        ${Number(balances.unclassified_bank?.closing || 0) !== 0 ? expenseOverviewCard("Unclassified Bank", balances.unclassified_bank.closing, "expense", "Legacy Bank entries awaiting classification", "wallet") : ""}
-        ${expenseOverviewCard("Combined Balance", balances.combined.closing, "expense", "All accounts", "wallet")}
+        ${expenseOverviewCard("Cash in Hand", balances.cash.closing, "balance", financeAccountLastUpdated("cash"), "wallet")}
+        ${expenseOverviewCard("Federal Bank", balances.federal_bank.closing, "collection", financeAccountLastUpdated("federal_bank"), "arrow-down")}
+        ${expenseOverviewCard("TMB", balances.tmb.closing, "fee", financeAccountLastUpdated("tmb"), "receipt")}
+        ${expenseOverviewCard("Total Balance", balances.combined.closing, "total", financeLastUpdated(), "wallet")}
       </div>
+      ${unclassifiedRows.length ? renderUnclassifiedBankBanner(unclassifiedRows, balances.unclassified_bank?.closing || 0) : ""}
       <div class="expense-tabs">
         ${expenseTabButton("collections", "Collections", tab, "arrow-down")}
         ${expenseTabButton("expenses", "Expenses", tab, "arrow-up")}
         ${expenseTabButton("transfers", "Account Transfers", tab, "wallet")}
         ${expenseTabButton("balance", "Reconciliations", tab, "wallet")}
       </div>
-      ${tab === "collections" ? renderCashCollectionsTab() : tab === "balance" ? renderCashBalanceTab() : tab === "transfers" ? renderAccountTransfersTab() : renderExpenseEntryTab()}
+      ${tab === "collections" ? renderCashCollectionsTab() : tab === "balance" ? renderModernCashBalanceTab() : tab === "transfers" ? renderAccountTransfersTab() : renderExpenseEntryTab()}
     </div>
   `;
   bindExpensePage();
 }
 
-function expenseOverviewCard(label, amount, tone, helper = "", icon = "wallet") {
+function renderTransactionDashboardHeader(tab) {
+  const accountOptions = [{ value: "", label: "All Accounts" }, ...financeAccounts];
+  return `<section class="transaction-dashboard-header">
+    <div class="transaction-dashboard-title"><span>Finance Workspace</span><h2>Account Overview</h2><p>Review account movements, balances and cash verification.</p></div>
+    <div class="transaction-dashboard-controls">
+      <div class="field transaction-date-range"><label>Date Range</label><div><input id="transactionFrom" type="date" value="${escapeHtml(state.filters.transactionFrom || "")}" aria-label="Transaction from date"><span>to</span><input id="transactionTo" type="date" value="${escapeHtml(state.filters.transactionTo || "")}" aria-label="Transaction to date"></div></div>
+      <div class="field"><label>Account</label><select id="transactionAccountFilter" ${tab === "balance" ? "disabled title=\"Cash reconciliation is fixed to Cash in Hand\"" : ""}>${accountOptions.map((item) => `<option value="${item.value}" ${String(state.filters.transactionAccount || "") === item.value ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></div>
+      <div class="transaction-header-actions"><button type="button" class="secondary-button" id="transactionRefresh">Refresh</button><button type="button" class="secondary-button" id="transactionExport">Export</button>${state.currentRole === "Admin" ? `<button type="button" class="primary-button" id="openOpeningBalances">Set Opening Balances</button>` : ""}</div>
+    </div>
+  </section>`;
+}
+
+function expenseOverviewCard(label, amount, tone, updatedAt = "", icon = "wallet") {
   return `<div class="expense-overview-card ${tone}">
     <div class="expense-card-icon" aria-hidden="true">${transactionIcon(icon)}</div>
     <div>
       <span>${label}</span>
       <strong class="${Number(amount || 0) < 0 ? "negative-amount" : ""}">${rupee(amount)}</strong>
-      ${helper ? `<p>${helper}</p>` : ""}
-      ${transactionSparkline(tone)}
+      <p>Updated ${escapeHtml(updatedAt || "No transactions recorded")}</p>
     </div>
   </div>`;
 }
 
-function transactionSparkline(tone = "balance") {
-  const values = {
-    balance: [6, 7, 8, 6, 9, 10, 9],
-    collection: [3, 5, 4, 7, 8, 7, 10],
-    expense: [5, 4, 6, 5, 7, 5, 6],
-    fee: [2, 4, 5, 5, 7, 8, 9],
-  }[tone] || [2, 4, 3, 6, 5, 7, 8];
-  const max = Math.max(...values);
-  const points = values.map((value, index) => `${index * 18},${28 - (value / max) * 22}`).join(" ");
-  return `<svg class="transaction-sparkline" viewBox="0 0 108 32" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}"></polyline></svg>`;
+function activeUnclassifiedBankEntries() {
+  return [
+    ...activeCashCollections().filter((item) => transactionAccountKey(item) === "unclassified_bank").map((item) => ({ ...item, transactionType: "collection" })),
+    ...activeExpenses().filter((item) => transactionAccountKey(item) === "unclassified_bank").map((item) => ({ ...item, transactionType: "expense" })),
+  ];
+}
+
+function renderUnclassifiedBankBanner(rows = [], amount = 0) {
+  return `<section class="unclassified-bank-banner" role="status"><div><span class="unclassified-warning-icon" aria-hidden="true">!</span><div><strong>Unclassified legacy bank entries</strong><p>${rupee(amount)} across ${rows.length} ${rows.length === 1 ? "entry" : "entries"} · excluded from Total Balance</p></div></div>${state.currentRole === "Admin" ? `<button type="button" class="secondary-button" id="reviewUnclassifiedBank">Review and Classify</button>` : ""}</section>`;
+}
+
+function financeAccountLastUpdated(accountKey) {
+  const timestamps = [
+    ...(state.openingBalances || []).filter((item) => item.isDeleted !== true && transactionAccountKey(item) === accountKey),
+    ...activeCashCollections().filter((item) => transactionAccountKey(item) === accountKey),
+    ...activeExpenses().filter((item) => transactionAccountKey(item) === accountKey),
+    ...(state.accountTransfers || []).filter((item) => item.isDeleted !== true && (item.fromAccountKey === accountKey || item.toAccountKey === accountKey)),
+    ...(accountKey === "cash" ? (state.cashReconciliations || []).filter((item) => item.isDeleted !== true && item.approvalStatus === "approved") : []),
+  ].map((item) => Date.parse(item.updatedAt || item.updated_at || item.createdAt || item.created_at || item.date || "") || 0).filter(Boolean);
+  return timestamps.length ? formatDateTime(Math.max(...timestamps)) : "";
+}
+
+function financeLastUpdated() {
+  const timestamps = [
+    ...(state.openingBalances || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+    ...activeCashCollections(),
+    ...activeExpenses(),
+    ...(state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+    ...(state.cashReconciliations || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+  ].map((item) => Date.parse(item.updatedAt || item.updated_at || item.createdAt || item.created_at || item.date || "") || 0).filter(Boolean);
+  return timestamps.length ? formatDateTime(Math.max(...timestamps)) : "";
 }
 
 function expenseTabButton(key, label, selected, icon = "") {
@@ -17715,6 +17760,34 @@ function renderOpeningBalancePanel() {
       ${rows.length ? `<details class="opening-balance-history"><summary>View balance history</summary><div class="table-wrap opening-balance-list"><table class="file-table expense-table transaction-table"><thead><tr><th>Effective Date</th><th>Account</th><th class="amount-col">Opening Amount</th><th>Entered By</th><th>Entered On</th><th>Updated On</th><th>Actions</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${money(item.amount)}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "")}</td><td>${escapeHtml(formatDateTime(item.createdAt || item.created_at || ""))}</td><td>${escapeHtml(formatDateTime(item.updatedAt || item.updated_at || ""))}</td><td><button class="mini-button danger" data-delete-opening="${item.id}">Delete</button></td></tr>`).join("")}</tbody></table></div></details>` : ""}
     </div>
   `;
+}
+
+function openOpeningBalanceModal() {
+  if (state.currentRole !== "Admin") return toast("Only Admin can set opening balances.");
+  document.querySelector("#openingBalanceModal")?.remove();
+  const current = Object.fromEntries(financeAccounts.map((account) => [account.value, applicableOpeningBalance("", todayDate(), account.value)]));
+  const history = (state.openingBalances || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true)
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const modal = document.createElement("div");
+  modal.id = "openingBalanceModal";
+  modal.className = "finance-modal-backdrop";
+  modal.innerHTML = `<section class="finance-modal opening-balances-modal" role="dialog" aria-modal="true" aria-labelledby="openingBalanceTitle">
+    <header><div><span>Admin Only</span><h2 id="openingBalanceTitle">Set Opening Balances</h2><p>Create a new dated balance version without overwriting previous records.</p></div><button type="button" class="icon-button" data-close-opening aria-label="Close opening balances">×</button></header>
+    <form id="openingBalanceForm" class="opening-balances-modal-form">
+      <div class="field"><label for="openingEffectiveDate">Effective Date</label><input id="openingEffectiveDate" type="date" value="${todayDate()}" required></div>
+      <div class="opening-balance-modal-grid">${financeAccounts.map((account) => `<label class="opening-balance-modal-account"><span>${escapeHtml(account.label)} opening balance</span><input class="opening-amount-input" type="number" min="0" step="0.01" data-opening-amount="${account.value}" value="" placeholder="0.00" required><small>Current: ${rupee(current[account.value]?.amount || 0)}${current[account.value]?.date ? ` from ${escapeHtml(displayDate(current[account.value].date))}` : ""}</small></label>`).join("")}</div>
+      <div class="field"><label for="openingBalanceReason">Reason / Remarks</label><textarea id="openingBalanceReason" rows="3" maxlength="500" placeholder="Why are these opening balances being recorded?" required></textarea></div>
+      <div class="opening-balance-modal-total"><span>Total opening balance</span><strong id="openingBalancesTotal">0.00</strong></div>
+      ${history.length ? `<details class="opening-balance-history"><summary>View previous opening-balance versions</summary><div class="table-wrap"><table class="transaction-table"><thead><tr><th>Date</th><th>Account</th><th class="amount-col">Amount</th><th>Version</th><th>Entered By</th><th>Reason</th></tr></thead><tbody>${history.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.version || "-")}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "-")}</td><td>${escapeHtml(item.reason || item.remarks || "-")}</td></tr>`).join("")}</tbody></table></div></details>` : ""}
+      <footer><button type="button" class="secondary-button" data-close-opening>Cancel</button><button type="submit" class="primary-button">Save Opening Balances</button></footer>
+    </form>
+  </section>`;
+  document.body.appendChild(modal);
+  modal.querySelectorAll("[data-close-opening]").forEach((button) => button.addEventListener("click", () => modal.remove()));
+  modal.addEventListener("click", (event) => { if (event.target === modal) modal.remove(); });
+  modal.querySelector("#openingBalanceForm").addEventListener("submit", saveOpeningBalances);
+  modal.querySelectorAll("[data-opening-amount]").forEach((input) => input.addEventListener("input", updateOpeningBalancesTotal));
+  modal.querySelector("#openingEffectiveDate")?.focus();
 }
 
 function renderCashCollectionsTab() {
@@ -17863,6 +17936,42 @@ function renderCashBalanceTab() {
   `;
 }
 
+function renderModernCashBalanceTab() {
+  const balance = cashBalanceForRange(state.filters.balanceFrom || "", state.filters.balanceTo || "");
+  return `${renderModernCashReconciliationWorkspace(balance)}${renderCashReconciliationHistory()}`;
+}
+
+function renderModernCashReconciliationWorkspace(balance) {
+  const current = currentCashReconciliation();
+  const physicalRaw = state.filters.physicalCashCount !== undefined && state.filters.physicalCashCount !== "" ? state.filters.physicalCashCount : (current?.physicalCashCount ?? "");
+  const physical = Number(physicalRaw || 0);
+  const hasPhysical = physicalRaw !== "";
+  const expected = Number(balance.closing || 0);
+  const difference = hasPhysical ? Number((physical - expected).toFixed(2)) : 0;
+  const type = !hasPhysical ? "Not Counted" : difference > 0.009 ? "Excess" : difference < -0.009 ? "Shortage" : "Matched";
+  const tone = !hasPhysical ? "neutral" : difference > 0.009 ? "excess" : difference < -0.009 ? "shortage" : "matched";
+  return `<section class="reconciliation-workspace">
+    <div class="reconciliation-workspace-head"><div><span>Cash Reconciliation</span><h2>Verify physical cash for the selected period</h2><p>Ledger values are calculated automatically. Enter only the physical count and remarks.</p></div>${cashReconciliationBadge(current)}</div>
+    <div class="reconciliation-workspace-grid">
+      <form class="reconciliation-details-panel" id="cashReconciliationForm" data-expected-cash="${expected}">
+        <div class="reconciliation-period-row"><div class="field"><label>From Date</label><input type="date" data-expense-filter="balanceFrom" value="${escapeHtml(state.filters.balanceFrom || "")}"></div><div class="field"><label>To Date</label><input type="date" data-expense-filter="balanceTo" value="${escapeHtml(state.filters.balanceTo || "")}"></div><div class="field"><label>Account</label><input value="Cash in Hand" readonly></div><button type="button" class="secondary-button" id="balanceSearch">Recalculate</button></div>
+        <div class="reconciliation-ledger-lines">${reconciliationLedgerLine("Opening Cash Balance", balance.opening)}${reconciliationLedgerLine("Cash Collections", balance.feeCollections + balance.otherCollections, "positive")}${reconciliationLedgerLine("Cash Expenses", balance.cashExpenses, "negative")}${reconciliationLedgerLine("Cash Transfers In", balance.transfersIn, "positive")}${reconciliationLedgerLine("Cash Transfers Out", balance.transfersOut, "negative")}${reconciliationLedgerLine("Approved Net Adjustments", balance.approvedAdjustment || 0)}${reconciliationLedgerLine("Expected Closing Cash", expected, "strong")}</div>
+        <div class="reconciliation-inputs"><div class="field"><label>Physical Cash Counted</label><input id="physicalCashCount" data-expense-filter="physicalCashCount" type="number" min="0" step="0.01" value="${escapeHtml(physicalRaw)}" placeholder="0.00" required></div><div class="field"><label>Difference</label><input id="cashDifference" value="${escapeHtml(money(difference))}" readonly></div><div class="field"><label>Result</label><input id="cashDifferenceType" value="${escapeHtml(type)}" readonly></div><div class="field full-span"><label>Remarks</label><textarea id="cashVerificationRemarks" data-expense-filter="cashVerificationRemarks" rows="3" placeholder="Count notes or explanation">${escapeHtml(state.filters.cashVerificationRemarks || current?.remarks || "")}</textarea></div><div class="field"><label>Prepared By</label><input value="${escapeHtml(state.currentUser || "-")}" readonly></div><div class="field"><label>Counted At</label><input value="${escapeHtml(formatDateTime(new Date().toISOString()))}" readonly></div></div>
+        <div class="reconciliation-submit-row"><button type="button" class="secondary-button" id="balanceReset">Clear</button><button type="submit" class="primary-button" id="verifyCash">Submit Reconciliation</button></div>
+      </form>
+      <aside class="cash-reconciliation-summary"><div class="reconciliation-summary-head"><div><span>Reconciliation Summary</span><h3>Cash position</h3></div><span class="cash-difference-state ${tone}">${type}</span></div><div class="reconciliation-summary-grid-modern">${modernCashBalanceCard("Opening Cash", balance.opening)}${modernCashBalanceCard("Collections", balance.feeCollections + balance.otherCollections)}${modernCashBalanceCard("Expenses", balance.cashExpenses)}${modernCashBalanceCard("Net Transfers", Number(balance.transfersIn || 0) - Number(balance.transfersOut || 0))}${modernCashBalanceCard("Approved Adjustments", balance.approvedAdjustment || 0)}${modernCashBalanceCard("Expected Cash", expected, true)}${modernCashBalanceCard("Physical Cash", hasPhysical ? physical : 0, true)}${modernCashBalanceCard("Difference", difference, true, tone)}</div>${current ? renderCashApprovalPanel(current) : ""}</aside>
+    </div>
+  </section>`;
+}
+
+function reconciliationLedgerLine(label, amount, tone = "") {
+  return `<div class="reconciliation-ledger-line ${tone}"><span>${escapeHtml(label)}</span><strong>${rupee(amount)}</strong></div>`;
+}
+
+function modernCashBalanceCard(label, amount, highlight = false, tone = "") {
+  return `<div class="cash-balance-card ${highlight ? "highlight" : ""} ${tone}"><span>${escapeHtml(label)}</span><strong class="${Number(amount || 0) < 0 ? "negative-amount" : ""}">${rupee(amount)}</strong></div>`;
+}
+
 function formatDateTime(value) {
   if (!value) return "";
   const time = Number(value);
@@ -17900,6 +18009,57 @@ function renderCashVerificationPanel(balance) {
   `;
 }
 
+function reconciliationDifference(record = {}) {
+  if (Number.isFinite(Number(record.physicalCashCount)) && Number.isFinite(Number(record.expectedCash ?? record.systemClosingBalance))) {
+    return Number((Number(record.physicalCashCount) - Number(record.expectedCash ?? record.systemClosingBalance)).toFixed(2));
+  }
+  const amount = Number(record.adjustmentAmount || 0);
+  return record.adjustmentType === "shortage" ? -amount : record.adjustmentType === "excess" ? amount : 0;
+}
+
+function filteredCashReconciliations() {
+  const search = String(state.filters.reconciliationSearch || "").trim().toLowerCase();
+  return (state.cashReconciliations || []).filter((record) => record.isDeleted !== true && record.is_deleted !== true).filter((record) => {
+    const date = record.reconciliationDate || record.toDate || record.to_date || "";
+    const status = String(record.approvalStatus || "draft").toLowerCase();
+    const difference = reconciliationDifference(record);
+    if (state.filters.reconciliationFrom && date < state.filters.reconciliationFrom) return false;
+    if (state.filters.reconciliationTo && date > state.filters.reconciliationTo) return false;
+    if (state.filters.reconciliationStatus && status !== state.filters.reconciliationStatus) return false;
+    if (state.filters.reconciliationPreparedBy && !String(record.submittedBy || record.verifiedBy || "").toLowerCase().includes(String(state.filters.reconciliationPreparedBy).toLowerCase())) return false;
+    if (state.filters.reconciliationApprovedBy && !String(record.approvedBy || "").toLowerCase().includes(String(state.filters.reconciliationApprovedBy).toLowerCase())) return false;
+    if (state.filters.reconciliationDifference === "matched" && Math.abs(difference) > 0.009) return false;
+    if (state.filters.reconciliationDifference === "excess" && difference <= 0.009) return false;
+    if (state.filters.reconciliationDifference === "shortage" && difference >= -0.009) return false;
+    if (search && ![record.id, record.submittedBy, record.approvedBy, record.remarks, record.approvalRemarks, record.rejectionReason].some((value) => String(value || "").toLowerCase().includes(search))) return false;
+    return true;
+  }).sort(financeNewestFirst);
+}
+
+function reconciliationHistoryActions(record = {}) {
+  const id = escapeHtml(record.id || "");
+  const submitted = ["submitted", "pending_approval"].includes(String(record.approvalStatus || "").toLowerCase());
+  const items = state.currentRole === "Admin" && submitted ? [
+    billedActionMenuItem({ label: "Approve", icon: "received", attrs: `data-approve-reconciliation="${id}"` }),
+    billedActionMenuItem({ label: "Reject", icon: "delete", attrs: `data-reject-reconciliation="${id}"`, danger: true }),
+  ] : [];
+  return `<div class="billed-actions reconciliation-row-actions" data-billed-actions="${id}"><button type="button" class="billed-primary-action view-only" data-view-reconciliation="${id}">${billedActionIcon("transaction")}<span>View</span></button>${items.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${id}" aria-label="Open reconciliation actions" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${id}" role="menu">${items.join("")}</div>` : ""}</div>`;
+}
+
+function renderCashReconciliationHistory() {
+  const rows = filteredCashReconciliations();
+  return `<section class="reconciliation-history-card"><div class="reconciliation-history-head"><div><span>History</span><h2>Cash Reconciliation History</h2><p>Submitted, approved and rejected physical-cash checks.</p></div><div><button type="button" class="secondary-button" id="reconciliationExcel">Export Excel</button><button type="button" class="secondary-button" id="reconciliationPdf">Export PDF</button></div></div><div class="reconciliation-history-filters"><div class="field search"><label>Search</label><input data-expense-filter="reconciliationSearch" value="${escapeHtml(state.filters.reconciliationSearch || "")}" placeholder="Search user, remarks or ID"></div><div class="field"><label>From</label><input type="date" data-expense-filter="reconciliationFrom" value="${escapeHtml(state.filters.reconciliationFrom || "")}"></div><div class="field"><label>To</label><input type="date" data-expense-filter="reconciliationTo" value="${escapeHtml(state.filters.reconciliationTo || "")}"></div><div class="field"><label>Status</label><select data-expense-filter="reconciliationStatus">${["", "draft", "submitted", "pending_approval", "approved", "matched", "rejected"].map((value) => `<option value="${value}" ${state.filters.reconciliationStatus === value ? "selected" : ""}>${value ? (value === "pending_approval" ? "Submitted (Legacy)" : properCaseName(value)) : "All Statuses"}</option>`).join("")}</select></div><div class="field"><label>Prepared By</label><input data-expense-filter="reconciliationPreparedBy" value="${escapeHtml(state.filters.reconciliationPreparedBy || "")}"></div><div class="field"><label>Approved By</label><input data-expense-filter="reconciliationApprovedBy" value="${escapeHtml(state.filters.reconciliationApprovedBy || "")}"></div><div class="field"><label>Difference</label><select data-expense-filter="reconciliationDifference">${[["", "All"], ["matched", "Matched"], ["excess", "Excess"], ["shortage", "Shortage"]].map(([value, label]) => `<option value="${value}" ${state.filters.reconciliationDifference === value ? "selected" : ""}>${label}</option>`).join("")}</select></div><button type="button" class="secondary-button" id="clearReconciliationFilters">Clear Filters</button></div><div class="table-wrap reconciliation-history-table-wrap"><table class="transaction-table reconciliation-history-table"><thead><tr><th>Date</th><th>Period</th><th class="amount-col">Opening Cash</th><th class="amount-col">Collections</th><th class="amount-col">Expenses</th><th class="amount-col">Net Transfers</th><th class="amount-col">Expected Cash</th><th class="amount-col">Physical Cash</th><th class="amount-col">Difference</th><th>Status</th><th>Prepared By</th><th>Approved By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.length ? rows.map((record) => { const difference = reconciliationDifference(record); return `<tr><td>${expenseDisplayDate(record.reconciliationDate || record.toDate || record.to_date)}</td><td>${escapeHtml(`${displayDate(record.fromDate || record.from_date) || "Opening"} – ${displayDate(record.toDate || record.to_date || record.reconciliationDate) || "-"}`)}</td><td class="amount-cell">${rupee(record.openingCashBalance || 0)}</td><td class="amount-cell">${rupee(record.cashCollections || 0)}</td><td class="amount-cell">${rupee(record.cashExpenses || 0)}</td><td class="amount-cell">${rupee(Number(record.transfersIn || 0) - Number(record.transfersOut || 0))}</td><td class="amount-cell">${rupee(record.expectedCash ?? record.systemClosingBalance)}</td><td class="amount-cell">${rupee(record.physicalCashCount)}</td><td class="amount-cell ${difference < 0 ? "negative-amount" : ""}">${rupee(difference)}</td><td>${cashReconciliationBadge(record)}</td><td>${escapeHtml(record.submittedBy || record.verifiedBy || "-")}</td><td>${escapeHtml(record.approvedBy || "-")}</td><td class="action-col">${reconciliationHistoryActions(record)}</td></tr>`; }).join("") : `<tr><td colspan="13">No reconciliation records match the selected filters.</td></tr>`}</tbody></table></div><div class="reconciliation-mobile-list">${rows.map((record) => `<article><header><div><strong>${expenseDisplayDate(record.reconciliationDate || record.toDate || record.to_date)}</strong><span>${escapeHtml(record.submittedBy || record.verifiedBy || "-")}</span></div>${cashReconciliationBadge(record)}</header><dl><div><dt>Expected</dt><dd>${rupee(record.expectedCash ?? record.systemClosingBalance)}</dd></div><div><dt>Physical</dt><dd>${rupee(record.physicalCashCount)}</dd></div><div><dt>Difference</dt><dd>${rupee(reconciliationDifference(record))}</dd></div></dl>${reconciliationHistoryActions(record)}</article>`).join("")}</div></section>`;
+}
+
+function viewCashReconciliation(id) {
+  const record = (state.cashReconciliations || []).find((item) => item.id === id);
+  if (!record) return toast("Reconciliation record not found.");
+  const difference = reconciliationDifference(record);
+  const modal = document.createElement("div"); modal.className = "finance-modal-backdrop";
+  modal.innerHTML = `<section class="finance-modal reconciliation-view-modal" role="dialog" aria-modal="true"><header><div><span>Cash Reconciliation</span><h2>${escapeHtml(displayDate(record.reconciliationDate || record.toDate) || "Details")}</h2></div><button class="icon-button" data-close-reconciliation aria-label="Close">×</button></header><div class="reconciliation-view-grid">${[["Period", `${displayDate(record.fromDate) || "Opening"} – ${displayDate(record.toDate || record.reconciliationDate)}`], ["Expected Cash", rupee(record.expectedCash ?? record.systemClosingBalance)], ["Physical Cash", rupee(record.physicalCashCount)], ["Difference", rupee(difference)], ["Status", String(record.approvalStatus || "")], ["Prepared By", record.submittedBy || record.verifiedBy || "-"], ["Approved By", record.approvedBy || "-"], ["Submitted At", formatDateTime(record.submittedAt)], ["Approved At", formatDateTime(record.approvedAt)], ["Remarks", record.remarks || "-"], ["Approval Remarks", record.approvalRemarks || record.rejectionReason || "-"]].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${String(value).includes("&#8377;") ? value : escapeHtml(value || "-")}</strong></div>`).join("")}</div><footer><button class="primary-button" data-close-reconciliation>Close</button></footer></section>`;
+  document.body.appendChild(modal); modal.querySelectorAll("[data-close-reconciliation]").forEach((button) => button.onclick = () => modal.remove());
+}
+
 function reconciliationPeriodKey(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
   const effectiveTo = to || from || todayDate();
   return `${from || "opening"}:${effectiveTo}`;
@@ -17912,12 +18072,15 @@ function currentCashReconciliation(from = state.filters.balanceFrom || "", to = 
 
 function cashReconciliationBadge(record) {
   if (!record) return '<span class="reconciliation-badge neutral">Not Verified</span>';
-  const labels = { matched: "Matched", pending_approval: "Pending Approval", approved: `Approved ${record.adjustmentType === "shortage" ? "Shortage" : "Excess"}: ${rupee(record.adjustmentAmount)}`, rejected: "Rejected" };
-  return `<span class="reconciliation-badge ${escapeHtml(record.approvalStatus)}">${escapeHtml(labels[record.approvalStatus] || record.approvalStatus)}</span>`;
+  const status = String(record.approvalStatus || "draft").toLowerCase();
+  const labels = { draft: "Draft", neutral: "Not Verified", submitted: "Submitted", pending_approval: "Submitted", matched: "Approved · Matched", approved: "Approved", rejected: "Rejected" };
+  return `<span class="reconciliation-badge ${escapeHtml(status)}">${escapeHtml(labels[status] || record.approvalStatus)}</span>`;
 }
 
 function renderCashApprovalPanel(record) {
-  return `<div class="cash-approval-panel"><div class="reconciliation-section-head"><div><span>Approval Section</span><h3>${record.approvalStatus === "pending_approval" ? "Cash difference awaiting Admin approval" : "Cash difference decision"}</h3></div>${cashReconciliationBadge(record)}</div><div class="cash-approval-facts"><div><span>Difference Amount</span><strong>${rupee(record.adjustmentAmount)}</strong></div><div><span>Difference Type</span><strong>${record.adjustmentType === "shortage" ? "Cash Shortage" : "Cash Excess"}</strong></div><div><span>Verified By</span><strong>${escapeHtml(record.verifiedBy || record.submittedBy || "-")}</strong></div><div><span>Verification Date</span><strong>${escapeHtml(formatDateTime(record.verificationDate || record.submittedAt) || "-")}</strong></div><div><span>Remarks</span><strong>${escapeHtml(record.remarks || "-")}</strong></div></div>${state.currentRole === "Admin" && record.approvalStatus === "pending_approval" ? `<div class="cash-approval-actions"><button class="primary-button" id="approveCashAdjustment" data-id="${record.id}">Approve Adjustment</button><button class="secondary-button danger" id="rejectCashAdjustment" data-id="${record.id}">Reject</button></div>` : ""}</div>`;
+  const submitted = ["submitted", "pending_approval"].includes(String(record.approvalStatus || "").toLowerCase());
+  const difference = record.adjustmentType === "shortage" ? -Number(record.adjustmentAmount || 0) : record.adjustmentType === "excess" ? Number(record.adjustmentAmount || 0) : 0;
+  return `<div class="cash-approval-panel"><div class="reconciliation-section-head"><div><span>Approval Workflow</span><h3>${submitted ? "Submitted for review" : "Reconciliation decision"}</h3></div>${cashReconciliationBadge(record)}</div><div class="cash-approval-facts"><div><span>Expected Cash</span><strong>${rupee(record.expectedCash ?? record.systemClosingBalance)}</strong></div><div><span>Physical Cash</span><strong>${rupee(record.physicalCashCount)}</strong></div><div><span>Difference</span><strong class="${difference < 0 ? "negative-amount" : ""}">${rupee(difference)}</strong></div><div><span>Prepared By</span><strong>${escapeHtml(record.submittedBy || record.verifiedBy || "-")}</strong></div><div><span>Prepared At</span><strong>${escapeHtml(formatDateTime(record.submittedAt || record.verificationDate) || "-")}</strong></div><div><span>Remarks</span><strong>${escapeHtml(record.remarks || "-")}</strong></div></div>${state.currentRole === "Admin" && submitted ? `<div class="cash-approval-actions"><button class="primary-button" id="approveCashAdjustment" data-id="${record.id}">Approve</button><button class="secondary-button danger" id="rejectCashAdjustment" data-id="${record.id}">Reject</button></div>` : ""}</div>`;
 }
 
 function renderExpenseFilters() {
@@ -18107,6 +18270,46 @@ function bindExpensePage() {
   document.querySelectorAll("[data-opening-amount]").forEach((input) => {
     input.addEventListener("input", updateOpeningBalancesTotal);
   });
+  const syncTransactionFilters = () => {
+    const from = document.querySelector("#transactionFrom")?.value || "";
+    const to = document.querySelector("#transactionTo")?.value || "";
+    const account = document.querySelector("#transactionAccountFilter")?.value || "";
+    state.filters.transactionFrom = from;
+    state.filters.transactionTo = to;
+    state.filters.transactionAccount = account;
+    const tab = state.filters.expenseTab || "collections";
+    if (tab === "collections") Object.assign(state.filters, { cashFrom: from, cashTo: to, cashAccount: account });
+    if (tab === "expenses") Object.assign(state.filters, { expenseFrom: from, expenseTo: to, expenseAccount: account });
+    if (tab === "transfers") Object.assign(state.filters, { transferFrom: from, transferTo: to, transferAccount: account });
+    if (tab === "balance") Object.assign(state.filters, { balanceFrom: from, balanceTo: to });
+    saveState();
+    renderAll();
+  };
+  document.querySelector("#transactionFrom")?.addEventListener("change", syncTransactionFilters);
+  document.querySelector("#transactionTo")?.addEventListener("change", syncTransactionFilters);
+  document.querySelector("#transactionAccountFilter")?.addEventListener("change", syncTransactionFilters);
+  document.querySelector("#transactionRefresh")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = "Refreshing...";
+    try { if (isSupabaseMode()) await loadStateFromApi(); } catch (error) { toast(error.message || "Transactions could not be refreshed."); }
+    renderAll();
+  });
+  document.querySelector("#transactionExport")?.addEventListener("click", () => {
+    const tab = state.filters.expenseTab || "collections";
+    if (tab === "expenses") return exportExpenseExcel();
+    if (tab === "transfers") return exportAccountTransfersExcel();
+    if (tab === "balance") return exportReconciliationExcel();
+    return exportCashExcel();
+  });
+  document.querySelector("#openOpeningBalances")?.addEventListener("click", openOpeningBalanceModal);
+  document.querySelector("#reviewUnclassifiedBank")?.addEventListener("click", () => {
+    state.filters.expenseTab = "transfers";
+    state.filters.showUnclassifiedBank = "Yes";
+    saveState();
+    renderAll();
+  });
   const cashForm = document.querySelector("#cashCollectionForm");
   if (cashForm) cashForm.onsubmit = saveCashCollectionEntry;
   bindPaymentAccountControls("#expenseMode", "#expenseAccount");
@@ -18156,7 +18359,7 @@ function bindExpensePage() {
   });
   const physicalCashInput = document.querySelector('[data-expense-filter="physicalCashCount"]');
   physicalCashInput?.addEventListener("input", () => {
-    const system = Number(String(document.querySelector("#systemClosingCash")?.value || "0").replace(/,/g, ""));
+    const system = Number(document.querySelector("#cashReconciliationForm")?.dataset.expectedCash || 0);
     const physicalValue = Number(physicalCashInput.value || 0);
     const difference = physicalCashInput.value === "" ? 0 : physicalValue - system;
     const differenceInput = document.querySelector("#cashDifference");
@@ -18164,7 +18367,8 @@ function bindExpensePage() {
     if (differenceInput) differenceInput.value = money(difference);
     if (typeInput) typeInput.value = physicalCashInput.value === "" ? "-" : difference > 0.009 ? "Cash Excess" : difference < -0.009 ? "Cash Shortage" : "Matched";
   });
-  document.querySelector("#verifyCash")?.addEventListener("click", verifyCashReconciliation);
+  const reconciliationForm = document.querySelector("#cashReconciliationForm");
+  if (reconciliationForm) reconciliationForm.onsubmit = verifyCashReconciliation;
   document.querySelector("#approveCashAdjustment")?.addEventListener("click", (event) => decideCashAdjustment(event.currentTarget.dataset.id, "approve"));
   document.querySelector("#rejectCashAdjustment")?.addEventListener("click", (event) => decideCashAdjustment(event.currentTarget.dataset.id, "reject"));
   document.querySelector("#expenseExcel")?.addEventListener("click", exportExpenseExcel);
@@ -18176,6 +18380,16 @@ function bindExpensePage() {
   document.querySelector("#balanceExcel")?.addEventListener("click", exportBalanceExcel);
   document.querySelector("#balancePdf")?.addEventListener("click", exportBalancePdf);
   document.querySelector("#balancePrint")?.addEventListener("click", printBalanceReport);
+  document.querySelector("#reconciliationExcel")?.addEventListener("click", exportReconciliationExcel);
+  document.querySelector("#reconciliationPdf")?.addEventListener("click", exportReconciliationPdf);
+  document.querySelector("#clearReconciliationFilters")?.addEventListener("click", () => {
+    ["reconciliationSearch", "reconciliationFrom", "reconciliationTo", "reconciliationStatus", "reconciliationPreparedBy", "reconciliationApprovedBy", "reconciliationDifference"].forEach((key) => state.filters[key] = "");
+    saveState(); renderAll();
+  });
+  document.querySelectorAll('[data-expense-filter^="reconciliation"]').forEach((input) => input.addEventListener("change", () => { saveState(); renderAll(); }));
+  document.querySelectorAll("[data-view-reconciliation]").forEach((button) => button.onclick = () => viewCashReconciliation(button.dataset.viewReconciliation));
+  document.querySelectorAll("[data-approve-reconciliation]").forEach((button) => button.onclick = () => decideCashAdjustment(button.dataset.approveReconciliation, "approve"));
+  document.querySelectorAll("[data-reject-reconciliation]").forEach((button) => button.onclick = () => decideCashAdjustment(button.dataset.rejectReconciliation, "reject"));
   document.querySelectorAll("[data-view-expense]").forEach((btn) => btn.onclick = () => viewTransactionDetail("Expense", (state.expenses || []).find((item) => item.id === btn.dataset.viewExpense)));
   document.querySelectorAll("[data-view-cash]").forEach((btn) => btn.onclick = () => viewTransactionDetail("Collection", (state.otherCashCollections || []).find((item) => item.id === btn.dataset.viewCash)));
   document.querySelectorAll("[data-edit-expense]").forEach((btn) => btn.onclick = () => { state.filters.editExpenseId = btn.dataset.editExpense; saveState(); renderAll(); });
@@ -18185,6 +18399,7 @@ function bindExpensePage() {
   document.querySelectorAll("[data-classify-bank]").forEach((btn) => btn.onclick = () => classifyLegacyBankTransaction(btn.dataset.transactionType, btn.dataset.classifyBank, btn.dataset.accountKey));
   document.querySelectorAll("[data-edit-cash]").forEach((btn) => btn.onclick = () => { state.filters.editCashId = btn.dataset.editCash; saveState(); renderAll(); });
   document.querySelectorAll("[data-delete-cash]").forEach((btn) => btn.onclick = () => deleteCashCollection(btn.dataset.deleteCash));
+  bindBilledActionMenus();
 }
 
 async function saveExpenseEntry(event) {
@@ -18266,15 +18481,14 @@ function updateOpeningBalancesTotal() {
 async function saveOpeningBalances(event) {
   event.preventDefault();
   if (state.currentRole !== "Admin") return toast("Only Admin can add opening balances.");
+  const date = document.querySelector("#openingEffectiveDate")?.value || "";
+  const reason = String(document.querySelector("#openingBalanceReason")?.value || "").trim();
   const now = new Date().toISOString();
   const records = financeAccounts.map((account) => {
-    const date = document.querySelector(`[data-opening-date="${account.value}"]`)?.value || "";
     const amountInput = document.querySelector(`[data-opening-amount="${account.value}"]`);
     const amount = Number(amountInput?.value || 0);
-    const existing = (state.openingBalances || []).find((item) => item.date === date && transactionAccountKey(item) === account.value);
     return {
-      ...(existing || {}),
-      id: existing?.id || crypto.randomUUID(),
+      id: crypto.randomUUID(),
       particulars: `Opening Balance - ${financeAccountLabel(account.value)}`,
       date,
       balance_date: date,
@@ -18284,16 +18498,22 @@ async function saveOpeningBalances(event) {
       account_key: account.value,
       accountName: financeAccountLabel(account.value),
       account_name: financeAccountLabel(account.value),
-      enteredBy: existing?.enteredBy || state.currentUser || "",
-      entered_by_user_name: existing?.entered_by_user_name || state.currentUser || "",
-      createdAt: existing?.createdAt || now,
-      created_at: existing?.created_at || now,
+      enteredBy: state.currentUser || "",
+      entered_by_user_name: state.currentUser || "",
+      reason,
+      remarks: reason,
+      createdAt: now,
+      created_at: now,
       updatedAt: now,
       updated_at: now,
     };
   });
-  if (records.some((record) => !record.date)) return toast("Select an opening balance date for every account.");
-  if (records.some((record) => Number.isNaN(record.amount))) return toast("Enter a valid opening amount for every account.");
+  if (!date) return toast("Select the effective opening-balance date.");
+  if (!reason) return toast("Enter a reason or remarks for the opening balances.");
+  if (records.some((record) => !Number.isFinite(record.amount) || record.amount < 0)) return toast("Enter a valid opening amount for every account.");
+  const duplicate = records.find((record) => (state.openingBalances || []).some((item) => item.isDeleted !== true && item.date === date && transactionAccountKey(item) === record.accountKey));
+  if (duplicate) return toast(`${financeAccountLabel(duplicate.accountKey)} already has an opening balance for this date.`);
+  if (!confirm(`Save new opening-balance versions effective ${displayDate(date)}? Previous history will be retained.`)) return;
   const submitButton = event.submitter || document.querySelector("#openingBalanceForm button[type='submit']");
   if (submitButton) {
     submitButton.disabled = true;
@@ -18301,26 +18521,24 @@ async function saveOpeningBalances(event) {
   }
   if (isSupabaseMode()) {
     try {
-      for (const record of records) await saveOpeningBalanceToApi(record);
+      await saveOpeningBalancesBatchToApi(records, reason);
       toast("Opening account balances saved and synced");
+      document.querySelector("#openingBalanceModal")?.remove();
       renderAll();
       return;
     } catch (error) {
       console.error("Opening balance save failed", { message: error.message });
       if (submitButton) {
         submitButton.disabled = false;
-        submitButton.textContent = "Save Balances";
+        submitButton.textContent = "Save Opening Balances";
       }
       return toast(`Opening balances could not be saved: ${error.message || "Please retry."}`);
     }
   }
-  records.forEach((record) => {
-    const index = (state.openingBalances || []).findIndex((item) => item.id === record.id);
-    if (index >= 0) state.openingBalances[index] = record;
-    else state.openingBalances = [record, ...(state.openingBalances || [])];
-  });
+  state.openingBalances = [...records, ...(state.openingBalances || [])];
   saveState();
   toast("Opening account balances saved");
+  document.querySelector("#openingBalanceModal")?.remove();
   renderAll();
 }
 
@@ -18437,6 +18655,8 @@ async function saveCashCollectionEntry(event) {
 
 async function saveAccountTransferEntry(event) {
   event.preventDefault();
+  const submitButton = event.submitter || document.querySelector("#accountTransferForm button[type='submit']");
+  if (submitButton?.disabled) return;
   const fromAccountKey = document.querySelector("#transferFromAccount")?.value || "";
   const toAccountKey = document.querySelector("#transferToAccount")?.value || "";
   const amount = Number(document.querySelector("#transferAmount")?.value || 0);
@@ -18457,6 +18677,7 @@ async function saveAccountTransferEntry(event) {
     createdAt: now,
     updatedAt: now,
   };
+  if (submitButton) { submitButton.disabled = true; submitButton.textContent = "Saving..."; }
   try {
     if (isSupabaseMode()) await saveAccountTransferToApi(transfer);
     else {
@@ -18465,7 +18686,7 @@ async function saveAccountTransferEntry(event) {
     }
     toast("Account transfer saved successfully.");
     renderAll();
-  } catch (error) { toast(error.message || "Account transfer could not be saved."); }
+  } catch (error) { if (submitButton) { submitButton.disabled = false; submitButton.textContent = "Save Transfer"; } toast(error.message || "Account transfer could not be saved."); }
 }
 
 async function deleteAccountTransfer(id) {
@@ -18772,35 +18993,40 @@ function financeBalancesForRange(from = state.filters.balanceFrom || "", to = st
   return results;
 }
 
-async function verifyCashReconciliation() {
+async function verifyCashReconciliation(event) {
+  event?.preventDefault?.();
+  const button = event?.submitter || document.querySelector("#verifyCash");
+  if (button?.disabled) return;
   const physicalCashCount = state.filters.physicalCashCount;
   if (physicalCashCount === "" || physicalCashCount === undefined) return toast("Please enter the physical cash count.");
   const payload = { from: state.filters.balanceFrom || "", to: state.filters.balanceTo || "", physicalCashCount: Number(physicalCashCount), remarks: state.filters.cashVerificationRemarks || "" };
+  if (button) { button.disabled = true; button.textContent = "Submitting..."; }
   try {
     if (isSupabaseMode()) await submitCashReconciliationToApi(payload);
     else {
       const balance = cashBalanceForRange();
-      const difference = Number((payload.physicalCashCount - balance.calculatedClosing).toFixed(2));
+      const difference = Number((payload.physicalCashCount - balance.closing).toFixed(2));
       const existing = currentCashReconciliation();
+      if (existing && ["submitted", "pending_approval", "approved", "matched"].includes(String(existing.approvalStatus || "").toLowerCase())) throw new Error("This period already has an active reconciliation.");
       const now = new Date().toISOString();
-      const record = { ...(existing || {}), id: existing?.id || crypto.randomUUID(), periodKey: reconciliationPeriodKey(), reconciliationDate: payload.to || payload.from || todayDate(), fromDate: payload.from, toDate: payload.to || payload.from || todayDate(), adjustmentType: difference > 0 ? "excess" : difference < 0 ? "shortage" : "matched", adjustmentAmount: Math.abs(difference), systemClosingBalance: balance.calculatedClosing, physicalCashCount: payload.physicalCashCount, remarks: payload.remarks, submittedBy: state.currentUser, verifiedBy: state.currentUser, submittedAt: now, verificationDate: now, approvalStatus: difference === 0 ? "matched" : "pending_approval", approvedBy: "", approvedAt: "" };
+      const record = { ...(existing || {}), id: existing?.id || crypto.randomUUID(), periodKey: reconciliationPeriodKey(), reconciliationDate: payload.to || payload.from || todayDate(), fromDate: payload.from, toDate: payload.to || payload.from || todayDate(), openingCashBalance: balance.opening, cashCollections: balance.feeCollections + balance.otherCollections, cashExpenses: balance.cashExpenses, transfersIn: balance.transfersIn, transfersOut: balance.transfersOut, approvedNetAdjustments: balance.approvedAdjustment || 0, adjustmentType: difference > 0 ? "excess" : difference < 0 ? "shortage" : "matched", adjustmentAmount: Math.abs(difference), expectedCash: balance.closing, systemClosingBalance: balance.closing, physicalCashCount: payload.physicalCashCount, remarks: payload.remarks, submittedBy: state.currentUser, verifiedBy: state.currentUser, submittedAt: now, verificationDate: now, approvalStatus: "submitted", approvedBy: "", approvedAt: "", adjustmentApplied: false };
       state.cashReconciliations = [record, ...(state.cashReconciliations || []).filter((item) => item.id !== record.id)];
       saveState();
     }
-    toast("Cash verification saved successfully.");
+    toast("Cash reconciliation submitted successfully.");
     renderAll();
-  } catch (error) { toast(error.message || "Cash verification could not be saved."); }
+  } catch (error) { if (button) { button.disabled = false; button.textContent = "Submit Reconciliation"; } toast(error.message || "Cash reconciliation could not be submitted."); }
 }
 
 async function decideCashAdjustment(id, decision) {
   if (state.currentRole !== "Admin") return toast("Only Admin can approve or reject a cash difference.");
-  const reason = decision === "reject" ? (prompt("Enter rejection reason:") || "") : "";
-  if (decision === "reject" && !reason.trim()) return;
+  const approvalRemarks = prompt(decision === "approve" ? "Enter mandatory approval remarks:" : "Enter mandatory rejection remarks:") || "";
+  if (!approvalRemarks.trim()) return toast("Remarks are required for this decision.");
   try {
-    if (isSupabaseMode()) await decideCashReconciliationToApi(id, decision, { reason });
+    if (isSupabaseMode()) await decideCashReconciliationToApi(id, decision, { reason: approvalRemarks, approvalRemarks });
     else {
       const now = new Date().toISOString();
-      state.cashReconciliations = (state.cashReconciliations || []).map((item) => item.id === id ? { ...item, approvalStatus: decision === "approve" ? "approved" : "rejected", approvedBy: decision === "approve" ? state.currentUser : "", approvedAt: decision === "approve" ? now : "", rejectionReason: reason, updatedAt: now } : item);
+      state.cashReconciliations = (state.cashReconciliations || []).map((item) => item.id === id ? { ...item, approvalStatus: decision === "approve" ? "approved" : "rejected", approvedBy: state.currentUser, approvedAt: now, approvalRemarks, rejectionReason: decision === "reject" ? approvalRemarks : "", adjustmentApplied: decision === "approve", updatedAt: now } : item);
       saveState();
     }
     toast(decision === "approve" ? "Cash adjustment approved and balance updated." : "Cash adjustment rejected.");
@@ -18812,7 +19038,7 @@ function applicableOpeningBalance(from = "", to = todayDate(), accountKey = "cas
   const target = from || to || todayDate();
   return [...(state.openingBalances || [])]
     .filter((item) => {
-      return item.date && item.date <= target && transactionAccountKey(item) === accountKey;
+      return item.isDeleted !== true && item.is_deleted !== true && item.date && item.date <= target && transactionAccountKey(item) === accountKey;
     })
     .sort((a, b) => b.date.localeCompare(a.date) || String(b.updatedAt || b.updated_at || b.createdAt || "").localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || "")))[0] || null;
 }
@@ -18910,6 +19136,29 @@ function exportBalanceExcel() { downloadExcelTable("cash-balance-report", balanc
 async function exportExpensePdf() { await downloadPdfRows("expense-report", expenseReportRows(), expenseReportTitleLines("Expense Report")); }
 async function exportCashPdf() { await downloadPdfRows("cash-collection-report", cashReportRows(), cashCollectionReportTitleLines()); }
 async function exportBalancePdf() { await downloadPdfRows("cash-reconciliation-report", balanceReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Cash Reconciliation"]); }
+function reconciliationReportRows(rows = filteredCashReconciliations()) {
+  return rows.map((record) => ({
+    "Reconciliation Date": expenseDisplayDate(record.reconciliationDate || record.toDate || record.to_date),
+    Period: `${displayDate(record.fromDate || record.from_date) || "Opening"} - ${displayDate(record.toDate || record.to_date || record.reconciliationDate) || "-"}`,
+    "Opening Cash": money(record.openingCashBalance || 0), Collections: money(record.cashCollections || 0), Expenses: money(record.cashExpenses || 0),
+    "Net Transfers": money(Number(record.transfersIn || 0) - Number(record.transfersOut || 0)), "Expected Cash": money(record.expectedCash ?? record.systemClosingBalance),
+    "Physical Cash": money(record.physicalCashCount), Difference: money(reconciliationDifference(record)),
+    Status: properCaseName(String(record.approvalStatus || "draft").replace(/_/g, " ")), "Prepared By": record.submittedBy || record.verifiedBy || "",
+    "Approved By": record.approvedBy || "", Remarks: record.remarks || "", "Approval Remarks": record.approvalRemarks || record.rejectionReason || "",
+  }));
+}
+
+function accountTransferReportRows() {
+  return (state.accountTransfers || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true).map((item) => ({
+    Date: expenseDisplayDate(item.date), "Transfer ID": item.id, "From Account": financeAccountLabel(item.fromAccountKey), "To Account": financeAccountLabel(item.toAccountKey),
+    Amount: money(item.amount), Reference: item.reference || "", Remarks: item.remarks || "", "Entered By": item.createdBy || item.enteredBy || "", Status: item.status || "Completed",
+  }));
+}
+
+function exportReconciliationExcel() { downloadExcelTable("cash-reconciliation-history", reconciliationReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Cash Reconciliation History"]); }
+function exportAccountTransfersExcel() { downloadExcelTable("account-transfer-report", accountTransferReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Account Transfer Report"]); }
+async function exportReconciliationPdf() { await downloadPdfRows("cash-reconciliation-history", reconciliationReportRows(), ["Muhammad & Associates,", "Chartered Accountants,", "Cash Reconciliation History"]); }
+
 function printExpenseReport() {
   printStructuredReport({ title: "Expense Report", subtitle: transactionReportDateLine("expenseFrom", "expenseTo"), sections: [{ title: "Expenses", rows: expenseReportRows() }], format: "print" });
 }
