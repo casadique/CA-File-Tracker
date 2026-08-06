@@ -10250,7 +10250,7 @@ async function submitCheckingForm(fileId) {
   if (!isNotCheckedFile(file)) return toast("This file is no longer pending checking.");
   button.disabled = true;
   button.textContent = "Checking...";
-  if (isSupabaseMode()) {
+  if (apiToken()) {
     try {
       const result = await markFileCheckedInApi(fileId, checkingRemarks, checkingDate);
       if (result?.file) state.files = state.files.map((item) => (item.id === fileId ? { ...item, ...result.file } : item));
@@ -10266,6 +10266,11 @@ async function submitCheckingForm(fileId) {
       button.textContent = "Confirm Check";
       return toast(`Checking update failed: ${error.message || "Please retry."}`);
     }
+  }
+  if (!allowLocalLoginFallback()) {
+    button.disabled = false;
+    button.textContent = "Confirm Check";
+    return toast("Your login session is unavailable. Please log out and log in again before checking this file.");
   }
   const checkedAt = new Date().toISOString();
   const checkedBy = state.currentUser || loggedInUser()?.name || "";

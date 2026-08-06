@@ -72,6 +72,13 @@ async function main() {
   }, checker("Althaf").id, checker("Althaf"));
   assert.equal(centralState.files.find((row) => row.id === "staff-manager-check").checkedBy, "Althaf M K");
 
+  centralState.files.push(pendingFile("normalized-role-check", "Rabiyath", "Althaf"));
+  await service.markFileChecked("normalized-role-check", {
+    checkingDate: "2026-08-06",
+    checkingRemarks: "Verified with normalized role",
+  }, checker("Althaf").id, checker("Althaf", "staff_manager"));
+  assert.equal(centralState.files.find((row) => row.id === "normalized-role-check").checkedBy, "Althaf M K");
+
   for (const [name, fileId] of [["Althaf", "own-work"], ["Nisha", "own-work-nisha"], ["Rizwana", "own-work-rizwana"]]) {
     await assert.rejects(
       () => service.markFileChecked(fileId, { checkingDate: "2026-08-05", checkingRemarks: "Self check" }, checker(name).id, checker(name)),
@@ -84,6 +91,8 @@ async function main() {
   );
 
   const appSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  const routeSource = fs.readFileSync(path.join(root, "src", "routes", "fileRoutes.js"), "utf8");
+  const serviceSource = fs.readFileSync(path.join(root, "src", "services", "fileService.js"), "utf8");
   assert.match(appSource, /checkingStaffNames = new Set\(\["nisha", "rizwana", "althaf"\]\)/);
   assert.match(appSource, /checkingStaffEmails = new Set\(\["nishagireesh986@gmail\.com", "rizwanashir06@gmail\.com", "althafmk2210@gmail\.com"\]\)/);
   assert.match(appSource, /const nameVariants = staffNameVariants\(user\?\.name \|\| state\.currentUser\)/,
@@ -105,6 +114,16 @@ async function main() {
   assert.match(appSource, /const hasRecordedWorker = Boolean/);
   assert.match(appSource, /return !hasRecordedWorker && \(/,
     "Assigned Staff must be only a legacy fallback when identifying self-completed work");
+  assert.match(appSource, /if \(apiToken\(\)\) \{[\s\S]*?markFileCheckedInApi/,
+    "Hosted checking must use the dedicated endpoint whenever an API token exists");
+  assert.match(appSource, /if \(!allowLocalLoginFallback\(\)\) \{[\s\S]*?login session is unavailable/,
+    "Hosted checking must never fall back to a local-only checked state");
+  assert.match(routeSource, /router\.post\("\/:id\/check", requireAuth, async/,
+    "The checking service must be the single permission authority for the dedicated route");
+  assert.doesNotMatch(routeSource, /router\.post\("\/:id\/check", requireAuth, requireRole/,
+    "A generic exact-role gate must not reject an authorised checker before domain validation");
+  assert.match(serviceSource, /function normalizedRole[\s\S]*?replace\(\/\[_-\]\+\/g, " "\)/,
+    "Checking permission must normalize stored role variants");
   console.log("All-staff Not Checked navigation, special checker all-file access and self-check prevention passed.");
 }
 

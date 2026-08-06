@@ -734,10 +734,18 @@ function reliableCompletionTimestamp(file = {}) {
 }
 
 function assertCheckingPermission(profile = {}) {
-  const role = String(profile?.role || "").trim();
-  if (["Admin", "Manager"].includes(role)) return;
-  if (["Staff", "Staff Manager"].includes(role) && isAuthorisedCheckingProfile(profile)) return;
+  const role = normalizedRole(profile?.role);
+  if (["admin", "manager"].includes(role)) return;
+  if (["staff", "staff manager"].includes(role) && isAuthorisedCheckingProfile(profile)) return;
   throw httpError("Only authorised checkers can check completed files.", 403);
+}
+
+function normalizedRole(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 function isAuthorisedCheckingProfile(profile = {}) {

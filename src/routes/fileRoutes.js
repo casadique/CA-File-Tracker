@@ -54,7 +54,10 @@ router.put("/:id", requireAuth, requireRole("Admin", "Manager", "Staff Manager",
   }
 });
 
-router.post("/:id/check", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
+// Checking permission is intentionally enforced inside markFileChecked. Keeping
+// one domain-level gate avoids role-label mismatches between the profile table,
+// browser session and this route while preserving the named-checker safeguard.
+router.post("/:id/check", requireAuth, async (req, res, next) => {
   try {
     const before = await getAppState();
     const state = await markFileChecked(req.params.id, req.body || {}, req.user.id, req.profile);
