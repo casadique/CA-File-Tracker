@@ -7890,6 +7890,16 @@ function masterFileBillingBadge(file = {}) {
   return `<span class="master-billing-badge ${className}"><i></i>${escapeHtml(label)}</span>`;
 }
 
+function fileContactNumber(file = {}) {
+  return file.contactNo || file.contact_no || file.contactNumber || file.contact_number
+    || file.mobile || file.mobileNo || file.mobile_no || file.phone || file.phoneNumber || file.phone_number
+    || file.clientSnapshot?.contactNo || file.clientSnapshot?.contact_no || file.clientSnapshot?.contactNumber
+    || file.clientSnapshot?.mobile || file.clientSnapshot?.mobileNo || file.clientSnapshot?.phone
+    || file.client_snapshot?.contactNo || file.client_snapshot?.contact_no || file.client_snapshot?.contactNumber
+    || file.client_snapshot?.mobile || file.client_snapshot?.mobileNo || file.client_snapshot?.phone
+    || "Not recorded";
+}
+
 function masterFileExpandedDetails(file = {}) {
   const payment = feeReceiptSummaryForFile(file);
   const billNumber = file.billNo || file.bill_number || file.invoiceNumber || file.invoiceNo || "Not recorded";
@@ -7897,13 +7907,7 @@ function masterFileExpandedDetails(file = {}) {
   const checkedBy = file.checkedBy || file.checked_by || "Not checked";
   const checkedDate = displayDate(file.checkedDate || file.checked_date || file.checkedAt || file.checked_at) || "Not checked";
   const checkingComment = file.checkingRemarks || file.checking_remarks || "No checking comment";
-  const contactNumber = file.contactNo || file.contact_no || file.contactNumber || file.contact_number
-    || file.mobile || file.mobileNo || file.mobile_no || file.phone || file.phoneNumber || file.phone_number
-    || file.clientSnapshot?.contactNo || file.clientSnapshot?.contact_no || file.clientSnapshot?.contactNumber
-    || file.clientSnapshot?.mobile || file.clientSnapshot?.mobileNo || file.clientSnapshot?.phone
-    || file.client_snapshot?.contactNo || file.client_snapshot?.contact_no || file.client_snapshot?.contactNumber
-    || file.client_snapshot?.mobile || file.client_snapshot?.mobileNo || file.client_snapshot?.phone
-    || "Not recorded";
+  const contactNumber = fileContactNumber(file);
   const email = file.email || file.emailId || file.email_id || file.clientEmail || file.client_email
     || file.clientSnapshot?.email || file.clientSnapshot?.emailId || file.clientSnapshot?.email_id
     || file.client_snapshot?.email || file.client_snapshot?.emailId || file.client_snapshot?.email_id
@@ -7981,14 +7985,14 @@ function activeTimeline(file = {}) {
 }
 
 function activeExpandedDetails(file = {}) {
-  const assignee = currentFileAssignee(file);
   const workStarted = file.workStartedDate || file.work_started_date || (file.stages?.WIP ? file.workAllotmentDate : "");
+  const remarks = file.remarks || "No remarks";
   return `<div class="active-expanded-grid">
     <div><span>Work Started</span><strong>${escapeHtml(displayDate(workStarted) || "Not recorded")}</strong></div>
-    <div><span>Assignment</span><strong>${escapeHtml(isReassignedFile(file) ? "Reassigned" : (hasAssignedStaffValue(assignee.name) ? "Assigned" : "Not Assigned"))}</strong></div>
     <div><span>Mode</span><strong>${escapeHtml(file.mode || "Not recorded")}</strong></div>
     <div><span>Last Updated</span><strong>${escapeHtml(displayDate(file.lastUpdatedDate || file.updated_at) || "-")}</strong></div>
-    <div class="active-expanded-remarks"><span>Remarks</span><strong>${escapeHtml(file.remarks || "No remarks")}</strong></div>
+    <div class="active-expanded-remarks"><span>Remarks</span><strong title="${escapeHtml(remarks)}">${escapeHtml(remarks)}</strong></div>
+    <div><span>Contact No</span><strong>${escapeHtml(String(fileContactNumber(file)))}</strong></div>
   </div>`;
 }
 

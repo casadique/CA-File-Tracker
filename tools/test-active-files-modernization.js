@@ -56,6 +56,18 @@ assert.match(source, /if \(f\.listView === "active" && !isDashboardActiveFile\(f
 const expandedDetails = block("function activeExpandedDetails", "\\nfunction activeDesktopRows");
 assert.doesNotMatch(expandedDetails, /<span>DP<\/span>|<span>SP<\/span>/,
   "Active Files expanded details must not show DP or SP");
+for (const heading of ["Work Started", "Mode", "Last Updated", "Remarks", "Contact No"]) {
+  assert.match(expandedDetails, new RegExp(`<span>${heading}</span>`),
+    `Active Files expanded details must show ${heading}`);
+}
+assert.doesNotMatch(expandedDetails, /<span>Assignment<\/span>/,
+  "Active Files expanded details must not show Assignment");
+assert.match(expandedDetails, /fileContactNumber\(file\)/,
+  "Active Files expanded details must resolve the saved client contact number");
+assert.match(styles, /\.active-expanded-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(125px, \.8fr\)[^;]+minmax\(150px, 1fr\)/,
+  "All five Active Files expanded fields must stay in one desktop row");
+assert.doesNotMatch(styles, /\.active-expanded-remarks\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/,
+  "Active Files remarks must not move onto a separate row");
 
 for (const css of [
   ".active-table-wrap", ".active-modern-table", ".active-actions-column", ".active-mobile-card",
