@@ -6,13 +6,16 @@ const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
-for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted"]) {
+for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Collection Details", "Payment &amp; Reference", "Search Collections", "collection-register-modern"]) {
   assert.ok(app.includes(token), `Missing modern Transactions UI token: ${token}`);
 }
 assert.doesNotMatch(app.slice(app.indexOf("function expenseOverviewCard"), app.indexOf("function normalizeCollectionType")), /transactionSparkline\(/,
   "Balance cards must not render decorative sparklines");
 assert.match(styles, /\.expense-overview-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4/);
 assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.reconciliation-mobile-list\s*\{\s*display:\s*grid/);
+for (const selector of [".collection-form-modern", ".collection-filter-grid", ".collection-register-table", ".collection-type-badge"]) {
+  assert.ok(styles.includes(`${selector} {`), `Missing modern Collections style: ${selector}`);
+}
 
 let state = { files: [], expenses: [], otherCashCollections: [], openingBalances: [], accountTransfers: [], cashReconciliations: [], auditLog: [] };
 const appStatePath = require.resolve(path.join(root, "src/services/appStateService.js"));

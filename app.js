@@ -17928,26 +17928,45 @@ function openOpeningBalanceModal() {
 
 function renderCashCollectionsTab() {
   const rows = filteredCashCollections();
+  const editing = editingCashCollection();
   return `
     <div class="transaction-workspace">
       <section class="expense-stack transaction-main-column">
-        <form id="cashCollectionForm" class="expense-form collection-form">
-          <div class="expense-card-head">
-            <h3>${state.filters.editCashId ? "Edit Collection" : "Add Collection"}</h3>
-            <p>Record cash, bank or other collections</p>
-          </div>
-          ${expenseDateField("cashDate", "Collection Date", editingCashCollection()?.date || todayDate())}
-          ${collectionTypeSelect("cashCollectionType", "Collection Type", editingCashCollection()?.collectionType || editingCashCollection()?.collection_type || "other_cash_collection")}
-          ${cashReceivedFromField(editingCashCollection()?.receivedFrom || "")}
-          ${expenseInput("cashAmount", "Amount", editingCashCollection()?.amount || "", "number", "0.01", "compact-field amount-field")}
-          ${expenseSelect("cashModeEntry", "Payment Method", paymentModes(), editingCashCollection()?.paymentMethod || editingCashCollection()?.payment_method || editingCashCollection()?.mode || "Cash")}
-          ${financeAccountSelect("cashAccountEntry", "Account", transactionAccountKey(editingCashCollection() || {}, "cash"))}
-          ${expenseInput("cashVoucherNo", "Ref No.", editingCashCollection()?.voucherNo || "", "text", "", "compact-field ref-field")}
-          ${collectionParticularsSelect(editingCashCollection()?.particulars || "Fee Collection")}
-          ${expenseInput("cashCollectedBy", "Collected By", editingCashCollection()?.createdBy || editingCashCollection()?.enteredBy || state.currentUser || "", "text")}
-          ${expenseTextarea("cashRemarks", "Remarks", editingCashCollection()?.remarks || "")}
-          ${cashAttachmentField(editingCashCollection())}
-          <div class="action-row">
+        <form id="cashCollectionForm" class="expense-form collection-form collection-form-modern">
+          <header class="collection-form-head">
+            <div class="collection-form-title">
+              <span class="collection-form-icon" aria-hidden="true">${transactionIcon("arrow-down")}</span>
+              <div><span>Collections</span><h3>${state.filters.editCashId ? "Edit Collection" : "Add Collection"}</h3><p>Record money received and assign it to the correct account.</p></div>
+            </div>
+            <span class="collection-form-status">${state.filters.editCashId ? "Editing record" : "New entry"}</span>
+          </header>
+          <section class="collection-form-section" aria-labelledby="collectionDetailsHeading">
+            <div class="collection-section-head"><div><span>01</span><h4 id="collectionDetailsHeading">Collection Details</h4></div><p>Who paid, why it was received and the amount.</p></div>
+            <div class="collection-fields-grid collection-details-grid">
+              ${expenseDateField("cashDate", "Collection Date", editing?.date || todayDate())}
+              ${collectionTypeSelect("cashCollectionType", "Collection Type", editing?.collectionType || editing?.collection_type || "other_cash_collection")}
+              ${cashReceivedFromField(editing?.receivedFrom || "")}
+              ${expenseInput("cashAmount", "Amount", editing?.amount || "", "number", "0.01", "compact-field amount-field")}
+              ${collectionParticularsSelect(editing?.particulars || "Fee Collection")}
+            </div>
+          </section>
+          <section class="collection-form-section" aria-labelledby="collectionPaymentHeading">
+            <div class="collection-section-head"><div><span>02</span><h4 id="collectionPaymentHeading">Payment &amp; Reference</h4></div><p>Choose the method and destination account.</p></div>
+            <div class="collection-fields-grid collection-payment-grid">
+              ${expenseSelect("cashModeEntry", "Payment Method", paymentModes(), editing?.paymentMethod || editing?.payment_method || editing?.mode || "Cash")}
+              ${financeAccountSelect("cashAccountEntry", "Account", transactionAccountKey(editing || {}, "cash"))}
+              ${expenseInput("cashVoucherNo", "Ref No.", editing?.voucherNo || "", "text", "", "compact-field ref-field")}
+              ${expenseInput("cashCollectedBy", "Collected By", editing?.createdBy || editing?.enteredBy || state.currentUser || "", "text")}
+            </div>
+          </section>
+          <section class="collection-form-section collection-supporting-section" aria-labelledby="collectionNotesHeading">
+            <div class="collection-section-head"><div><span>03</span><h4 id="collectionNotesHeading">Notes &amp; Attachment</h4></div><p>Add optional supporting information.</p></div>
+            <div class="collection-supporting-grid">
+              ${expenseTextarea("cashRemarks", "Remarks", editing?.remarks || "")}
+              ${cashAttachmentField(editing)}
+            </div>
+          </section>
+          <div class="action-row collection-form-actions">
             <button class="secondary-button" type="button" id="resetCashForm">${state.filters.editCashId ? "Cancel" : "Reset"}</button>
             <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editCashId ? "Update Collection" : "Save Collection"}</button>
           </div>
@@ -18241,19 +18260,20 @@ function renderExpenseFilters() {
 
 function renderCashFilters() {
   return `
-    <div class="filters colourful-filters expense-filters">
-      ${expenseFilterInput("cashParticulars", "Search")}
-      ${expenseFilterInput("cashFrom", "From Date", "date")}
-      ${expenseFilterInput("cashTo", "To Date", "date")}
-      ${expenseFilterSelect("cashMode", "Payment Method", ["", ...paymentModes()])}
-      ${financeAccountFilterSelect("cashAccount", "Account")}
-      ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", ...collectionTypeOptions.map((option) => option.label)])}
-      ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
-      <div class="field"><label>Apply</label><button class="secondary-button" id="cashSearch">Apply Filter</button></div>
-      <div class="field"><label>Clear</label><button class="secondary-button" id="cashReset">Clear Filter</button></div>
-      <div class="field"><label>Excel</label><button class="secondary-button" id="cashExcel">Excel</button></div>
-      <div class="field"><label>PDF</label><button class="secondary-button" id="cashPdf">PDF</button></div>
-      <div class="field"><label>Print</label><button class="secondary-button" id="cashPrint">Print</button></div>
+    <div class="collection-filter-panel">
+      <div class="collection-filter-grid">
+        <div class="field collection-search-field"><label>Search Collections</label><div class="collection-search-control"><span aria-hidden="true">&#128269;</span><input data-expense-filter="cashParticulars" value="${escapeHtml(state.filters.cashParticulars || "")}" placeholder="Received from, particulars, reference or user"></div></div>
+        ${expenseFilterInput("cashFrom", "From Date", "date")}
+        ${expenseFilterInput("cashTo", "To Date", "date")}
+        ${expenseFilterSelect("cashMode", "Payment Method", ["", ...paymentModes()])}
+        ${financeAccountFilterSelect("cashAccount", "Account")}
+        ${expenseFilterSelect("cashCollectionTypeFilter", "Collection Type", ["", ...collectionTypeOptions.map((option) => option.label)])}
+        ${expenseFilterInput("cashCollectedByFilter", "Collected By")}
+      </div>
+      <div class="collection-filter-actions">
+        <div><button class="secondary-button" id="cashReset" type="button">Clear Filters</button><button class="primary-button collection-apply-button" id="cashSearch" type="button">Apply Filters</button></div>
+        <div class="collection-export-actions" aria-label="Collection report exports"><button class="secondary-button collection-excel-button" id="cashExcel" type="button">Export Excel</button><button class="secondary-button collection-pdf-button" id="cashPdf" type="button">Export PDF</button><button class="secondary-button collection-print-button" id="cashPrint" type="button">Print</button></div>
+      </div>
     </div>
   `;
 }
@@ -19105,7 +19125,11 @@ function filteredCashCollections() {
   return activeCashCollections().filter((item) => {
     if (state.filters.cashFrom && item.date < state.filters.cashFrom) return false;
     if (state.filters.cashTo && item.date > state.filters.cashTo) return false;
-    if (state.filters.cashParticulars && !item.particulars.toLowerCase().includes(state.filters.cashParticulars.toLowerCase())) return false;
+    if (state.filters.cashParticulars) {
+      const needle = state.filters.cashParticulars.toLowerCase();
+      const haystack = [item.particulars, item.receivedFrom, item.voucherNo, item.createdBy, item.enteredBy, collectionTypeLabel(item.collectionType || item.collection_type), normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode), financeAccountLabel(transactionAccountKey(item))].join(" ").toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
     if (state.filters.cashMode && normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode) !== state.filters.cashMode) return false;
     if (state.filters.cashAccount && transactionAccountKey(item) !== state.filters.cashAccount) return false;
     if (state.filters.cashCollectionTypeFilter && collectionTypeLabel(item.collectionType || item.collection_type) !== state.filters.cashCollectionTypeFilter) return false;
@@ -19132,7 +19156,7 @@ function renderCashCollectionTable(rows) {
   if (!rows.length) return empty("No cash collection entries found.");
   const total = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const canDelete = ["Admin", "Manager"].includes(state.currentRole);
-  return `<div class="transaction-table-head"><span>${rows.length} record(s)</span><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection Type</th><th>Received From</th><th class="wide-col">Particulars</th><th class="ref-col">Ref No.</th><th>Payment Method</th><th>Account</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td class="expense-date-col">${expenseDisplayDate(item.date)}</td><td>${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</td><td>${escapeHtml(item.receivedFrom)}</td><td class="wide-cell">${escapeHtml(item.particulars)}</td><td class="ref-cell">${escapeHtml(item.voucherNo)}</td><td>${escapeHtml(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode))}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.createdBy || item.enteredBy || "")}</td><td class="action-col"><button title="View" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit" class="mini-button" data-edit-cash="${item.id}">Edit</button>${canDelete ? `<button title="Delete" class="mini-button danger" data-delete-cash="${item.id}">Delete</button>` : ""}</td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div>`;
+  return `<section class="collection-register-modern"><div class="transaction-table-head collection-register-head"><div><span>Collection Register</span><p>${rows.length} record(s) shown</p></div><strong>Total Collections: ${rupee(total)}</strong></div><div class="table-wrap collection-register-wrap"><table class="file-table expense-table transaction-table collection-register-table"><thead><tr><th>SN</th><th>Date</th><th>Collection</th><th>Received From</th><th>Payment</th><th class="ref-col">Reference</th><th class="amount-col">Amount</th><th>Collected By</th><th class="action-col">Actions</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td data-label="SN">${index + 1}</td><td data-label="Date" class="expense-date-col">${expenseDisplayDate(item.date)}</td><td data-label="Collection"><div class="collection-register-primary"><span class="collection-type-badge">${escapeHtml(collectionTypeLabel(item.collectionType || item.collection_type))}</span><strong>${escapeHtml(item.particulars || "-")}</strong></div></td><td data-label="Received From"><strong class="collection-received-from">${escapeHtml(item.receivedFrom || "-")}</strong></td><td data-label="Payment"><div class="collection-payment-cell"><strong>${escapeHtml(normalizeTransactionPaymentMethod(item.paymentMethod || item.payment_method || item.mode))}</strong><span>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</span></div></td><td data-label="Reference" class="ref-cell">${escapeHtml(item.voucherNo || "-")}</td><td data-label="Amount" class="amount-cell">${rupee(item.amount)}</td><td data-label="Collected By">${escapeHtml(item.createdBy || item.enteredBy || "-")}</td><td data-label="Actions" class="action-col"><div class="collection-row-actions"><button title="View collection" class="mini-button" data-view-cash="${item.id}">View</button><button title="Edit collection" class="mini-button" data-edit-cash="${item.id}">Edit</button>${canDelete ? `<button title="Delete collection" class="mini-button danger" data-delete-cash="${item.id}">Delete</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div><div class="transaction-table-foot">Showing ${rows.length} newest entr${rows.length === 1 ? "y" : "ies"}</div></section>`;
 }
 
 function resetExpenseFilters() {
