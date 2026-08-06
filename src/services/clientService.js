@@ -141,6 +141,80 @@ function clientPayload(input = {}) {
   };
 }
 
+const IMPORT_REGISTRATION_RULES = [
+  { inputKey: "panRegNo", label: "PAN", normalizedKey: "normalized_pan", normalize: normalizePan, pattern: /^[A-Z]{5}[0-9]{4}[A-Z]$/ },
+  { inputKey: "tan", label: "TAN", normalizedKey: "normalized_tan", normalize: normalizeRegistration, pattern: /^[A-Z]{4}[0-9]{5}[A-Z]$/ },
+  { inputKey: "gstNo", label: "GST No.", normalizedKey: "normalized_gst_no", normalize: normalizeRegistration, pattern: /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/ },
+  { inputKey: "cin", label: "CIN", normalizedKey: "normalized_cin", normalize: normalizeRegistration, pattern: /^[A-Z][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/ },
+  { inputKey: "otherRegnNo", label: "Other Registration No.", normalizedKey: "normalized_other_regn_no", normalize: normalizeRegistration },
+];
+
+function retainImportDefects(input, defects = []) {
+  if (!defects.length) return input;
+  const note = `Excel import retained unstructured values: ${defects.map(({ label, value }) => `${label}: ${cleanText(value)}`).join("; ")}`;
+  return { ...input, remarks: [cleanText(input.remarks), note].filter(Boolean).join(" | ") };
+}
+
+function prepareTolerantImportRow(source = {}, rowNumber = 0, usedRegistrations = {}) {
+  let input = { ...source };
+  const warnings = [];
+  const defects = [];
+  const originalName = cleanText(input.clientName || input.client_name);
+  if (!originalName) {
+    input.clientName = cleanText(input.contactPerson || input.contact_person)
+      || normalizePan(input.panRegNo || input.pan_reg_no)
+      || normalizeRegistration(input.gstNo || input.gst_no)
+      || cleanText(input.email)
+      || `Imported Client Row ${rowNumber || "Unknown"}`;
+    warnings.push(`Client Name was missing; imported as "${input.clientName}".`);
+  }
+  const suppliedTypes = parseClientTypes(input.clientTypes ?? input.client_types ?? input.clientType ?? input.client_type);
+  if (!suppliedTypes.length) {
+    input.clientTypes = ["Other Client"];
+    warnings.push("Client Type was missing; imported as Other Client.");
+  }
+  const email = cleanText(input.email).toLowerCase();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    defects.push({ label: "Email", value: input.email });
+    input.email = "";
+    warnings.push("Invalid Email was retained in Remarks; the remaining client details were imported.");
+  }
+  const contact = cleanText(input.contactNumber || input.contact_number);
+  const contactDigits = contact.replace(/\D/g, "");
+  if (contact && (contactDigits.length < 7 || contactDigits.length > 15)) {
+    defects.push({ label: "Contact Number", value: contact });
+    input.contactNumber = "";
+    input.contact_number = "";
+    warnings.push("Invalid Contact Number was retained in Remarks; the remaining client details were imported.");
+  }
+  for (const rule of IMPORT_REGISTRATION_RULES) {
+    const raw = input[rule.inputKey] ?? input[rule.inputKey.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] ?? "";
+    const normalized = rule.normalize(raw);
+    if (!normalized || isRegistrationPlaceholder(normalized)) continue;
+    const registry = usedRegistrations[rule.normalizedKey] || (usedRegistrations[rule.normalizedKey] = new Set());
+    const invalid = rule.pattern && !rule.pattern.test(normalized);
+    const duplicate = registry.has(normalized);
+    if (invalid || duplicate) {
+      defects.push({ label: rule.label, value: raw });
+      input[rule.inputKey] = "";
+      input[rule.inputKey.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] = "";
+      warnings.push(`${invalid ? "Invalid" : "Duplicate"} ${rule.label} was retained in Remarks; the remaining client details were imported.`);
+    } else {
+      registry.add(normalized);
+    }
+  }
+  input = retainImportDefects(input, defects);
+  return { input, warnings };
+}
+
+async function existingImportRegistrations() {
+  const columns = IMPORT_REGISTRATION_RULES.map((rule) => rule.normalizedKey).join(",");
+  const { data, error } = await supabaseAdmin.from("clients").select(columns);
+  if (error) throw databaseError(error);
+  return Object.fromEntries(IMPORT_REGISTRATION_RULES.map((rule) => [rule.normalizedKey,
+    new Set((data || []).map((row) => row[rule.normalizedKey]).filter(Boolean))]));
+}
+
 function parseClientTypes(value) {
   const values = Array.isArray(value) ? value : String(value || "").split(/\s*\|\s*|\s*,\s*/);
   return [...new Map(values.map(cleanText).filter(Boolean).map((item) => [normalizeName(item), item])).values()];
@@ -359,22 +433,31 @@ async function importClients(rows = [], actorId) {
   const beforeTypes = new Set(mastersBefore.clientTypes.map((item) => normalizeName(item.name)));
   const beforeConstitutions = new Set(mastersBefore.constitutions.map((item) => normalizeName(item.name)));
   const beforeCareOf = new Set(mastersBefore.careOf.map(normalizeName));
-  const summary = { total: rows.length, added: 0, skipped: 0, warnings: [] };
+  const summary = { total: rows.length, added: 0, repaired: 0, skipped: 0, warnings: [] };
   const importedCareOf = new Set();
   const importedConstitutions = new Map();
   const created = [];
-  const typeIdCache = await prepareImportedClientTypes(rows);
-  const prefixes = [...new Set(rows.map(clientPrefix))];
+  const usedRegistrations = await existingImportRegistrations();
+  const preparedRows = rows.map((row, index) => {
+    const prepared = prepareTolerantImportRow(row, index + 2, usedRegistrations);
+    if (prepared.warnings.length) {
+      summary.repaired += 1;
+      summary.warnings.push(...prepared.warnings.map((message) => ({ row: index + 2, message })));
+    }
+    return prepared.input;
+  });
+  const typeIdCache = await prepareImportedClientTypes(preparedRows);
+  const prefixes = [...new Set(preparedRows.map(clientPrefix))];
   const nextCodes = new Map(await Promise.all(prefixes.map(async (prefix) => {
     const next = await nextClientCode(prefix);
     return [prefix, Number(String(next).split("/")[1]) || 1];
   })));
   for (let index = 0; index < rows.length; index += 1) {
     try {
-      const prefix = clientPrefix(rows[index]);
+      const prefix = clientPrefix(preparedRows[index]);
       const sequence = nextCodes.get(prefix) || 1;
       nextCodes.set(prefix, sequence + 1);
-      const result = await createClient(rows[index], actorId, {
+      const result = await createClient(preparedRows[index], actorId, {
         acceptWarnings: true,
         skipDuplicateChecks: true,
         skipTypeAssignment: true,
@@ -385,7 +468,7 @@ async function importClients(rows = [], actorId) {
       });
       if (result.client.care_of) importedCareOf.add(result.client.care_of);
       if (result.client.constitution) importedConstitutions.set(normalizeName(result.client.constitution), result.client.constitution);
-      created.push({ client: result.client, source: rows[index] });
+      created.push({ client: result.client, source: preparedRows[index] });
       summary.added += 1;
     } catch (error) {
       summary.skipped += 1;
@@ -746,4 +829,4 @@ function validationError(message) { const error = new Error(message); error.stat
 function serviceError(message, status) { const error = new Error(message); error.status = status; return error; }
 function databaseError(error) { if (["42P01", "42703"].includes(error?.code)) { const next = new Error("Client Master secure database migration is required."); next.status = 503; return next; } return error; }
 
-module.exports = { listClients, allClients, clientsForExport, backupClientsSecure, getClient, createClient, importClients, restoreClients, updateClient, setClientStatus, clientProfile, clientAudit, recordClientSelection, migrationPreview, applyMigration, linkUnlinkedFiles, syncClientToActiveFiles, getClientCredentials, updateClientCredentials, listClientMasters, saveClientMasterValue, cleanText, normalizeName, normalizePan, normalizeRegistration, parseClientTypes, clientPayload, snapshot };
+module.exports = { listClients, allClients, clientsForExport, backupClientsSecure, getClient, createClient, importClients, restoreClients, updateClient, setClientStatus, clientProfile, clientAudit, recordClientSelection, migrationPreview, applyMigration, linkUnlinkedFiles, syncClientToActiveFiles, getClientCredentials, updateClientCredentials, listClientMasters, saveClientMasterValue, cleanText, normalizeName, normalizePan, normalizeRegistration, parseClientTypes, clientPayload, prepareTolerantImportRow, snapshot };

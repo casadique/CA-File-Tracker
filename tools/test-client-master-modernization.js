@@ -76,9 +76,15 @@ assert.match(source, /preserveIndependentPage = activePage === "clientMaster"[\s
   "Background central-state refreshes must not rebuild and blink the independent Client Master page.");
 assert.match(service, /CLIENT_MASTER_CACHE_TTL_MS[\s\S]*?clientMastersInflight[\s\S]*?state->careOfList/,
   "Client master filters must reuse a short cache and fetch only the required care-of state field.");
-assert.match(service, /prepareImportedClientTypes\(rows\)[\s\S]*?skipDuplicateChecks:\s*true[\s\S]*?skipTypeAssignment:\s*true[\s\S]*?assignImportedClientTypes\(created, typeIdCache\)/,
+assert.match(service, /prepareImportedClientTypes\(preparedRows\)[\s\S]*?skipDuplicateChecks:\s*true[\s\S]*?skipTypeAssignment:\s*true[\s\S]*?assignImportedClientTypes\(created, typeIdCache\)/,
   "Excel import must prepare master values once and batch client-type assignments.");
 assert.match(source, /showClientImportProgress\(clients\.length\)[\s\S]*?Importing Client Master/,
   "Longer Client Master imports must show a clear in-progress state.");
+assert.match(service, /function prepareTolerantImportRow[\s\S]*?Client Name was missing[\s\S]*?Other Client[\s\S]*?Invalid Email was retained in Remarks[\s\S]*?Invalid Contact Number was retained in Remarks/,
+  "Client import must repair missing required values and retain invalid optional contact details without rejecting the row.");
+assert.match(service, /IMPORT_REGISTRATION_RULES[\s\S]*?Duplicate.*retained in Remarks[\s\S]*?existingImportRegistrations/,
+  "Client import must preserve malformed or duplicate registration values in Remarks and continue importing the row.");
+assert.match(source, /Imported with fixes[\s\S]*?Import Notes/,
+  "Client import results must distinguish repaired rows from skipped rows.");
 
-console.log("Client Master filters, toolbar, GST User import/export, performance, responsive layout and action menu checks passed.");
+console.log("Client Master filters, toolbar, tolerant import, GST User import/export, performance, responsive layout and action menu checks passed.");
