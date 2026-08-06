@@ -15965,7 +15965,7 @@ body,
 .collection-register-table th:nth-child(8) { width: 145px; }
 .collection-register-table th:nth-child(9), .expense-register-table th:nth-child(9) { width: 130px; }
 .collection-register-table th:nth-child(10), .expense-register-table th:nth-child(10) { width: 150px; }
-.collection-register-table th:nth-child(11), .expense-register-table th:nth-child(11) { width: 152px; }
+.collection-register-table th:nth-child(11), .expense-register-table th:nth-child(11) { width: 176px; }
 .expense-register-table th:nth-child(3) { width: 190px; }
 .expense-register-table th:nth-child(4) { width: 190px; }
 .expense-register-table th:nth-child(5) { width: 240px; }
@@ -15979,9 +15979,35 @@ body,
 .transaction-value-badge.type { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
 .transaction-value-badge.method { color: #4338ca; background: #eef2ff; border-color: #c7d2fe; }
 .transaction-value-badge.warning { color: #92400e; background: #fffbeb; border-color: #fbbf24; }
-.transaction-row-actions { justify-content: flex-end; }
+.transaction-register-modern th.action-col,
+.transaction-register-modern td.action-col {
+  position: sticky;
+  right: 0;
+  z-index: 4;
+  min-width: 176px;
+  background: #fff;
+  box-shadow: -8px 0 14px -12px rgba(15, 23, 42, .5);
+}
+.transaction-register-modern th.action-col { z-index: 8; background: #e8eef7; }
+.transaction-register-modern tbody tr:nth-child(even) td.action-col { background: #f8fbff; }
+.transaction-register-modern tbody tr:hover td.action-col { background: #eef6ff; }
+.transaction-row-actions { width: 100%; justify-content: center; gap: 8px; flex-wrap: nowrap; }
 .transaction-row-actions .billed-primary-action,
 .transaction-row-actions .billed-menu-toggle { min-height: 40px; }
+.transaction-row-actions .billed-primary-action { min-width: 88px; padding-inline: 10px; }
+.transaction-row-actions .transaction-menu-toggle {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  border: 2px solid #60a5fa;
+  background: #eff6ff;
+  color: #174ea6;
+  box-shadow: 0 3px 9px rgba(37, 99, 235, .14);
+}
+.transaction-row-actions .transaction-menu-toggle:hover,
+.transaction-row-actions .transaction-menu-toggle:focus-visible,
+.transaction-row-actions .transaction-menu-toggle[aria-expanded="true"] { border-color: #1d4ed8; background: #dbeafe; color: #123d82; }
+.transaction-row-actions .transaction-menu-toggle .billed-action-icon { width: 19px; height: 19px; }
 
 .transaction-pagination { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: -1px; padding: 11px 14px; color: #64748b; background: #fff; border: 1px solid #dbe4f0; border-radius: 0 0 14px 14px; font-size: 11px; }
 .transaction-pagination > div { display: flex; align-items: center; gap: 8px; }
@@ -16051,6 +16077,10 @@ body,
   .transaction-register-modern table td { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 11px; padding: 7px 0; border: 0; text-align: left; }
   .transaction-register-modern table td::before { color: #64748b; font-size: 9px; font-weight: 900; letter-spacing: .03em; text-transform: uppercase; content: attr(data-label); }
   .transaction-register-modern table .amount-cell { text-align: left; }
+  .transaction-register-modern th.action-col,
+  .transaction-register-modern td.action-col { position: static; min-width: 0; background: transparent; box-shadow: none; }
+  .transaction-register-modern tbody tr:nth-child(even) td.action-col,
+  .transaction-register-modern tbody tr:hover td.action-col { background: transparent; }
   .transaction-row-actions { justify-content: flex-start; }
   .transaction-pagination { align-items: stretch; flex-direction: column; }
   .transaction-pagination > div { justify-content: space-between; }
