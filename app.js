@@ -10493,7 +10493,7 @@ function correctionRequiredDesktopRows(files = []) {
       <td class="correction-required-service"><strong>${escapeHtml(file.serviceType || "-")}</strong><span>FY ${escapeHtml(fileFy(file) || "NA")} · C/o ${escapeHtml(file.careOf || "Direct")}</span></td>
       <td class="correction-required-summary"><strong>${escapeHtml(details.reason)}</strong><span>Returned ${escapeHtml(displayDate(details.returnedOn) || "-")} by ${escapeHtml(details.returnedBy)}</span></td>
       <td class="correction-required-staff"><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong><span>Completed ${escapeHtml(displayDate(workCompletedDate(file)) || "-")}</span></td>
-      <td class="correction-required-status"><span class="badge overdue">${escapeHtml(details.status)}</span><span class="badge priority-${String(file.priority || "Medium").toLowerCase()}">${escapeHtml(file.priority || "Medium")}</span><small>${escapeHtml(correctionRequiredAgeLabel(file))}</small></td>
+      <td class="correction-required-status"><span class="badge overdue">${escapeHtml(details.status)}</span></td>
       <td class="correction-required-actions-column"><div class="action-row">${correctionRequiredFileActions(file)}</div></td>
     </tr><tr class="correction-required-details-row" hidden><td colspan="7">${correctionRequiredExpandedDetails(file)}</td></tr>`;
   }).join("");
@@ -10503,7 +10503,7 @@ function correctionRequiredMobileCard(file = {}, index = 0) {
   const details = correctionRequiredDetails(file);
   return `<article class="correction-required-mobile-card${index % 2 ? " is-alt" : ""}" data-correction-row-file="${escapeHtml(file.id || "")}">
     <div class="correction-required-mobile-head"><button type="button" class="billed-expand-toggle" data-correction-row-toggle aria-label="Expand correction details for ${escapeHtml(file.name || "file")}" aria-expanded="false"><span aria-hidden="true">›</span></button><div><h3>${escapeHtml(file.name || "-")}</h3><p>${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</p><span>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")}</span></div></div>
-    <div class="correction-required-mobile-summary"><div><span>Returned On</span><strong>${escapeHtml(displayDate(details.returnedOn) || "-")}</strong></div><div><span>Returned By</span><strong>${escapeHtml(details.returnedBy)}</strong></div><div><span>Assigned Staff</span><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong></div><div><span>Aging</span><strong>${escapeHtml(correctionRequiredAgeLabel(file))}</strong></div></div>
+    <div class="correction-required-mobile-summary"><div><span>Returned On</span><strong>${escapeHtml(displayDate(details.returnedOn) || "-")}</strong></div><div><span>Returned By</span><strong>${escapeHtml(details.returnedBy)}</strong></div><div><span>Assigned Staff</span><strong>${escapeHtml(currentFileAssignee(file).name || details.returnedTo)}</strong></div></div>
     <div class="correction-required-mobile-reason"><span>Correction Required</span><strong>${escapeHtml(details.reason)}</strong></div>
     <div class="correction-required-mobile-actions">${correctionRequiredFileActions(file)}</div><div class="correction-required-mobile-details" hidden>${correctionRequiredExpandedDetails(file)}</div>
   </article>`;

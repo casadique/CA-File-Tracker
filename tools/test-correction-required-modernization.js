@@ -95,6 +95,16 @@ assert.match(table, /<th class="correction-required-service">Service<\/th>/,
   "Header and body must share the Service column width class");
 assert.match(table, /correction-required-details-row" hidden><td colspan="7">/,
   "Expanded details must preserve the seven-column table geometry");
+const desktopRows = source.match(/function correctionRequiredDesktopRows[\s\S]*?(?=\nfunction correctionRequiredMobileCard)/)?.[0] || "";
+assert.doesNotMatch(desktopRows, /priority-/,
+  "The Correction Required results table must not display the priority badge");
+assert.doesNotMatch(desktopRows, /correctionRequiredAgeLabel/,
+  "The Correction Required results table must not display correction aging");
+const mobileCard = source.match(/function correctionRequiredMobileCard[\s\S]*?(?=\nfunction renderCorrectionRequiredTable)/)?.[0] || "";
+assert.doesNotMatch(mobileCard, />Aging</,
+  "The Correction Required mobile card must not display correction aging");
+assert.doesNotMatch(mobileCard, /correctionRequiredAgeLabel/,
+  "The Correction Required mobile card must not render an aging value");
 assert.match(styles, /\.correction-required-mobile-head > div\s*\{\s*min-width:\s*0/,
   "Mobile client content must be allowed to wrap inside the card");
 assert.match(styles, /\.correction-required-mobile-head h3\s*\{[^}]*overflow-wrap:\s*anywhere[^}]*word-break:\s*normal/,
@@ -115,6 +125,8 @@ for (const requirement of [
   /dataKey: "aging"/,
   /dataKey: "remarks"/,
 ]) assert.match(report, requirement);
+assert.match(report, /aging:\s*correctionRequiredAgeLabel\(file\)/,
+  "Correction aging must remain available in exported reports");
 assert.match(report, /record\.ageDays >= 8 && record\.ageDays <= 15/,
   "Missing returned dates must not enter an aging group");
 

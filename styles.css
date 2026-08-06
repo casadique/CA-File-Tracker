@@ -1620,7 +1620,6 @@ th {
 .correction-required-staff { width: 155px; padding-left: 14px !important; }
 .correction-required-modern-table :is(th, td).correction-required-status { width: 135px; text-align: center; }
 .correction-required-status .badge { display: inline-flex; margin: 2px; }
-.correction-required-status small { display: block; margin-top: 5px; color: #b45309; font-size: 9px; font-weight: 800; }
 
 .correction-required-actions-column {
   position: sticky !important;
