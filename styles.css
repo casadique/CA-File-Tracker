@@ -1499,8 +1499,8 @@ th {
 }
 
 .correction-required-modern-table {
-  width: 100%;
-  min-width: 1320px;
+  width: max-content;
+  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -1532,12 +1532,13 @@ th {
   color: #17233a;
   font-size: 12px;
   vertical-align: middle;
+  text-align: left;
 }
 
 .correction-required-modern-table tbody .correction-required-file-row:nth-of-type(4n + 3) td { background: #f8fafc; }
 .correction-required-modern-table tbody .correction-required-file-row:hover td { background: #eff6ff; }
 
-.correction-required-sn {
+.correction-required-modern-table :is(th, td).correction-required-sn {
   position: sticky;
   left: 0;
   z-index: 3;
@@ -1559,32 +1560,46 @@ th {
   box-shadow: 0 2px 6px rgba(15, 42, 95, .12);
 }
 
-.correction-required-modern-table thead .correction-required-sn { z-index: 7; background: #e8eef7; }
-
-.correction-required-client {
+.correction-required-modern-table :is(th, td).correction-required-expand {
   position: sticky;
   left: 55px;
+  z-index: 4;
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  padding: 8px !important;
+  text-align: center !important;
+  background: #fff !important;
+  box-shadow: 1px 0 0 #d7e1ef;
+}
+
+.correction-required-modern-table thead .correction-required-expand {
+  z-index: 7;
+  background: #e8eef7 !important;
+}
+
+.correction-required-modern-table thead .correction-required-sn { z-index: 7; background: #e8eef7; }
+
+.correction-required-modern-table :is(th, td).correction-required-client {
+  position: sticky;
+  left: 99px;
   z-index: 3;
-  width: 270px;
-  min-width: 270px;
-  max-width: 270px;
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
   padding: 10px 12px !important;
   box-shadow: 1px 0 0 #cbd8ea;
 }
 
 .correction-required-modern-table thead .correction-required-client { z-index: 7; background: #e8eef7; }
-.correction-required-client-line {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  text-align: left;
-}
 .correction-required-client-content {
+  display: flex;
+  min-height: 42px;
   min-width: 0;
   overflow: hidden;
+  flex-direction: column;
+  justify-content: center;
+  text-align: left;
 }
 .correction-required-client-content .client-name {
   display: block;
@@ -1606,17 +1621,17 @@ th {
   word-break: normal;
 }
 
-.correction-required-service { width: 220px; min-width: 220px; max-width: 220px; }
+.correction-required-service { width: 220px; min-width: 220px; max-width: 220px; padding-left: 14px !important; }
 .correction-required-service strong,
 .correction-required-staff strong,
 .correction-required-summary strong { display: block; color: #102a56; font-weight: 780; line-height: 1.35; }
 .correction-required-service span,
 .correction-required-staff span,
 .correction-required-summary span { display: block; margin-top: 4px; color: #64748b; font-size: 10px; line-height: 1.35; }
-.correction-required-summary { width: 290px; }
+.correction-required-summary { width: 290px; padding-left: 14px !important; }
 .correction-required-summary strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.correction-required-staff { width: 155px; }
-.correction-required-status { width: 135px; text-align: center; }
+.correction-required-staff { width: 155px; padding-left: 14px !important; }
+.correction-required-modern-table :is(th, td).correction-required-status { width: 135px; text-align: center; }
 .correction-required-status .badge { display: inline-flex; margin: 2px; }
 .correction-required-status small { display: block; margin-top: 5px; color: #b45309; font-size: 9px; font-weight: 800; }
 
@@ -1628,10 +1643,12 @@ th {
   border-left: 1px solid #b9c9df !important;
   background: #fff !important;
   box-shadow: -4px 0 12px rgba(15, 42, 95, .06);
+  text-align: center !important;
 }
 
 .correction-required-modern-table thead .correction-required-actions-column { z-index: 8 !important; background: #e8eef7 !important; }
 .correction-required-actions { justify-content: flex-end; }
+.correction-required-actions-column .action-row { align-items: center; justify-content: center; }
 .correction-required-actions .billed-primary-action { min-width: 104px; }
 
 .correction-required-details-row td {
@@ -1640,6 +1657,9 @@ th {
   background: #f4f8ff !important;
   border-left: 3px solid #ef4444;
 }
+
+.correction-required-file-row:nth-of-type(4n + 3) .correction-required-expand { background: #f8fafc !important; }
+.correction-required-file-row:hover .correction-required-expand { background: #eff6ff !important; }
 
 .correction-required-expanded-grid {
   display: grid;
