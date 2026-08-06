@@ -94,6 +94,14 @@ async function main() {
     "All Staff roles must be allowed to view their Not Checked tab");
   assert.match(appSource, /listView === "notChecked" && isAuthorisedCheckingStaff\(\) \? \(state\.files \|\| \[\]\) : visibleFiles\(\)/,
     "Authorised checkers must receive all Not Checked files before filtering");
+  assert.match(appSource, /function filteredFileSource\(listView = state\.filters\.listView \|\| ""\)[\s\S]*?listView === "notChecked" && isAuthorisedCheckingStaff\(\)[\s\S]*?return \(state\.files \|\| \[\]\)\.filter/,
+    "The modern filtered page must source every Not Checked file for authorised checkers");
+  assert.match(appSource, /const authorisedAllNotCheckedView = isStaffLogin\(\) && f\.listView === "notChecked" && isAuthorisedCheckingStaff\(\)/,
+    "The active modern filter path must identify the special all-file view");
+  assert.match(appSource, /!authorisedAllNotCheckedView && !currentFileBelongsToUser/,
+    "The ordinary staff ownership filter must not remove cross-office Not Checked files for the three authorised checkers");
+  assert.match(appSource, /filteredFileSource\(\)\.map\(fileFy\)/,
+    "Not Checked filter options must be built from the same cross-office file source");
   assert.match(appSource, /const hasRecordedWorker = Boolean/);
   assert.match(appSource, /return !hasRecordedWorker && \(/,
     "Assigned Staff must be only a legacy fallback when identifying self-completed work");

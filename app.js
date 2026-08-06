@@ -3216,9 +3216,17 @@ function isRemovedFileRecord(file = {}) {
   return Boolean(file.is_removed || file.isRemoved || file.status === "Removed" || file.workflowStatus === "Removed" || file.stages?.Removed);
 }
 
+function filteredFileSource(listView = state.filters.listView || "") {
+  if (isStaffLogin() && listView === "notChecked" && isAuthorisedCheckingStaff()) {
+    return (state.files || []).filter((file) => !isRemovedFileRecord(file));
+  }
+  return visibleFiles();
+}
+
 function filteredFiles() {
   const f = state.filters;
-  return visibleFiles().filter((file) => {
+  const authorisedAllNotCheckedView = isStaffLogin() && f.listView === "notChecked" && isAuthorisedCheckingStaff();
+  return filteredFileSource(f.listView).filter((file) => {
     const configuredBillingView = ["", "active", "completed", "notChecked", "correctionRequired", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
@@ -3235,7 +3243,7 @@ function filteredFiles() {
     if (f.listView === "feeReceived" && !isFeeReceivedFile(file) && !hasFeeReceiptHistory(file)) return false;
     if (f.listView === "reAssigned" && !isReassignedFile(file)) return false;
     if (isStaffLogin() && f.listView === "reAssigned" && !reassignmentVisibleToUser(file, loggedInUser())) return false;
-    if (isStaffLogin() && f.listView !== "reAssigned" && !currentFileBelongsToUser(file, loggedInUser())) return false;
+    if (isStaffLogin() && f.listView !== "reAssigned" && !authorisedAllNotCheckedView && !currentFileBelongsToUser(file, loggedInUser())) return false;
     if (f.search && !haystack.includes(f.search.toLowerCase())) return false;
     if (f.client && !file.name.toLowerCase().includes(f.client.toLowerCase())) return false;
     if (f.pan && !file.pan.toLowerCase().includes(f.pan.toLowerCase())) return false;
@@ -5674,7 +5682,7 @@ function configuredFinancialFilterConfigs() {
     careOf: { key: "careOfFilter", label: "C/o", type: "select", emptyLabel: "All C/o", options: () => careOfDropdownOptions() },
     service: { key: "service", label: "Service Type", type: "select", emptyLabel: "All services", options: () => serviceFilterOptions() },
     staff: { key: "staff", label: "Assigned Staff", type: "select", emptyLabel: "All staff", options: () => assignableStaffNames() },
-    fy: { key: "financialFy", label: "FY", type: "select", emptyLabel: "All FY", options: () => [...new Set(visibleFiles().map(fileFy).filter(Boolean))].sort().reverse() },
+    fy: { key: "financialFy", label: "FY", type: "select", emptyLabel: "All FY", options: () => [...new Set(filteredFileSource().map(fileFy).filter(Boolean))].sort().reverse() },
     pan: { key: "pan", label: "PAN/Reg No.", type: "text", placeholder: "PAN or registration no." },
     hasRemarks: { key: "hasRemarks", label: "Has Remarks", type: "select", emptyLabel: "All records", options: ["Yes", "No"] },
   };
