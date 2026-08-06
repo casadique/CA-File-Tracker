@@ -13446,9 +13446,32 @@ function staffImportHeaderKey(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+const staffImportHeaderAliases = {
+  "Staff Name": ["Staff Name", "Employee Name", "Name"],
+  "Employee ID": ["Employee ID", "EMP ID", "Staff ID", "Staff Code", "Employee Code", "Employee No", "Employee Number"],
+  "App User Email": ["App User Email", "Application User Email", "Login Email", "User Email"],
+  "Employment Type": ["Employment Type", "EMP Type"],
+  "Date of Joining": ["Date of Joining", "DOJ"],
+  "Employment Status": ["Employment Status", "EMP Status"],
+  "Date of Birth": ["Date of Birth", "DOB"],
+  "Blood Group": ["Blood Group", "BG"],
+  "Mobile Number": ["Mobile Number", "Mobile", "Contact", "Contact No", "Phone"],
+  "Email ID": ["Email ID", "Email", "Contact Email"],
+  "Qualification": ["Qualification", "Qualifications"],
+};
+
+function staffImportHeaderCandidates(heading) {
+  return (staffImportHeaderAliases[heading] || [heading]).map(staffImportHeaderKey);
+}
+
+function staffImportHasHeader(headings = [], heading = "") {
+  const available = new Set((headings || []).map(staffImportHeaderKey));
+  return staffImportHeaderCandidates(heading).some((candidate) => available.has(candidate));
+}
+
 function staffImportCell(row, heading) {
-  const wanted = staffImportHeaderKey(heading);
-  const key = Object.keys(row || {}).find((candidate) => staffImportHeaderKey(candidate) === wanted);
+  const wanted = new Set(staffImportHeaderCandidates(heading));
+  const key = Object.keys(row || {}).find((candidate) => wanted.has(staffImportHeaderKey(candidate)));
   return key ? row[key] : "";
 }
 
@@ -13624,10 +13647,11 @@ async function prepareStaffDetailsImport(event) {
     const workbook = window.XLSX.read(data, { type: "array", cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     if (!sheet) throw new Error("The workbook does not contain a worksheet.");
-    const rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false, dateNF: "yyyy-mm-dd" });
+    const previewRows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false, dateNF: "yyyy-mm-dd", blankrows: false });
+    const headerRowIndex = previewRows.slice(0, 10).findIndex((row) => staffImportHasHeader(row, "Employee ID") && staffImportHasHeader(row, "Staff Name"));
+    if (headerRowIndex < 0) throw new Error("Missing required columns. Use Staff Name and Employee ID (or EMP ID / Staff ID).");
+    const rows = window.XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "", raw: false, dateNF: "yyyy-mm-dd", blankrows: false });
     if (!rows.length) throw new Error("The worksheet contains no staff rows.");
-    const headers = Object.keys(rows[0]).map(staffImportHeaderKey);
-    if (!headers.includes(staffImportHeaderKey("Employee ID"))) throw new Error("Missing required column: Employee ID");
     staffImportSession = { sourceRows: rows, fileName: file.name, mode: "skip" };
     renderStaffImportModal();
   } catch (error) {
@@ -13693,11 +13717,12 @@ async function commitStaffDetailsImport() {
   });
   addAuditLog("Staff Excel import completed", { created: createdRows.length, updated: updatedIds.size, skipped: evaluated.skipped.length, invalid: evaluated.invalid.length, source: staffImportSession.fileName });
   const importedRecords = [...createdRows, ...updatedRows.filter((row) => updatedIds.has(row.id))];
+  let savedImportSummary = null;
   try {
     saveState({ skipMerge: true, skipRemote: true });
     if (apiToken()) {
       if (button) button.textContent = "Saving to database...";
-      await persistStaffDetailsImportToApi(importedRecords);
+      savedImportSummary = await persistStaffDetailsImportToApi(importedRecords);
     } else if (!allowLocalLoginFallback()) {
       throw new Error("Your login session is unavailable. Sign in again and retry the import.");
     }
@@ -13706,7 +13731,10 @@ async function commitStaffDetailsImport() {
     saveViewState();
     closeStaffImportModal();
     renderStaffDetailsPage();
-    toast(`Import completed: ${evaluated.rows.length} total, ${createdRows.length} added, ${updatedIds.size} updated, ${evaluated.skipped.length} skipped, ${evaluated.invalid.length} failed.`);
+    const serverRejected = Number(savedImportSummary?.rejected?.length || 0);
+    const addedCount = Number.isFinite(Number(savedImportSummary?.created)) ? Number(savedImportSummary.created) : createdRows.length;
+    const updatedCount = Number.isFinite(Number(savedImportSummary?.updated)) ? Number(savedImportSummary.updated) : updatedIds.size;
+    toast(`Import completed: ${evaluated.rows.length} total, ${addedCount} added, ${updatedCount} updated, ${evaluated.skipped.length + serverRejected} skipped, ${evaluated.invalid.length} failed.`);
   } catch (error) {
     console.error("Staff details import save failed", error);
     state = stateBeforeImport;
@@ -13735,7 +13763,11 @@ async function persistStaffDetailsImportToApi(importedRecords = []) {
       throw new Error("The central database did not confirm the imported staff records.");
     }
     const savedById = new Map(savedStaffDetails.map((row) => [String(row.id || ""), row]));
-    const missing = importedRecords.filter((row) => !savedById.has(String(row.id || "")));
+    const savedByCode = new Map(savedStaffDetails.map((row) => [String(row.staffCode || "").trim().toLowerCase(), row]));
+    const rejectedIds = new Set((payload.rejected || []).map((row) => String(row.id || "")));
+    const missing = importedRecords.filter((row) => !savedById.has(String(row.id || ""))
+      && !savedByCode.has(String(row.staffCode || "").trim().toLowerCase())
+      && !rejectedIds.has(String(row.id || "")));
     if (missing.length) {
       throw new Error(`The central database did not confirm ${missing.length} imported staff record(s).`);
     }
@@ -13743,6 +13775,7 @@ async function persistStaffDetailsImportToApi(importedRecords = []) {
     if (Array.isArray(payload.auditLog)) state.auditLog = payload.auditLog;
     lastRemoteSaveSnapshot = JSON.stringify(sharedStateForStorage(state));
     lastCentralRefreshAt = Date.now();
+    return payload;
   } finally {
     centralImportInFlight = false;
   }

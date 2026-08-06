@@ -60,7 +60,7 @@ router.post("/staff-details/import", requireAuth, requireRole("Admin"), async (r
       });
       try {
         saved = await saveAppStateIfCurrent(merged.state, req.user.id, record.updatedAt);
-        summary = { created: merged.created, updated: merged.updated };
+        summary = { created: merged.created, updated: merged.updated, rejected: merged.rejected };
         break;
       } catch (error) {
         if (error.status !== 409 || attempt === 2) throw error;

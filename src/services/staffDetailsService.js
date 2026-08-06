@@ -44,20 +44,19 @@ function mergeStaffDetailsImport(state = {}, importedRecords = [], actor = {}) {
   const now = Date.now();
   let created = 0;
   let updated = 0;
+  const rejected = [];
 
   importedRecords.forEach((incoming) => {
     const code = cleanText(incoming?.staffCode);
     const name = cleanText(incoming?.staffName);
     if (!code || !name) {
-      const error = new Error("Every imported staff record must include Employee ID and Staff Name.");
-      error.status = 400;
-      throw error;
+      rejected.push({ id: String(incoming?.id || ""), staffCode: code, reason: "Employee ID and Staff Name are required" });
+      return;
     }
     const codeKey = staffCodeKey(code);
     if (seenImportCodes.has(codeKey)) {
-      const error = new Error(`Employee ID ${code} appears more than once in the import.`);
-      error.status = 400;
-      throw error;
+      rejected.push({ id: String(incoming?.id || ""), staffCode: code, reason: `Employee ID ${code} appears more than once in the import` });
+      return;
     }
     seenImportCodes.add(codeKey);
 
@@ -83,17 +82,23 @@ function mergeStaffDetailsImport(state = {}, importedRecords = [], actor = {}) {
     else created += 1;
   });
 
+  if (!created && !updated) {
+    const error = new Error("No valid staff records were available to import. Employee ID and Staff Name are required.");
+    error.status = 400;
+    throw error;
+  }
+
   const staffDetails = [...mergedById.values()];
   const auditLog = [...(Array.isArray(state.auditLog) ? state.auditLog : []), {
     id: crypto.randomUUID(),
     action: "Staff Excel import completed",
-    details: { created, updated, records: importedRecords.length, source: actor.source || "" },
+    details: { created, updated, skipped: rejected.length, records: importedRecords.length, source: actor.source || "" },
     user: actor.name || "System",
     role: actor.role || "Admin",
     at: new Date(now).toISOString(),
   }].slice(-1000);
 
-  return { state: { ...state, staffDetails, auditLog }, created, updated };
+  return { state: { ...state, staffDetails, auditLog }, created, updated, rejected };
 }
 
 function pickImportableFields(row = {}) {
