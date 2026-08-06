@@ -7755,13 +7755,14 @@ function billedExpandedDetails(file = {}, payment = billedPaymentDetails(file)) 
       const mode = receipt.paymentMode || receipt.payment_mode || "-";
       const accountKey = transactionAccountKey(receipt, "");
       const account = accountKey ? financeAccountLabel(accountKey) : "";
-      return `<li><strong>${rupee(amount)}</strong><span>${displayDate(feeReceiptRecordDate(receipt)) || "-"} · ${escapeHtml(mode)}${account ? ` · ${escapeHtml(account)}` : ""}</span></li>`;
+      return `<li><strong>${rupee(amount)}</strong><span>${displayDate(feeReceiptRecordDate(receipt)) || "-"}</span><span>${escapeHtml(mode)}</span>${account ? `<span>${escapeHtml(account)}</span>` : ""}</li>`;
     }).join("")
     : `<li><span>No active receipt history</span></li>`;
+  const remarks = file.remarks || file.billingRemarks || file.feeRemarks || "No remarks";
   return `<div class="billed-expanded-grid">
-    <section class="billed-expanded-bill-history"><h4>Bill History</h4><p>Bill ${escapeHtml(billNo)} · ${displayDate(billDate) || "-"}<br><strong>${rupee(payment.summary.billedAmount)}</strong> billed</p></section>
+    <section class="billed-expanded-bill-history"><h4>Bill History</h4><div class="billed-history-line"><span><small>Bill No.</small><strong>${escapeHtml(billNo)}</strong></span><span><small>Date</small><strong>${displayDate(billDate) || "-"}</strong></span><span class="billed-history-amount"><small>Amount</small><strong>${rupee(payment.summary.billedAmount)}</strong></span></div></section>
     <section class="billed-expanded-receipt-history"><h4>Receipt History</h4><ul class="billed-receipt-history">${history}</ul></section>
-    <section class="billed-expanded-remarks"><h4>Remarks</h4><p>${escapeHtml(file.remarks || file.billingRemarks || file.feeRemarks || "No remarks")}</p></section>
+    <section class="billed-expanded-remarks"><h4>Remarks</h4><p title="${escapeHtml(remarks)}">${escapeHtml(remarks)}</p></section>
   </div>`;
 }
 

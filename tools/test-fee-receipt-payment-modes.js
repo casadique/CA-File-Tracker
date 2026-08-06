@@ -401,8 +401,14 @@ async function main() {
   }
   assert.doesNotMatch(billedExpandedBody, /Workflow history|Work dates/,
     "Billed Files expanded view must exclude workflow and work-date history");
-  assert.match(appStyles, /\.billed-expanded-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/,
+  assert.match(appStyles, /\.billed-expanded-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(300px, 1fr\) minmax\(420px, 1\.55fr\) minmax\(240px, 0\.9fr\)/,
     "Bill history, receipt history and remarks must stay in one desktop row");
+  assert.match(billedExpandedBody, /billed-history-line/,
+    "Bill history values must use the aligned single-line layout");
+  assert.match(appStyles, /\.billed-expanded-grid section\s*\{[\s\S]*?border:\s*1px solid #d4e0ee[\s\S]*?border-left:\s*3px solid #60a5fa/,
+    "Expanded sections must be clearly separated with bordered cards");
+  assert.match(appStyles, /\.billed-receipt-history\s*\{[\s\S]*?display:\s*flex[\s\S]*?overflow-x:\s*auto/,
+    "Receipt history must remain on one aligned line without hiding additional receipts");
   assert.match(billedLayoutBody, /billedMobileCard/,
     "Billed Files must render a dedicated mobile card layout");
   assert.match(billedLayoutBody, /billedFileActions\(file\)/,
