@@ -54,6 +54,10 @@ assert.equal(TEST_GSTIN, "32AVFPM0043F1Z7");
 
 for (const marker of ["Billing Details", "Issue Invoice", "Save as Billed", "Continue to Issue Invoice", 'invoiceStatus: "Not Issued"']) assert.match(app, new RegExp(marker));
 for (const marker of ["Save Draft", "Preview Invoice", "Issue Invoice", "Invoice Register", "Invoice Settings", "confirmTestGstin", "Update Client Master", "Download PDF", "View Invoice History"]) assert.match(client, new RegExp(marker));
+assert.match(client, /scope\.elements\?\.namedItem\?\.\(name\)[\s\S]*scope\.querySelector\?/,
+  "invoice line readers must support both forms and service-line containers");
+assert.match(client, /const pdfWindow = reservePdfWindow\(\);[\s\S]*showPdfBlob\(blob, pdfWindow\)/,
+  "invoice preview should reserve its PDF window before the async request");
 for (const route of ["/settings", "/register", "/file/:fileId/draft", "/file/:fileId/preview", "/file/:fileId/issue", "/:invoiceId/pdf", "/:invoiceId/cancel"]) assert.match(routes, new RegExp(route.replace(/[/:]/g, "\\$&")));
 assert.match(service, /patchAppStateAtomic/);
 assert.match(service, /nextInvoiceNumber/);

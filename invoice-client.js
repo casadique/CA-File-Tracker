@@ -8,8 +8,13 @@
   function e(value = "") { return typeof escapeHtml === "function" ? escapeHtml(String(value ?? "")) : String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]); }
   function amount(value) { const number = Number(value); return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0; }
   function currency(value) { return `₹${amount(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-  function byName(form, name) { return form.elements.namedItem(name); }
-  function value(form, name) { return String(byName(form, name)?.value || "").trim(); }
+  function byName(scope, name) {
+    if (!scope) return null;
+    return scope.elements?.namedItem?.(name)
+      || scope.querySelector?.(`[name="${String(name).replace(/["\\]/g, "\\$&")}"]`)
+      || null;
+  }
+  function value(scope, name) { return String(byName(scope, name)?.value || "").trim(); }
   function closeModal(id) { document.querySelector(`#${id}`)?.remove(); document.querySelector("#backdrop")?.classList.remove("show"); }
   function showBackdrop() { document.querySelector("#backdrop")?.classList.add("show"); }
   function role() { return typeof normalizeRole === "function" ? normalizeRole(state.currentRole) : state.currentRole; }
@@ -29,6 +34,28 @@
       throw new Error(message);
     }
     return response.blob();
+  }
+
+  function reservePdfWindow() {
+    const target = window.open("", "_blank");
+    if (target) {
+      target.document.title = "Preparing invoice PDF";
+      target.document.body.innerHTML = "<p style='font:600 15px Arial;padding:24px;color:#17345d'>Preparing invoice PDF&hellip;</p>";
+    }
+    return target;
+  }
+
+  function showPdfBlob(blob, target = null) {
+    const url = URL.createObjectURL(blob);
+    if (target && !target.closed) target.location.replace(url);
+    else {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener";
+      anchor.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
   function statusForFile(file = {}) {
@@ -165,7 +192,10 @@
     try {
       const totals = calculateClient(collectInvoice());
       target.innerHTML = `<div><span>Gross Amount</span><strong>${currency(totals.gross)}</strong></div><div><span>Total Discount</span><strong>${currency(totals.discount)}</strong></div><div><span>Taxable Value</span><strong>${currency(totals.taxable)}</strong></div><div><span>${totals.interstate ? "IGST" : "CGST + SGST"}</span><strong>${currency(totals.tax)}</strong></div><div><span>Round Off</span><strong>${currency(totals.round)}</strong></div><div class="invoice-total-final"><span>Invoice Total</span><strong>${currency(totals.total)}</strong></div><div class="invoice-payable-final"><span>Net Amount Payable</span><strong>${currency(totals.payable)}</strong></div>`;
-    } catch { target.innerHTML = "<p>Complete the service lines to calculate totals.</p>"; }
+    } catch (error) {
+      console.error("Invoice total calculation failed", error);
+      target.innerHTML = `<p>${e(error?.message || "Complete the service lines to calculate totals.")}</p>`;
+    }
   }
 
   function bindIssueModal(fileId) {
@@ -179,17 +209,39 @@
       const result = await request(`/api/invoices/file/${encodeURIComponent(fileId)}/draft`, { method: "POST", body: JSON.stringify({ invoice: collectInvoice() }) });
       toast(result.warning || `Invoice draft ${result.invoice.draftReference} saved.`); await loadStateFromApi(); closeModal("invoiceIssueModal"); renderAll();
     });
-    document.querySelector("#invoicePreview").onclick = () => executeInvoiceButton("invoicePreview", "Preparing…", async () => {
-      const blob = await fetchPdf(`/api/invoices/file/${encodeURIComponent(fileId)}/preview`, { method: "POST", body: JSON.stringify({ invoice: collectInvoice() }) });
-      window.open(URL.createObjectURL(blob), "_blank", "noopener");
-    });
+    document.querySelector("#invoicePreview").onclick = () => {
+      const pdfWindow = reservePdfWindow();
+      executeInvoiceButton("invoicePreview", "Preparing…", async () => {
+        try {
+          const blob = await fetchPdf(`/api/invoices/file/${encodeURIComponent(fileId)}/preview`, { method: "POST", body: JSON.stringify({ invoice: collectInvoice() }) });
+          showPdfBlob(blob, pdfWindow);
+        } catch (error) {
+          pdfWindow?.close();
+          throw error;
+        }
+      });
+    };
     document.querySelector("#invoiceIssue").onclick = () => {
-      const invoice = collectInvoice(); const totals = calculateClient(invoice);
+      let invoice;
+      let totals;
+      try {
+        invoice = collectInvoice();
+        totals = calculateClient(invoice);
+      } catch (error) {
+        toast(error?.message || "Please complete the invoice details before issuing.");
+        return;
+      }
       const confirmation = `Issue Tax Invoice?\n\nA final invoice number will be assigned. After issue, financial values cannot be directly overwritten.\n\nClient: ${invoice.recipient.billingName}\nService: ${invoice.lines.map((line) => line.description).join(", ")}\nTaxable Value: ${currency(totals.taxable)}\nGST: ${currency(totals.tax)}\nInvoice Total: ${currency(totals.total)}`;
       if (!window.confirm(confirmation)) return;
+      const pdfWindow = reservePdfWindow();
       executeInvoiceButton("invoiceIssue", "Issuing…", async () => {
-        const result = await request(`/api/invoices/file/${encodeURIComponent(fileId)}/issue`, { method: "POST", body: JSON.stringify({ invoice }) });
-        toast(result.warning || `Invoice ${result.invoiceNumber} issued successfully.`); await loadStateFromApi(); closeModal("invoiceIssueModal"); renderAll(); await viewInvoice(result.invoiceId);
+        try {
+          const result = await request(`/api/invoices/file/${encodeURIComponent(fileId)}/issue`, { method: "POST", body: JSON.stringify({ invoice }) });
+          toast(result.warning || `Invoice ${result.invoiceNumber} issued successfully.`); await loadStateFromApi(); closeModal("invoiceIssueModal"); renderAll(); await viewInvoice(result.invoiceId, false, pdfWindow);
+        } catch (error) {
+          pdfWindow?.close();
+          throw error;
+        }
       });
     };
   }
@@ -205,13 +257,14 @@
     } catch (error) { toast(error.message || "Unable to open invoice details."); }
   }
 
-  async function viewInvoice(invoiceId, download = false) {
+  async function viewInvoice(invoiceId, download = false, reservedWindow = null) {
+    const pdfWindow = download ? null : (reservedWindow || reservePdfWindow());
     try {
       const blob = await fetchPdf(`/api/invoices/${encodeURIComponent(invoiceId)}/pdf${download ? "?download=1" : ""}`);
       const url = URL.createObjectURL(blob);
       if (download) { const anchor = document.createElement("a"); anchor.href = url; anchor.download = "invoice.pdf"; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); }
-      else window.open(url, "_blank", "noopener");
-    } catch (error) { toast(error.message || "Unable to open invoice PDF."); }
+      else { if (pdfWindow && !pdfWindow.closed) pdfWindow.location.replace(url); else showPdfBlob(blob); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+    } catch (error) { pdfWindow?.close(); toast(error.message || "Unable to open invoice PDF."); }
   }
 
   async function printInvoice(invoiceId) {
