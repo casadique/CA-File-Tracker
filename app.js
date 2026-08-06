@@ -8120,20 +8120,26 @@ function completedFileActions(file = {}) {
   const canManageBilling = Boolean(rolePerm().assign);
   const canDelete = Boolean(rolePerm().delete);
   const billing = completedFileBillingCategory(file);
+  const billingReady = isBillingReadyFile(file);
   const menuItems = [];
-  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit="${fileId}"` }));
-  if (canManageBilling && isBillingReadyFile(file) && billing !== "Non Billable") {
+  if (canEdit) menuItems.push(billedActionMenuItem({ label: "Edit / View File", icon: "edit", attrs: `data-edit="${fileId}"` }));
+  if (canManageBilling && billingReady && billing !== "Non Billable") {
     menuItems.push(billedActionMenuItem({ label: "Mark Non-Billable", icon: "nonbillable", attrs: `data-non-billable="${fileId}"` }));
   }
   if (canManageBilling && billing === "Non Billable") {
-    menuItems.push(billedActionMenuItem({ label: "Mark Billable", icon: "received", attrs: `data-billable="${fileId}"` }));
-  } else if (canManageBilling && billing !== "Billed" && isBillingReadyFile(file)) {
-    menuItems.push(billedActionMenuItem({ label: "Mark Billed", icon: "received", attrs: `data-mark-billed="${fileId}"` }));
+    // Mark Billable is the primary action below, so do not duplicate it in the menu.
+  } else if (canManageBilling && billing !== "Billed" && billingReady) {
+    // Mark Billed is the primary action below, so it remains immediately visible.
   }
   if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete="${fileId}"`, danger: true, divider: true }));
-  const primary = canEdit
-    ? `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`
-    : `<span class="billed-payment-state">${escapeHtml(billing)}</span>`;
+  let primary = `<span class="billed-payment-state">${escapeHtml(billing)}</span>`;
+  if (canManageBilling && billing === "Non Billable") {
+    primary = `<button type="button" class="billed-primary-action view-only" data-billable="${fileId}">${billedActionIcon("received")}<span>Mark Billable</span></button>`;
+  } else if (canManageBilling && billing !== "Billed" && billingReady) {
+    primary = `<button type="button" class="billed-primary-action mark-received" data-mark-billed="${fileId}">${billedActionIcon("received")}<span>Mark Billed</span></button>`;
+  } else if (canEdit) {
+    primary = `<button type="button" class="billed-primary-action view-only" data-edit="${fileId}">${billedActionIcon("edit")}<span>View File</span></button>`;
+  }
   return `<div class="billed-actions completed-actions" data-billed-actions="${fileId}">${primary}${menuItems.length
     ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${fileId}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${fileId}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>`
     : ""}</div>`;

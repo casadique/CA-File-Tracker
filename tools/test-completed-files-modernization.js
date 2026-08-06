@@ -30,6 +30,8 @@ for (const heading of ["Client", "Service", "Completion", "C/o", "Checking", "Bi
 assert.match(source, /function completedFileActions/);
 assert.match(source, /data-billed-menu-toggle/);
 assert.match(source, /data-mark-billed/);
+assert.match(source, /primary = `<button type="button" class="billed-primary-action mark-received" data-mark-billed=/,
+  "eligible completed files should expose Mark Billed as the primary action");
 assert.match(source, /data-non-billable/);
 assert.match(source, /data-delete/);
 assert.match(source, /data-completed-row-toggle/);
