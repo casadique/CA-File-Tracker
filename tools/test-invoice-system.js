@@ -84,6 +84,7 @@ assert.match(service, /nextInvoiceNumber/);
 assert.match(service, /invoiceSequences/);
 assert.match(service, /status: "Cancelled"/);
 assert.match(service, /frozenAt/);
+assert.doesNotMatch(service, /Reverse Charge:.*File Reference:/, "internal file UUID must not be printed on the Bill of Supply");
 
 (async () => {
   const invoice = {

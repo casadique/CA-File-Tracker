@@ -742,7 +742,7 @@ function drawInvoicePdf(invoice, { draft = false } = {}) {
     doc.font(boldFont).fillColor(blue).fontSize(9).text("BILL TO", 310, infoY);
     doc.font(regularFont).fillColor("#1e293b").fontSize(8).text([recipient.billingName || recipient.clientName, recipient.billingAddress, [recipient.place, recipient.district, recipient.state, recipient.pinCode].filter(Boolean).join(", "), recipient.gstin && `GSTIN: ${recipient.gstin}`, recipient.panRegNo && `PAN/Reg No: ${recipient.panRegNo}`, [recipient.mobile, recipient.email].filter(Boolean).join(" | ")].filter(Boolean).join("\n"), 310, infoY + 17, { width: 248 });
     doc.y = Math.max(doc.y, infoY + 94); line(doc.y); doc.moveDown(0.5);
-    doc.font(regularFont).fontSize(8).fillColor("#334155").text(`Place of Supply: ${invoice.placeOfSupply || "-"}    Reverse Charge: ${invoice.reverseCharge || "No"}    File Reference: ${invoice.fileReference || "-"}`, 36, doc.y, { width: pageWidth });
+    doc.font(regularFont).fontSize(8).fillColor("#334155").text(`Place of Supply: ${invoice.placeOfSupply || "-"}    Reverse Charge: ${invoice.reverseCharge || "No"}`, 36, doc.y, { width: pageWidth });
     doc.moveDown(0.7);
     const columns = [24, 188, 52, 55, 72, 55, 77];
     const headers = ["SN", "Description / SAC", "Qty", "Rate", invoice.documentType === "Bill of Supply" ? "Supply Value" : "Taxable", "GST", "Total"];
