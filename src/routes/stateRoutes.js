@@ -5,6 +5,7 @@ const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
 const { calculateDashboardCounts } = require("../services/fileViewRules");
 const { backupClientsSecure, restoreClients } = require("../services/clientService");
+const { mergeStaffDetailsImport } = require("../services/staffDetailsService");
 
 const router = express.Router();
 
@@ -40,6 +41,38 @@ router.put("/", requireAuth, requireRole("Admin"), async (req, res, next) => {
     assertSafeStateReplacement(record.state, incoming);
     const saved = await saveAppStateIfCurrent(incoming, req.user.id, req.body.expectedUpdatedAt);
     res.json({ ok: true, state: saved.state, updatedAt: saved.updatedAt });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/staff-details/import", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    let saved;
+    let summary;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const record = await getAppStateRecord();
+      const merged = mergeStaffDetailsImport(record.state, req.body.records, {
+        id: req.user.id,
+        name: req.profile?.name || req.profile?.email || "Admin",
+        role: req.profile?.role || "Admin",
+        source: String(req.body.source || ""),
+      });
+      try {
+        saved = await saveAppStateIfCurrent(merged.state, req.user.id, record.updatedAt);
+        summary = { created: merged.created, updated: merged.updated };
+        break;
+      } catch (error) {
+        if (error.status !== 409 || attempt === 2) throw error;
+      }
+    }
+    res.json({
+      ok: true,
+      staffDetails: saved.state.staffDetails || [],
+      auditLog: saved.state.auditLog || [],
+      updatedAt: saved.updatedAt,
+      ...summary,
+    });
   } catch (error) {
     next(error);
   }

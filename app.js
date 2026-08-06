@@ -13694,9 +13694,11 @@ async function commitStaffDetailsImport() {
   const importedRecords = [...createdRows, ...updatedRows.filter((row) => updatedIds.has(row.id))];
   try {
     saveState({ skipMerge: true, skipRemote: true });
-    if (isSupabaseMode()) {
+    if (apiToken()) {
       if (button) button.textContent = "Saving to database...";
       await persistStaffDetailsImportToApi(importedRecords);
+    } else if (!allowLocalLoginFallback()) {
+      throw new Error("Your login session is unavailable. Sign in again and retry the import.");
     }
     ["staffSearch", "staffDepartment", "staffPosition", "staffEmploymentType", "staffStatus", "staffBloodGroup", "staffBirthdayMonth", "staffJoiningMonth", "staffSort"]
       .forEach((key) => state.filters[key] = "");
@@ -13718,18 +13720,16 @@ async function commitStaffDetailsImport() {
 }
 
 async function persistStaffDetailsImportToApi(importedRecords = []) {
-  if (!isSupabaseMode()) return;
+  if (!apiToken()) return;
   centralImportInFlight = true;
   clearTimeout(remoteSaveTimer);
   try {
-    const shared = sharedStateForStorage(state);
-    const snapshot = JSON.stringify(shared);
-    const payload = await apiJson("/api/state", {
-      method: "PUT",
-      body: JSON.stringify({ state: shared, expectedUpdatedAt: lastCentralVersion }),
+    const payload = await apiJson("/api/state/staff-details/import", {
+      method: "POST",
+      body: JSON.stringify({ records: importedRecords, source: staffImportSession?.fileName || "" }),
     });
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
-    const savedStaffDetails = payload?.state?.staffDetails;
+    const savedStaffDetails = payload?.staffDetails;
     if (!Array.isArray(savedStaffDetails)) {
       throw new Error("The central database did not confirm the imported staff records.");
     }
@@ -13738,9 +13738,10 @@ async function persistStaffDetailsImportToApi(importedRecords = []) {
     if (missing.length) {
       throw new Error(`The central database did not confirm ${missing.length} imported staff record(s).`);
     }
-    lastRemoteSaveSnapshot = snapshot;
+    state.staffDetails = normalizeStaffDetails(savedStaffDetails, state.users || []);
+    if (Array.isArray(payload.auditLog)) state.auditLog = payload.auditLog;
+    lastRemoteSaveSnapshot = JSON.stringify(sharedStateForStorage(state));
     lastCentralRefreshAt = Date.now();
-    applyCentralState(payload.state, { rerender: false });
   } finally {
     centralImportInFlight = false;
   }
