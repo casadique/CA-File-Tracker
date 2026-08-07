@@ -16152,11 +16152,12 @@ body,
 .collection-register-table th:nth-child(3) { width: 145px; }
 .collection-register-table th:nth-child(4) { width: 220px; }
 .collection-register-table th:nth-child(5) { width: 165px; }
-.collection-register-table th:nth-child(6) { width: 130px; }
-.collection-register-table th:nth-child(7) { width: 135px; }
-.collection-register-table th:nth-child(8) { width: 145px; }
+.collection-register-table th:nth-child(6) { width: 90px; }
+.collection-register-table th:nth-child(7) { width: 100px; }
+.collection-register-table th:nth-child(8) { width: 115px; }
 .collection-register-table th:nth-child(9), .expense-register-table th:nth-child(9) { width: 130px; }
-.collection-register-table th:nth-child(10), .expense-register-table th:nth-child(10) { width: 150px; }
+.collection-register-table th:nth-child(10) { width: 110px; }
+.expense-register-table th:nth-child(10) { width: 150px; }
 .collection-register-table th:nth-child(11), .expense-register-table th:nth-child(11) { width: 176px; }
 .expense-register-table th:nth-child(3) { width: 190px; }
 .expense-register-table th:nth-child(4) { width: 190px; }
