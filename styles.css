@@ -16157,14 +16157,14 @@ body,
 .collection-register-table th:nth-child(8) { width: 115px; }
 .collection-register-table th:nth-child(9), .expense-register-table th:nth-child(9) { width: 130px; }
 .collection-register-table th:nth-child(10) { width: 110px; }
-.expense-register-table th:nth-child(10) { width: 150px; }
+.expense-register-table th:nth-child(10) { width: 105px; }
 .collection-register-table th:nth-child(11), .expense-register-table th:nth-child(11) { width: 176px; }
 .expense-register-table th:nth-child(3) { width: 190px; }
 .expense-register-table th:nth-child(4) { width: 190px; }
 .expense-register-table th:nth-child(5) { width: 240px; }
-.expense-register-table th:nth-child(6) { width: 135px; }
+.expense-register-table th:nth-child(6) { width: 100px; }
 .expense-register-table th:nth-child(7) { width: 145px; }
-.expense-register-table th:nth-child(8) { width: 135px; }
+.expense-register-table th:nth-child(8) { width: 85px; }
 .transaction-register-wrap td { vertical-align: middle; }
 .transaction-particulars-cell,
 .transaction-remarks-cell { color: #475569; line-height: 1.4; }

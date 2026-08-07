@@ -61,6 +61,10 @@ for (const selector of [".transaction-ledger-head", ".transaction-ledger-summary
 for (const marker of ["transaction-menu-toggle", "More actions for this transaction", "aria-label=\"Transaction actions\""]) assert.ok(app.includes(marker), `Missing visible transaction action marker: ${marker}`);
 for (const heading of ["<th>Ref No</th>", "<th>Vo. No</th>"]) assert.ok(app.includes(heading), `Missing shortened transaction heading: ${heading}`);
 assert.match(app, /collection-register-table[\s\S]*?<th>Mode<\/th>/, "Collection register must use the compact Mode heading");
+assert.match(app, /expense-register-table[\s\S]*?<th>Mode<\/th>/, "Expense register must use the compact Mode heading");
+for (const [column, width] of [[6, 100], [8, 85], [10, 105]]) {
+  assert.match(styles, new RegExp(`\\.expense-register-table th:nth-child\\(${column}\\) \\{ width: ${width}px; \\}`), `Expense column ${column} must use its compact width`);
+}
 assert.match(styles, /\.collection-register-table th:nth-child\(5\) \{ width: 165px; \}/, "Collection Particulars must use the reduced desktop width");
 for (const [column, width] of [[6, 90], [7, 100], [8, 115], [10, 110]]) {
   assert.match(styles, new RegExp(`\\.collection-register-table th:nth-child\\(${column}\\) \\{ width: ${width}px; \\}`), `Collection column ${column} must use its compact width`);
