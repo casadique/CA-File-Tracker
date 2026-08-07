@@ -1426,18 +1426,35 @@ function perfLog(label, startedAt, details = {}) {
 
 async function backendApiJson(path, options = {}) {
   const startedAt = perfStart();
-  const { skipAuthRefresh = false, ...requestOptions } = options;
+  const { skipAuthRefresh = false, retryAttempt = 0, ...requestOptions } = options;
   const headers = {
     "Content-Type": "application/json",
     ...(requestOptions.headers || {}),
   };
   const token = apiToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(path, {
-    ...requestOptions,
-    headers,
-  });
+  const method = String(requestOptions.method || "GET").toUpperCase();
+  const canRetry = method === "GET" && retryAttempt < 2;
+  let response;
+  try {
+    response = await fetch(path, {
+      ...requestOptions,
+      headers,
+    });
+  } catch (error) {
+    if (canRetry) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (retryAttempt + 1)));
+      return backendApiJson(path, { ...options, retryAttempt: retryAttempt + 1 });
+    }
+    const networkError = new Error("Unable to reach the server. Your saved data is safe; check the connection and press Refresh.");
+    networkError.cause = error;
+    throw networkError;
+  }
   const payload = await response.json().catch(() => ({}));
+  if ([502, 503, 504].includes(response.status) && canRetry) {
+    await new Promise((resolve) => setTimeout(resolve, 400 * (retryAttempt + 1)));
+    return backendApiJson(path, { ...options, retryAttempt: retryAttempt + 1 });
+  }
   if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/refresh" && !skipAuthRefresh) {
     const refreshed = await refreshApiSession();
     if (refreshed) return backendApiJson(path, { ...options, skipAuthRefresh: true });
