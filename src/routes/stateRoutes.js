@@ -1,11 +1,12 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { getAppState, getAppStateRecord, saveAppState, saveAppStateIfCurrent, assertSafeStateReplacement, backupPayload } = require("../services/appStateService");
+const { getAppStateRecord, saveAppState, saveAppStateIfCurrent, assertSafeStateReplacement } = require("../services/appStateService");
 const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
 const { calculateDashboardCounts } = require("../services/fileViewRules");
-const { backupClientsSecure, restoreClients } = require("../services/clientService");
+const { restoreClients } = require("../services/clientService");
 const { mergeStaffDetailsImport } = require("../services/staffDetailsService");
+const { createCompleteBackup } = require("../services/completeBackupService");
 
 const router = express.Router();
 
@@ -80,9 +81,7 @@ router.post("/staff-details/import", requireAuth, requireRole("Admin"), async (r
 
 router.get("/backup", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const payload = backupPayload(await getAppState(), req.profile.name, {
-      clientMaster: await backupClientsSecure(),
-    });
+    const payload = await createCompleteBackup(req.profile.name);
     res.json(payload);
   } catch (error) {
     next(error);

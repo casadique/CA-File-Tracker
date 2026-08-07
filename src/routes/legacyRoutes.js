@@ -3,6 +3,7 @@ const XLSX = require("xlsx");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { upload } = require("../middleware/upload");
 const { getAppState, saveAppState, backupPayload } = require("../services/appStateService");
+const { createCompleteBackup, archiveCompleteBackup } = require("../services/completeBackupService");
 
 const router = express.Router();
 
@@ -32,12 +33,24 @@ router.post("/site-data", requireAuth, requireRole("Admin"), async (req, res, ne
 
 router.post("/backup", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const state = req.body.state || await getAppState();
+    const payload = await createCompleteBackup(req.profile.name);
+    let archive = null;
+    let archiveWarning = "";
+    try {
+      archive = await archiveCompleteBackup(payload, req.body.reason || "manual");
+    } catch (error) {
+      archiveWarning = error.message || "The server-side archive could not be stored.";
+    }
     res.json({
       ok: true,
       filename: `ca-file-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`,
-      summary: backupPayload(state, req.profile.name).backupSummary,
-      backedUpAt: new Date().toISOString(),
+      summary: payload.backupSummary,
+      backedUpAt: payload.exportedAt,
+      complete: payload.complete,
+      warnings: payload.warnings,
+      archive,
+      archiveWarning,
+      payload: req.body.includePayload ? payload : undefined,
     });
   } catch (error) {
     next(error);
