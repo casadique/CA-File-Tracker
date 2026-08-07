@@ -6,6 +6,7 @@ const { getAppState, patchAppState, patchAppStateAtomic } = require("./appStateS
 const { getClient, updateClient } = require("./clientService");
 
 const TEST_GSTIN = "32AVFPM0043F1Z7";
+const DEFAULT_GSTIN = "32AVFPM0043F2Z6";
 const PRESUMPTIVE_TAX_DECLARATION = "Taxable person paying tax in terms of Notification No. 2/2019-Central Tax (Rate) dated 07.03.2019, not eligible to collect tax on supplies.";
 const BILL_OF_SUPPLY_PAYMENT_DETAILS = Object.freeze({
   accountName: "MUHAMMAD AND ASSOCIATES",
@@ -64,7 +65,7 @@ function defaultInvoiceSettings() {
     state: "Kerala",
     stateCode: "32",
     pinCode: "670307",
-    gstin: TEST_GSTIN,
+    gstin: DEFAULT_GSTIN,
     pan: "",
     email: "info@muhammadandassociates.com",
     mobile: "+91 8089 190 842",
@@ -874,6 +875,7 @@ async function invoiceHistory(invoiceId) {
 
 module.exports = {
   TEST_GSTIN,
+  DEFAULT_GSTIN,
   PRESUMPTIVE_TAX_DECLARATION,
   BILL_OF_SUPPLY_PAYMENT_DETAILS,
   GSTIN_PATTERN,

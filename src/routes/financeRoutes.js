@@ -27,9 +27,18 @@ const {
   addExpenseItem,
   removeExpenseItem,
 } = require("../services/financeService");
+const {
+  receiptById,
+  receiptPdf,
+  receiptHistory,
+  safeReceiptFilename,
+  historicalReceiptPreview,
+  generateHistoricalReceipts,
+} = require("../services/receiptService");
 
 const router = express.Router();
 const financeRoles = ["Admin", "Manager"];
+const receiptViewRoles = ["Admin", "Manager", "Staff Manager", "Staff", "Viewer"];
 
 router.get("/", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
@@ -144,8 +153,11 @@ router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), 
       req.user.id,
       req.profile,
     );
+    const requestedReceiptId = req.body.receipt?.feeReceiptId || req.body.receipt?.id || "";
+    const issuedReceipt = (state.feeReceipts || []).find((receipt) => receipt.id === requestedReceiptId) || null;
     res.json({
       ok: true,
+      receipt: issuedReceipt,
       files: state.files || [],
       feeReceipts: state.feeReceipts || [],
       otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
@@ -153,6 +165,46 @@ router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), 
   } catch (error) {
     next(error);
   }
+});
+
+router.get("/receipts/historical/preview", requireAuth, requireRole("Admin"), async (_req, res, next) => {
+  try { res.json({ ok: true, ...(await historicalReceiptPreview()) }); } catch (error) { next(error); }
+});
+
+router.post("/receipts/historical/generate", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    if (String(req.body.confirmation || "").trim() !== "GENERATE HISTORICAL RECEIPTS") {
+      return res.status(400).json({ error: "Type GENERATE HISTORICAL RECEIPTS to confirm." });
+    }
+    const state = await generateHistoricalReceipts(req.user.id, req.profile);
+    res.json({ ok: true, result: state.lastHistoricalReceiptRun || {}, feeReceipts: state.feeReceipts || [] });
+  } catch (error) { next(error); }
+});
+
+router.post("/receipts/:receiptId/generate-historical", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await generateHistoricalReceipts(req.user.id, req.profile, req.params.receiptId);
+    const receipt = (state.feeReceipts || []).find((row) => row.id === req.params.receiptId) || null;
+    res.json({ ok: true, receipt, feeReceipts: state.feeReceipts || [] });
+  } catch (error) { next(error); }
+});
+
+router.get("/receipts/:receiptId/history", requireAuth, requireRole(...receiptViewRoles), async (req, res, next) => {
+  try { res.json({ ok: true, events: await receiptHistory(req.params.receiptId) }); } catch (error) { next(error); }
+});
+
+router.get("/receipts/:receiptId/pdf", requireAuth, requireRole(...receiptViewRoles), async (req, res, next) => {
+  try {
+    const result = await receiptPdf(req.params.receiptId);
+    const disposition = req.query.download === "1" ? "attachment" : "inline";
+    res.set("Content-Type", "application/pdf");
+    res.set("Content-Disposition", `${disposition}; filename="${safeReceiptFilename(result.receipt)}"`);
+    res.send(result.pdf);
+  } catch (error) { next(error); }
+});
+
+router.get("/receipts/:receiptId", requireAuth, requireRole(...receiptViewRoles), async (req, res, next) => {
+  try { res.json({ ok: true, ...(await receiptById(req.params.receiptId)) }); } catch (error) { next(error); }
 });
 
 router.get("/fee-receipts/receipt/:receiptId/editor", requireAuth, requireRole(...financeRoles), async (req, res, next) => {

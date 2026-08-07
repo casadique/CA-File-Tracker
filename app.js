@@ -1687,6 +1687,13 @@ async function markFeeReceiptNotReceivedToApi(receiptId, reason) {
   return result;
 }
 
+async function generateHistoricalReceiptToApi(receiptId) {
+  const result = await apiJson(`/api/finance/receipts/${encodeURIComponent(receiptId)}/generate-historical`, { method: "POST" });
+  if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function deleteCashCollectionFromApi(id) {
   const result = await apiJson(`/api/finance/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
@@ -5697,6 +5704,7 @@ function billedFilesActionToolbar() {
     <div class="billed-toolbar-left"><button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button>
       <button class="secondary-button file-action-button" type="button" data-invoice-register>${navIcon("invoice")}Invoice Register</button>
       ${normalizeRole(state.currentRole) === "Admin" ? `<button class="secondary-button file-action-button" type="button" data-invoice-settings>${navIcon("settings")}Invoice Settings</button>` : ""}
+      ${normalizeRole(state.currentRole) === "Admin" && state.filters.listView === "feeReceived" ? `<button class="secondary-button file-action-button" type="button" data-generate-historical-receipts>${navIcon("invoice")}Historical Receipts</button>` : ""}
     </div>
     <div class="billed-export-actions">
       ${rolePerm().export ? `<button class="secondary-button file-action-button file-action-excel" id="exportFiltered">${navIcon("spreadsheet")}Export Filtered Excel</button>` : ""}
@@ -6001,6 +6009,8 @@ function configuredFinancialFilterConfigs() {
         { key: "feeReceivedSort", label: "Sort By", type: "select", options: feeReceivedSort, defaultValue: feeReceivedSort[0] },
       ],
       advanced: [common.pan,
+        { key: "feeReceivedReceiptNumber", label: "Receipt Number", type: "text", placeholder: "MR/2026-27/0001" },
+        { key: "feeReceivedDocumentStatus", label: "Receipt Document", type: "select", emptyLabel: "All documents", options: ["Issued", "Reversed", "Legacy Payment - Receipt Not Generated"] },
         { key: "feeReceivedBillNumber", label: "Bill Number", type: "text", placeholder: "Search bill no." },
         { label: "Bill Date Range", type: "range", controls: [
           { key: "feeReceivedBillFrom", label: "Bill Date From", type: "date" },
@@ -6149,10 +6159,12 @@ function configuredFinancialFacts(file = {}) {
   const paymentModes = receipts.map((receipt) => String(receipt.paymentMode || receipt.payment_mode || receipt.mode || "").trim()).filter(Boolean);
   const transactionReferences = [...receipts, ...linkedCollections].map((row) => row.referenceNumber || row.reference_number || row.transactionReference || row.transaction_reference || row.refNo || row.ref_no || "").filter(Boolean);
   const receivedBy = receipts.map((receipt) => receipt.receivedBy || receipt.received_by || "").filter(Boolean);
+  const receiptNumbers = receipts.map((receipt) => receipt.receiptNumber || receipt.receipt_number || "").filter(Boolean);
+  const receiptDocumentStatuses = receipts.map((receipt) => receipt.documentStatus || receipt.document_status || (receipt.receiptNumber ? "Issued" : "Legacy Payment - Receipt Not Generated"));
   const billDate = normalizeImportDate(file.billDate || file.bill_date || file.billedDate || "");
   const correction = latestCorrectionForFile(file) || {};
   return {
-    summary, pdfRecord, receipts, allReceipts, linkedCollections, receiptModes, paymentModes, transactionReferences,
+    summary, pdfRecord, receipts, allReceipts, linkedCollections, receiptModes, paymentModes, transactionReferences, receiptNumbers, receiptDocumentStatuses,
     receivedBy: receivedBy.length ? receivedBy : [file.feeReceivedBy || file.receivedBy || file.received_by || ""].filter(Boolean),
     billDate,
     receiptDate: normalizeImportDate(summary.latestReceiptDate || file.feeReceivedDate || file.receivedOn || file.received_on || ""),
@@ -6173,7 +6185,7 @@ function configuredFinancialFacts(file = {}) {
 function configuredFinancialSearchHaystack(file = {}) {
   const facts = configuredFinancialFacts(file);
   return [file.name, fileRegistrationNumber(file), file.pan, facts.contact, file.serviceType, file.careOf, file.assignedStaff,
-    file.reAssignedStaff, file.completedBy, file.workDoneBy, file.checkedBy, file.billingType, facts.billNumber, facts.remarks, ...facts.receivedBy, ...facts.transactionReferences,
+    file.reAssignedStaff, file.completedBy, file.workDoneBy, file.checkedBy, file.billingType, facts.billNumber, facts.remarks, ...facts.receivedBy, ...facts.transactionReferences, ...facts.receiptNumbers,
     facts.correctionReason, facts.correctionReturnedBy, facts.correctionExpectedDate,
     ...facts.paymentModes, ...facts.receiptModes].filter(Boolean).join(" ").toLowerCase();
 }
@@ -6345,6 +6357,8 @@ function configuredFinancialFileMatches(file, listView, filters) {
     return financial.balanceAmount > 0;
   }
   if (listView === "feeReceived") {
+    if (filters.feeReceivedReceiptNumber && !facts.receiptNumbers.join(" ").toLowerCase().includes(filters.feeReceivedReceiptNumber.toLowerCase())) return false;
+    if (filters.feeReceivedDocumentStatus && !facts.receiptDocumentStatuses.includes(filters.feeReceivedDocumentStatus)) return false;
     if (!configuredFinancialDateInRange(facts.receiptDate, filters.feeReceivedReceiptFrom, filters.feeReceivedReceiptTo)) return false;
     if (!configuredFinancialDateInRange(facts.billDate, filters.feeReceivedBillFrom, filters.feeReceivedBillTo)) return false;
     if (filters.feeReceivedStatus === "Fully Received" && financial.paymentStatus !== "Received") return false;
@@ -6429,6 +6443,7 @@ function renderFilesPage() {
   if (isBilledView) bindBilledFilesFilters();
   else if (isConfiguredFilterView) bindConfiguredFinancialFilters(configuredFilterConfig);
   else bindFilters();
+  document.querySelector("[data-generate-historical-receipts]")?.addEventListener("click", generateHistoricalReceiptsBulk);
   if (!isBilledView && !isConfiguredFilterView) {
     document.querySelector("#clearFilters").onclick = () => {
       resetFiltersKeepingCurrentFileModule();
@@ -6478,6 +6493,19 @@ function renderFilesPage() {
   const exportFilteredPdf = document.querySelector("#exportFilteredPdf");
   if (exportFilteredPdf) exportFilteredPdf.onclick = () => exportFilteredFilesPdf(sortFilesForDisplay(filteredFiles()), exportFilteredPdf);
   bindFileActions();
+}
+
+async function generateHistoricalReceiptsBulk() {
+  try {
+    const preview = await apiJson("/api/finance/receipts/historical/preview");
+    if (!preview.eligible) return toast("No eligible historical fee payments require receipts.");
+    const confirmation = prompt(`${preview.eligible} valid historical fee payment(s) are eligible. ${preview.review || 0} record(s) need review and will be excluded.\n\nThis creates receipt documents only and will not alter transactions or balances.\n\nType GENERATE HISTORICAL RECEIPTS to continue.`) || "";
+    if (confirmation.trim() !== "GENERATE HISTORICAL RECEIPTS") return;
+    const result = await apiJson("/api/finance/receipts/historical/generate", { method: "POST", body: JSON.stringify({ confirmation }) });
+    if (result.feeReceipts) state.feeReceipts = result.feeReceipts;
+    saveState({ skipMerge: true, skipRemote: true }); renderAll();
+    toast(`${result.result?.generated || 0} historical receipt(s) generated. No financial balances were changed.`);
+  } catch (error) { toast(error.message || "Unable to generate historical receipts."); }
 }
 
 function removedFileRows(files) {
@@ -8390,19 +8418,33 @@ function feeReceivedTransactionCell(row = {}) {
 
 function feeReceivedReceiptActions(row = {}) {
   const { file, receipt, linked } = row;
-  const canDelete = Boolean(rolePerm().delete);
   const canManageReceipt = ["Admin", "Manager"].includes(normalizeRole(state.currentRole));
+  const isAdmin = normalizeRole(state.currentRole) === "Admin";
   const fileId = escapeHtml(file.id || "");
   const actionKey = escapeHtml(receipt?.id || file.id || "");
   const menuItems = [];
-  if (canManageReceipt && receipt?.id) menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit-fee-collection="${escapeHtml(receipt.id)}"` }));
+  const hasIssuedDocument = Boolean(receipt?.receiptNumber || receipt?.receipt_number);
+  if (canManageReceipt && receipt?.id) {
+    menuItems.push(billedActionMenuItem({ label: "Edit", icon: "edit", attrs: `data-edit-fee-collection="${escapeHtml(receipt.id)}"` }));
+  }
+  if (hasIssuedDocument) {
+    menuItems.push(billedActionMenuItem({ label: "View Receipt", icon: "received", attrs: `data-view-fee-receipt="${escapeHtml(receipt.id)}"` }));
+    menuItems.push(billedActionMenuItem({ label: "Download PDF", icon: "transaction", attrs: `data-download-fee-receipt="${escapeHtml(receipt.id)}"` }));
+    menuItems.push(billedActionMenuItem({ label: "Print", icon: "transaction", attrs: `data-print-fee-receipt="${escapeHtml(receipt.id)}"` }));
+    menuItems.push(billedActionMenuItem({ label: "View Payment Details", icon: "transaction", attrs: `data-view-fee-receipt="${escapeHtml(receipt.id)}"` }));
+    menuItems.push(billedActionMenuItem({ label: "Regenerate PDF", icon: "transaction", attrs: `data-download-fee-receipt="${escapeHtml(receipt.id)}"` }));
+  } else if (receipt?.id && isAdmin) {
+    menuItems.push(billedActionMenuItem({ label: "Generate Historical Receipt", icon: "received", attrs: `data-generate-historical-receipt="${escapeHtml(receipt.id)}"` }));
+  }
+  if (file.invoiceId && window.InvoiceUI) menuItems.push(billedActionMenuItem({ label: "View Bill of Supply", icon: "transaction", attrs: `data-invoice-view="${escapeHtml(file.invoiceId)}"` }));
   if (linked?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "View Transaction", icon: "transaction", attrs: `data-go-fee-transaction="${escapeHtml(linked.id)}"` }));
   if (!linked && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Go to Transactions", icon: "transaction", attrs: `data-go-transactions="${fileId}"` }));
-  if (receipt?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(receipt.id)}"` }));
+  if (receipt?.id && canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Cancel / Reverse Receipt", icon: "reverse", attrs: `data-fee-receipt-not-received="${escapeHtml(receipt.id)}"`, danger: true, divider: true }));
   else if (canManageReceipt) menuItems.push(billedActionMenuItem({ label: "Mark Not Received", icon: "reverse", attrs: `data-mark-not-received="${fileId}"` }));
-  if (canDelete) menuItems.push(billedActionMenuItem({ label: "Delete", icon: "delete", attrs: `data-delete-billed="${fileId}"`, danger: true, divider: true }));
-  const primary = receipt?.id
+  const primary = hasIssuedDocument
     ? `<button type="button" class="billed-primary-action received" data-view-fee-receipt="${escapeHtml(receipt.id)}">${billedActionIcon("received")}<span>View Receipt</span></button>`
+    : receipt?.id && isAdmin
+      ? `<button type="button" class="billed-primary-action received" data-generate-historical-receipt="${escapeHtml(receipt.id)}">${billedActionIcon("received")}<span>Generate Receipt</span></button>`
     : `<button type="button" class="billed-primary-action received" data-billed-receipt-details="${fileId}">${billedActionIcon("received")}<span>Receipt Details</span></button>`;
   return `<div class="billed-actions fee-received-actions" data-billed-actions="${actionKey}">${primary}${menuItems.length ? `<button type="button" class="billed-menu-toggle" data-billed-menu-toggle="${actionKey}" aria-label="Open actions for ${escapeHtml(file.name || "file")}" aria-haspopup="menu" aria-expanded="false">${billedActionIcon("menu")}</button><div class="billed-action-menu" data-billed-action-menu="${actionKey}" role="menu" aria-label="Actions for ${escapeHtml(file.name || "file")}">${menuItems.join("")}</div>` : ""}</div>`;
 }
@@ -8625,8 +8667,8 @@ function feeReceiptCollectionPayload(file = {}, receipt = {}, existing = null) {
     receivedFrom: file.name || "",
     received_from: file.name || "",
     particulars,
-    voucherNo: billNo,
-    reference_number: billNo,
+    voucherNo: receipt.referenceNumber || receipt.utrNumber || receipt.upiReference || receipt.chequeNumber || billNo,
+    reference_number: receipt.referenceNumber || receipt.utrNumber || receipt.upiReference || receipt.chequeNumber || billNo,
     remarks: receipt.remarks || "",
     createdBy: existing?.createdBy || existing?.enteredBy || state.currentUser || "",
     enteredBy: existing?.enteredBy || existing?.createdBy || state.currentUser || "",
@@ -8682,6 +8724,14 @@ function feeReceiptFromModal(file = {}) {
   const paymentMode = document.querySelector("[name='receiptPaymentMode']")?.value || "Cash";
   const accountKey = paymentMode === "Cash" ? "cash" : (document.querySelector("[name='receiptAccount']")?.value || "");
   const remarks = String(document.querySelector("[name='receiptRemarks']")?.value || "").trim();
+  const receivedFrom = String(document.querySelector("[name='receiptReceivedFrom']")?.value || file.name || "").trim();
+  const referenceNumber = String(document.querySelector("[name='receiptReferenceNumber']")?.value || "").trim();
+  const utrNumber = String(document.querySelector("[name='receiptUtrNumber']")?.value || "").trim();
+  const chequeNumber = String(document.querySelector("[name='receiptChequeNumber']")?.value || "").trim();
+  const chequeDate = normalizeImportDate(document.querySelector("[name='receiptChequeDate']")?.value || "");
+  const bankName = String(document.querySelector("[name='receiptBankName']")?.value || "").trim();
+  const chequeStatus = document.querySelector("[name='receiptChequeStatus']")?.value || "";
+  const upiReference = String(document.querySelector("[name='receiptUpiReference']")?.value || "").trim();
   const existingLinked = linkedFeeReceiptCollection(file);
   const receiptModal = document.querySelector("#markReceivedModal");
   const existingReceived = Number(receiptModal?.dataset.existingReceived || 0);
@@ -8699,6 +8749,14 @@ function feeReceiptFromModal(file = {}) {
     accountKey,
     accountName: financeAccountLabel(accountKey),
     remarks,
+    receivedFrom,
+    referenceNumber,
+    utrNumber,
+    chequeNumber,
+    chequeDate,
+    bankName,
+    chequeStatus,
+    upiReference,
     pushToTransactions: document.querySelector("[name='receiptPushToTransactions']")?.checked === true,
     feeReceiptId: crypto.randomUUID(),
     transactionId: "",
@@ -8714,6 +8772,9 @@ function validateFeeReceipt(receipt = {}, outstandingAmount = null) {
   if (!receipt.receivedDate) return "Received Date is required.";
   if (receipt.paymentMode === "Cash" && receipt.accountKey !== "cash") return "Cash receipts must use Cash in Hand.";
   if (receipt.paymentMode !== "Cash" && !["federal_bank", "tmb"].includes(receipt.accountKey)) return "Select Federal Bank or TMB for this non-cash receipt.";
+  if (receipt.paymentMode === "Bank Transfer" && !(receipt.utrNumber || receipt.referenceNumber)) return "Enter the bank UTR or transfer reference number.";
+  if (receipt.paymentMode === "UPI" && !receipt.upiReference) return "Enter the UPI reference number.";
+  if (receipt.paymentMode === "Cheque" && (!receipt.chequeNumber || !receipt.chequeDate || !receipt.bankName)) return "Enter the cheque number, cheque date and bank name.";
   if (Number.isFinite(outstandingAmount) && receipt.receivedAmount + receipt.discountAmount > outstandingAmount + 0.005) return `Received amount and discount cannot exceed the outstanding balance of ${money(outstandingAmount)}.`;
   if (receipt.receivedAmount > receipt.billedAmount && !confirm("Received Amount is more than Billed Amount. Do you want to continue?")) return "Receipt save cancelled.";
   return "";
@@ -8737,6 +8798,7 @@ function feeReceiptDetails(file = {}) {
     paymentMode,
     accountKey,
     remarks: file.feeReceivedRemarks || file.receiptRemarks || file.receipt_remarks || "",
+    receivedFrom: file.name || "",
   };
 }
 
@@ -9680,39 +9742,84 @@ async function openEditFeeCollectionModal(receiptId) {
   }
 }
 
-function openFeeReceiptViewModal(receiptId) {
+async function fetchFeeReceiptPdf(receiptId, download = false) {
+  const headers = {}; const token = apiToken(); if (token) headers.Authorization = `Bearer ${token}`;
+  let response = await fetch(`/api/finance/receipts/${encodeURIComponent(receiptId)}/pdf${download ? "?download=1" : ""}`, { headers });
+  if (response.status === 401 && await refreshApiSession()) {
+    const refreshedHeaders = {}; const refreshedToken = apiToken(); if (refreshedToken) refreshedHeaders.Authorization = `Bearer ${refreshedToken}`;
+    response = await fetch(`/api/finance/receipts/${encodeURIComponent(receiptId)}/pdf${download ? "?download=1" : ""}`, { headers: refreshedHeaders });
+  }
+  if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.error || "Unable to prepare the receipt PDF."); }
+  return response.blob();
+}
+
+async function downloadFeeReceiptPdf(receiptId) {
+  try {
+    const blob = await fetchFeeReceiptPdf(receiptId, true); const receipt = feeReceiptById(receiptId) || {};
+    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url;
+    link.download = `Money-Receipt-${String(receipt.receiptNumber || receiptId).replace(/[^A-Za-z0-9_-]+/g, "-")}.pdf`;
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (error) { toast(error.message || "Unable to download receipt PDF."); }
+}
+
+async function printFeeReceiptPdf(receiptId) {
+  const target = window.open("", "_blank");
+  if (target) target.document.body.innerHTML = "<p style='font:600 15px Arial;padding:24px'>Preparing receipt PDF...</p>";
+  try {
+    const blob = await fetchFeeReceiptPdf(receiptId); const url = URL.createObjectURL(blob);
+    if (target) { target.location.href = url; target.onload = () => target.print(); } else window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  } catch (error) { target?.close(); toast(error.message || "Unable to print receipt PDF."); }
+}
+
+function receiptSnapshotDetails(snapshot = {}) {
+  const payment = snapshot.payment || {}; const summary = snapshot.summary || {}; const client = snapshot.client || {}; const billing = snapshot.billing || {};
+  return `<div class="money-receipt-preview">
+    <div class="money-receipt-preview-head"><div><span>${escapeHtml(String(snapshot.receiptType || "Payment Receipt").toUpperCase())}</span><h3>${escapeHtml(snapshot.receiptNumber || "Receipt")}</h3></div><strong>${rupee(payment.amountReceived || 0)}</strong></div>
+    <div class="money-receipt-status-row"><span>${escapeHtml(summary.paymentStatus || "Issued")}</span><small>Payment ${escapeHtml(displayDate(snapshot.paymentDate) || "-")} | Issued ${escapeHtml(displayDate(snapshot.issueDate) || "-")}</small></div>
+    <div class="money-receipt-detail-grid">
+      <div><span>Client</span><strong>${escapeHtml(client.name || "-")}</strong></div><div><span>Received From</span><strong>${escapeHtml(snapshot.payer?.name || client.name || "-")}</strong></div>
+      <div><span>Service</span><strong>${escapeHtml(snapshot.service?.name || "-")}</strong></div><div><span>FY</span><strong>${escapeHtml(snapshot.service?.financialYear || "-")}</strong></div>
+      <div><span>Payment Mode</span><strong>${escapeHtml(payment.mode || "-")}</strong></div><div><span>Account</span><strong>${escapeHtml(payment.account || "-")}</strong></div>
+      <div><span>Reference</span><strong>${escapeHtml(payment.reference || payment.transactionReference || "-")}</strong></div><div><span>Bill Reference</span><strong>${escapeHtml(billing.number || "Advance")}</strong></div>
+    </div>
+    <div class="money-receipt-balance-grid"><div><span>Bill Value</span><strong>${rupee(summary.billValue || 0)}</strong></div><div><span>Previous Received</span><strong>${rupee(summary.previousReceived || 0)}</strong></div><div><span>Current Receipt</span><strong>${rupee(summary.amountReceived || 0)}</strong></div><div><span>Discount / Adjustment</span><strong>${rupee(Number(summary.discount || 0) + Number(summary.adjustment || 0))}</strong></div><div><span>Balance</span><strong>${rupee(summary.outstanding || 0)}</strong></div></div>
+    ${payment.remarks ? `<div class="money-receipt-remarks"><span>Remarks</span><p>${escapeHtml(payment.remarks)}</p></div>` : ""}
+  </div>`;
+}
+
+function showPaymentReceiptSuccess(receipt = {}) {
+  if (!receipt?.id) return toast("Payment recorded successfully.");
+  closeFeeReceiptActionModal(); const snapshot = receipt.receiptSnapshot || receipt.receipt_snapshot || {};
+  const modal = document.createElement("div"); modal.id = "feeReceiptActionModal"; modal.className = "simple-modal open";
+  modal.innerHTML = `<div class="simple-modal-card payment-success-modal"><div class="payment-success-icon">✓</div><h2>Payment Recorded Successfully</h2><p>Receipt No: <strong>${escapeHtml(receipt.receiptNumber || receipt.receipt_number || "Preparing")}</strong></p><div class="payment-success-summary"><span>Received From<strong>${escapeHtml(snapshot.payer?.name || "-")}</strong></span><span>Amount Received<strong>${rupee(snapshot.payment?.amountReceived || receipt.amount || 0)}</strong></span><span>Payment Mode<strong>${escapeHtml(snapshot.payment?.mode || receipt.paymentMode || "-")}</strong></span><span>Outstanding Balance<strong>${rupee(snapshot.summary?.outstanding || 0)}</strong></span></div><div class="drawer-actions"><button class="secondary-button" data-view-issued-receipt="${escapeHtml(receipt.id)}">View Receipt</button><button class="secondary-button" data-download-receipt="${escapeHtml(receipt.id)}">Download PDF</button><button class="secondary-button" data-print-receipt="${escapeHtml(receipt.id)}">Print</button><button class="primary-button" data-close-fee-receipt-modal>Close</button></div></div>`;
+  document.body.appendChild(modal); document.querySelector("#backdrop")?.classList.add("show");
+  modal.querySelector("[data-view-issued-receipt]").onclick = () => openFeeReceiptViewModal(receipt.id);
+  modal.querySelector("[data-download-receipt]").onclick = () => downloadFeeReceiptPdf(receipt.id);
+  modal.querySelector("[data-print-receipt]").onclick = () => printFeeReceiptPdf(receipt.id);
+  modal.querySelector("[data-close-fee-receipt-modal]").onclick = closeFeeReceiptActionModal;
+}
+
+async function openFeeReceiptViewModal(receiptId) {
   closeFeeReceiptActionModal();
-  const receipt = feeReceiptById(receiptId);
-  const file = feeReceiptFile(receipt || {});
-  if (!receipt || !file) return toast("Fee receipt or related file was not found.");
   const modal = document.createElement("div");
   modal.id = "feeReceiptActionModal";
   modal.className = "simple-modal open";
-  modal.innerHTML = `
-    <div class="simple-modal-card receipt-action-modal-card">
-      <div class="drawer-head">
-        <div><h3>Fee Receipt Details</h3><p class="small-muted">Original receipt and reversal audit information.</p></div>
-        <button class="icon-button" data-close-fee-receipt-modal title="Close">X</button>
-      </div>
-      <div class="drawer-body receipt-details-body">
-        <section class="receipt-details-section">
-          <h4>Amount Details</h4>
-          <div class="receipt-audit-grid receipt-amount-grid">
-            ${feeReceiptAmountDetails(receipt, file).map(([label, value]) => `<div class="receipt-audit-item receipt-amount-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
-          </div>
-        </section>
-        <section class="receipt-details-section">
-          <h4>Receipt Information</h4>
-          <div class="receipt-audit-grid">
-            ${feeReceiptAuditDetails(receipt, file).filter(([label]) => !["Bill Amount", "Original Received Amount"].includes(label)).map(([label, value]) => `<div class="receipt-audit-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
-          </div>
-        </section>
-      </div>
-      <div class="drawer-actions"><button class="secondary-button" data-close-fee-receipt-modal>Close</button></div>
-    </div>`;
+  modal.innerHTML = `<div class="simple-modal-card receipt-action-modal-card money-receipt-modal"><div class="drawer-head"><div><h3>Payment Receipt</h3><p class="small-muted">Loading the frozen receipt snapshot...</p></div><button class="icon-button" data-close-fee-receipt-modal title="Close">X</button></div><div class="drawer-body receipt-details-body"><div class="client-import-spinner"></div></div></div>`;
   document.body.appendChild(modal);
   document.querySelector("#backdrop")?.classList.add("show");
   modal.querySelectorAll("[data-close-fee-receipt-modal]").forEach((button) => { button.onclick = closeFeeReceiptActionModal; });
+  try {
+    const data = await apiJson(`/api/finance/receipts/${encodeURIComponent(receiptId)}`); const receipt = data.receipt || {}; const snapshot = receipt.receiptSnapshot || receipt.receipt_snapshot;
+    if (!snapshot) throw new Error("This is a legacy payment. Generate a historical receipt first.");
+    modal.querySelector(".receipt-details-body").innerHTML = receiptSnapshotDetails(snapshot);
+    modal.querySelector(".drawer-head h3").textContent = snapshot.receiptType || "Payment Receipt";
+    modal.querySelector(".drawer-head p").textContent = `${receipt.receiptNumber || ""} | ${receipt.documentStatus || "Issued"}`;
+    modal.querySelector(".simple-modal-card").insertAdjacentHTML("beforeend", `<div class="drawer-actions"><button class="secondary-button" data-download-receipt="${escapeHtml(receiptId)}">Download PDF</button><button class="secondary-button" data-print-receipt="${escapeHtml(receiptId)}">Print</button><button class="primary-button" data-close-fee-receipt-modal>Close</button></div>`);
+    modal.querySelector("[data-download-receipt]").onclick = () => downloadFeeReceiptPdf(receiptId); modal.querySelector("[data-print-receipt]").onclick = () => printFeeReceiptPdf(receiptId); modal.querySelectorAll("[data-close-fee-receipt-modal]").forEach((button) => { button.onclick = closeFeeReceiptActionModal; });
+  } catch (error) {
+    modal.querySelector(".receipt-details-body").innerHTML = `<div class="fee-collection-load-error">${escapeHtml(error.message || "Unable to load receipt.")}</div>`;
+  }
 }
 
 function openBilledReceiptDetails(fileId) {
@@ -10188,6 +10295,20 @@ function bindFileActions() {
   });
   document.querySelectorAll("[data-view-fee-receipt]").forEach((btn) => {
     btn.onclick = () => openFeeReceiptViewModal(btn.dataset.viewFeeReceipt);
+  });
+  document.querySelectorAll("[data-download-fee-receipt]").forEach((btn) => {
+    btn.onclick = () => downloadFeeReceiptPdf(btn.dataset.downloadFeeReceipt);
+  });
+  document.querySelectorAll("[data-print-fee-receipt]").forEach((btn) => {
+    btn.onclick = () => printFeeReceiptPdf(btn.dataset.printFeeReceipt);
+  });
+  document.querySelectorAll("[data-generate-historical-receipt]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm("Generate a receipt now for this historical payment? This will not create another payment or alter any balance.")) return;
+      btn.disabled = true;
+      try { const result = await generateHistoricalReceiptToApi(btn.dataset.generateHistoricalReceipt); renderAll(); showPaymentReceiptSuccess(result.receipt); }
+      catch (error) { toast(error.message || "Unable to generate historical receipt."); if (btn.isConnected) btn.disabled = false; }
+    };
   });
   document.querySelectorAll("[data-billed-receipt-details]").forEach((btn) => {
     btn.onclick = () => openBilledReceiptDetails(btn.dataset.billedReceiptDetails);
@@ -10666,6 +10787,16 @@ function openMarkReceivedModal(fileId) {
             ${feeReceiptField("receiptDiscountAmount", "Discount", receipt.discountAmount, "number", "min='0' step='0.01'")}
             ${feeReceiptSelect("receiptPaymentMode", "Mode", paymentModes(), receipt.paymentMode)}
           </div>
+          <div class="receipt-form-row receipt-reference-row">
+            ${feeReceiptField("receiptReceivedFrom", "Received From", receipt.receivedFrom || file.name, "text", "required")}
+            ${feeReceiptField("receiptReferenceNumber", "Payment Reference", "", "text")}
+            ${feeReceiptField("receiptUtrNumber", "UTR Number", "", "text", "data-receipt-mode-field='Bank Transfer'")}
+            ${feeReceiptField("receiptUpiReference", "UPI Reference", "", "text", "data-receipt-mode-field='UPI'")}
+            ${feeReceiptField("receiptChequeNumber", "Cheque Number", "", "text", "data-receipt-mode-field='Cheque'")}
+            ${feeReceiptField("receiptChequeDate", "Cheque Date", "", "date", "data-receipt-mode-field='Cheque'")}
+            ${feeReceiptField("receiptBankName", "Cheque Bank", "", "text", "data-receipt-mode-field='Cheque'")}
+            ${feeReceiptSelect("receiptChequeStatus", "Cheque Status", ["Pending Clearance", "Cleared"], "Pending Clearance")}
+          </div>
           ${feeReceiptAccountSelect("receiptAccount", "Account", receipt.accountKey)}
           ${feeReceiptTextarea("receiptRemarks", "Remarks", receipt.remarks)}
         </div>
@@ -10687,7 +10818,27 @@ function openMarkReceivedModal(fileId) {
     input.addEventListener("input", updateFeeReceiptBalancePreview);
   });
   bindPaymentAccountControls("[name='receiptPaymentMode']", "[name='receiptAccount']");
+  bindReceiptModeFields();
   updateFeeReceiptBalancePreview();
+}
+
+function bindReceiptModeFields() {
+  const mode = document.querySelector("[name='receiptPaymentMode']");
+  if (!mode) return;
+  const sync = () => {
+    document.querySelectorAll("[data-receipt-mode-field]").forEach((input) => {
+      const field = input.closest(".field") || input.parentElement;
+      const visible = input.dataset.receiptModeField === mode.value;
+      if (field) field.hidden = !visible;
+      input.disabled = !visible;
+    });
+    const chequeStatus = document.querySelector("[name='receiptChequeStatus']");
+    const chequeStatusField = chequeStatus?.closest(".field") || chequeStatus?.parentElement;
+    if (chequeStatusField) chequeStatusField.hidden = mode.value !== "Cheque";
+    if (chequeStatus) chequeStatus.disabled = mode.value !== "Cheque";
+  };
+  mode.addEventListener("change", sync);
+  sync();
 }
 
 function closeMarkReceivedModal() {
@@ -10716,8 +10867,8 @@ async function saveReceivedFromModal(fileId) {
       const result = await saveLinkedFeeReceiptToApi(fileId, { ...receipt, receivedAt }, collection);
       if (button) button.disabled = false;
       closeMarkReceivedModal();
-      toast(receipt.pushToTransactions ? "Fee receipt saved and collection linked successfully." : "Fee receipt saved successfully.");
       renderAll();
+      showPaymentReceiptSuccess(result.receipt || feeReceiptById(receipt.feeReceiptId));
       return result;
     } catch (error) {
       console.error("Fee receipt save failed", error);

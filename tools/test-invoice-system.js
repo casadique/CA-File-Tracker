@@ -2,6 +2,7 @@ const assert = require("assert/strict");
 const fs = require("fs");
 const path = require("path");
 const {
+  DEFAULT_GSTIN,
   TEST_GSTIN,
   PRESUMPTIVE_TAX_DECLARATION,
   BILL_OF_SUPPLY_PAYMENT_DETAILS,
@@ -74,6 +75,7 @@ assert.equal(amountInWords(11800), "Rupees Eleven Thousand Eight Hundred Only");
 assert.equal(financialYearForDate("2026-04-01"), "2026-27");
 assert.equal(financialYearForDate("2027-03-31"), "2026-27");
 assert.equal(TEST_GSTIN, "32AVFPM0043F1Z7");
+assert.equal(DEFAULT_GSTIN, "32AVFPM0043F2Z6");
 const billTotals = calculateInvoice({ ...base, lines: [{ ...base.lines[0], gstRate: 0 }] }, settings);
 assert.equal(billTotals.invoiceTotal, 10000);
 assert.equal(billTotals.cgstAmount + billTotals.sgstAmount + billTotals.igstAmount, 0);

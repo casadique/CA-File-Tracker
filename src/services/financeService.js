@@ -1,5 +1,10 @@
 const crypto = require("crypto");
-const { getAppState, patchAppState } = require("./appStateService");
+const appStateService = require("./appStateService");
+const { getAppState, patchAppState } = appStateService;
+// Production uses the optimistic atomic helper so receipt numbers remain
+// serialized. Isolated legacy tests may expose only the original patch helper.
+const patchAppStateAtomic = appStateService.patchAppStateAtomic || patchAppState;
+const { issueReceiptRecord, markReceiptReversed } = require("./receiptService");
 
 const FINANCE_ACCOUNTS = Object.freeze([
   { key: "cash", name: "Cash in Hand", type: "cash", displayOrder: 1 },
@@ -202,7 +207,7 @@ async function saveCollection(payload, userId, profile) {
 }
 
 async function deleteCollection(id, userId, profile) {
-  return patchAppState((state) => {
+  return patchAppStateAtomic((state) => {
     const now = new Date();
     const before = (state.otherCashCollections || []).find((item) => item.id === id && isActiveTransaction(item));
     if (!before) {
@@ -217,7 +222,7 @@ async function deleteCollection(id, userId, profile) {
     if (linkedFeeReceipt) {
       state.feeReceipts = (state.feeReceipts || []).map((receipt) => {
         if (receipt.id !== linkedReceiptId && receipt.transactionId !== id && receipt.transaction_id !== id) return receipt;
-        return {
+        return markReceiptReversed(state, {
           ...receipt,
           status: "reversed",
           isDeleted: true,
@@ -228,7 +233,7 @@ async function deleteCollection(id, userId, profile) {
           deleted_by: profile?.id || profile?.email || "",
           updatedAt: now.toISOString(),
           updated_at: now.toISOString(),
-        };
+        }, profile, "Linked collection deleted", now);
       });
       state.files = (state.files || []).map((file) => {
         if (file.id !== linkedFileId) return file;
@@ -254,7 +259,7 @@ async function deleteCollection(id, userId, profile) {
 }
 
 async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId, profile) {
-  return patchAppState((state) => {
+  return patchAppStateAtomic((state) => {
     const now = new Date();
     const fileIndex = (state.files || []).findIndex((file) => file.id === fileId);
     if (fileIndex < 0) {
@@ -366,7 +371,7 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
       pushStatus = "pushed";
     }
 
-    const receipt = {
+    let receipt = {
       ...(existingReceipt || {}),
       id: receiptId,
       fileId,
@@ -388,6 +393,24 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
       accountName: financeAccountName(receiptAccountKey),
       account_name: financeAccountName(receiptAccountKey),
       remarks: String(receiptPayload.remarks || "").trim(),
+      receivedFrom: String(receiptPayload.receivedFrom || receiptPayload.received_from || original.name || "").trim(),
+      received_from: String(receiptPayload.receivedFrom || receiptPayload.received_from || original.name || "").trim(),
+      billingName: String(receiptPayload.billingName || receiptPayload.billing_name || original.billingName || original.name || "").trim(),
+      billing_name: String(receiptPayload.billingName || receiptPayload.billing_name || original.billingName || original.name || "").trim(),
+      referenceNumber: String(receiptPayload.referenceNumber || receiptPayload.reference_number || "").trim(),
+      reference_number: String(receiptPayload.referenceNumber || receiptPayload.reference_number || "").trim(),
+      utrNumber: String(receiptPayload.utrNumber || receiptPayload.utr_number || "").trim(),
+      utr_number: String(receiptPayload.utrNumber || receiptPayload.utr_number || "").trim(),
+      chequeNumber: String(receiptPayload.chequeNumber || receiptPayload.cheque_number || "").trim(),
+      cheque_number: String(receiptPayload.chequeNumber || receiptPayload.cheque_number || "").trim(),
+      chequeDate: normalizeDate(receiptPayload.chequeDate || receiptPayload.cheque_date) || "",
+      cheque_date: normalizeDate(receiptPayload.chequeDate || receiptPayload.cheque_date) || "",
+      chequeStatus: String(receiptPayload.chequeStatus || receiptPayload.cheque_status || (receiptPaymentMethod === "Cheque" ? "Pending Clearance" : "")).trim(),
+      cheque_status: String(receiptPayload.chequeStatus || receiptPayload.cheque_status || (receiptPaymentMethod === "Cheque" ? "Pending Clearance" : "")).trim(),
+      bankName: String(receiptPayload.bankName || receiptPayload.bank_name || "").trim(),
+      bank_name: String(receiptPayload.bankName || receiptPayload.bank_name || "").trim(),
+      upiReference: String(receiptPayload.upiReference || receiptPayload.upi_reference || "").trim(),
+      upi_reference: String(receiptPayload.upiReference || receiptPayload.upi_reference || "").trim(),
       receivedBy: profile?.name || "",
       received_by: profile?.name || "",
       receivedByUserId: profile?.id || userId || "",
@@ -410,6 +433,7 @@ async function saveFeeReceipt(fileId, receiptPayload, collectionPayload, userId,
       updatedAt: now.toISOString(),
       updated_at: now.toISOString(),
     };
+    receipt = issueReceiptRecord(state, receipt, original, collection, profile, now);
     state.feeReceipts = upsertById(state.feeReceipts || [], receipt).sort(financeNewestFirst);
     state.files[fileIndex] = applyFeeReceiptSummary(original, state.feeReceipts, now, profile, receiptPayload);
     syncIssuedInvoicePayment(state, state.files[fileIndex], now);
@@ -513,7 +537,7 @@ function feeCollectionChangeList(before, after) {
 }
 
 async function editFeeCollection(receiptId, payload, userId, profile) {
-  return patchAppState((state) => {
+  return patchAppStateAtomic((state) => {
     const now = new Date();
     const snapshot = feeCollectionEditorPayload(state, receiptId);
     const receipt = snapshot.receipt;
@@ -593,8 +617,18 @@ async function editFeeCollection(receiptId, payload, userId, profile) {
     };
     const after = { billNo, billDate, grossBillAmount, invoiceRemarks, discountType, discountAmount, discountPercentage, discountReason, discountRemarks, receivedDate, receivedAmount, paymentMode, accountKey, referenceNumber, receiptRemarks, generalRemarks };
     const changes = feeCollectionChangeList(before, after);
+    if (receipt.receiptNumber) {
+      const materialFields = new Set(["billNo", "billDate", "grossBillAmount", "discountType", "discountAmount", "discountPercentage", "discountReason", "discountRemarks", "receivedDate", "receivedAmount", "paymentMode", "accountKey", "referenceNumber"]);
+      const materialChanges = changes.filter((change) => materialFields.has(change.key));
+      if (materialChanges.length) {
+        throw Object.assign(new Error("An issued receipt cannot be financially overwritten. Reverse this receipt and record a corrected payment."), { status: 409 });
+      }
+      if (changes.length && !generalRemarks) {
+        throw Object.assign(new Error("Enter a reason in General Remarks for a non-financial receipt correction."), { status: 400, field: "generalRemarks" });
+      }
+    }
 
-    const updatedReceipt = {
+    let updatedReceipt = {
       ...receipt,
       receiptDate: receivedDate, receipt_date: receivedDate, receivedDate, received_date: receivedDate,
       amount: receivedAmount, receivedAmount, received_amount: receivedAmount,
@@ -609,6 +643,16 @@ async function editFeeCollection(receiptId, payload, userId, profile) {
       updatedBy: profile?.name || "", updated_by: profile?.id || profile?.email || userId || "",
       updatedAt: now.toISOString(), updated_at: now.toISOString(),
     };
+    if (receipt.receiptNumber && receipt.receiptSnapshot) {
+      updatedReceipt.receiptSnapshot = {
+        ...receipt.receiptSnapshot,
+        payment: { ...receipt.receiptSnapshot.payment, remarks: receiptRemarks },
+        reissueNote: `Non-financial correction recorded: ${generalRemarks}`,
+      };
+      updatedReceipt.receipt_snapshot = updatedReceipt.receiptSnapshot;
+      updatedReceipt.pdfStatus = "ready";
+      updatedReceipt.pdf_status = "ready";
+    }
     state.feeReceipts = upsertById(state.feeReceipts || [], updatedReceipt).sort(feeReceiptNewestFirst);
 
     if (linkedTransaction) {
@@ -658,7 +702,7 @@ async function editFeeCollection(receiptId, payload, userId, profile) {
 }
 
 async function reverseUnlinkedFeeReceipt(fileId, userId, profile) {
-  return patchAppState((state) => {
+  return patchAppStateAtomic((state) => {
     const now = new Date();
     const fileIndex = (state.files || []).findIndex((file) => file.id === fileId);
     if (fileIndex < 0) {
@@ -689,7 +733,7 @@ async function reverseUnlinkedFeeReceipt(fileId, userId, profile) {
     }
 
     if (receipt) {
-      state.feeReceipts = (state.feeReceipts || []).map((item) => item.id === receipt.id ? {
+      state.feeReceipts = (state.feeReceipts || []).map((item) => item.id === receipt.id ? markReceiptReversed(state, {
         ...item,
         status: "reversed",
         isDeleted: true,
@@ -700,7 +744,7 @@ async function reverseUnlinkedFeeReceipt(fileId, userId, profile) {
         deleted_by: profile?.id || profile?.email || "",
         updatedAt: now.toISOString(),
         updated_at: now.toISOString(),
-      } : item);
+      }, profile, "Marked Not Received", now) : item);
     }
     const reverted = receipt
       ? applyFeeReceiptSummary(file, state.feeReceipts || [], now, profile)
@@ -719,7 +763,7 @@ async function reverseFeeReceipt(receiptId, reason, userId, profile) {
     throw error;
   }
 
-  return patchAppState((state) => {
+  return patchAppStateAtomic((state) => {
     const now = new Date();
     const receiptIndex = (state.feeReceipts || []).findIndex((item) => item.id === receiptId);
     if (receiptIndex < 0) {
@@ -759,7 +803,7 @@ async function reverseFeeReceipt(receiptId, reason, userId, profile) {
       || originalReceipt.push_status
       || (linkedCollection ? "pushed" : "not_pushed");
 
-    const reversedReceipt = {
+    let reversedReceipt = {
       ...originalReceipt,
       status: "not_received",
       receiptStatus: "not_received",
@@ -781,6 +825,7 @@ async function reverseFeeReceipt(receiptId, reason, userId, profile) {
       updatedAt: now.toISOString(),
       updated_at: now.toISOString(),
     };
+    reversedReceipt = markReceiptReversed(state, reversedReceipt, profile, reversalReason, now);
     state.feeReceipts = (state.feeReceipts || []).map((item, index) => index === receiptIndex ? reversedReceipt : item);
 
     if (linkedCollection) {
