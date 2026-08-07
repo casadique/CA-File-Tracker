@@ -15633,16 +15633,25 @@ body,
   gap: 13px;
 }
 
-.collection-details-grid .cash-received-from-field {
-  grid-column: span 2;
+.collection-entry-body {
+  display: grid;
+  gap: 14px;
+  margin: 0 20px;
+  padding: 16px;
+  border: 1px solid #dce6f2;
+  border-radius: 14px;
+  background: #fbfdff;
 }
 
-.collection-details-grid .expense-item-field:not(.cash-received-from-field) {
-  grid-column: span 3;
+.collection-primary-grid {
+  grid-template-columns: 150px minmax(320px, 1fr) 105px 210px;
+  align-items: end;
 }
 
-.collection-details-grid .particulars-field {
-  grid-column: 1 / -1;
+.collection-primary-grid .cash-received-from-field,
+.collection-primary-grid .particulars-field {
+  grid-column: auto;
+  min-width: 0;
 }
 
 .collection-payment-grid {
@@ -15915,6 +15924,7 @@ body,
   }
 
   .collection-form-section,
+  .collection-entry-body,
   .collection-form-modern .collection-form-actions {
     margin-right: 12px;
     margin-left: 12px;
@@ -15927,9 +15937,8 @@ body,
   }
 
   .collection-search-field,
-  .collection-details-grid .cash-received-from-field,
-  .collection-details-grid .expense-item-field:not(.cash-received-from-field),
-  .collection-details-grid .particulars-field {
+  .collection-primary-grid .cash-received-from-field,
+  .collection-primary-grid .particulars-field {
     grid-column: auto;
   }
 

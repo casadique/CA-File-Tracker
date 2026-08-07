@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
-for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Account balances", "Combined opening balance", "Previous balances will not be overwritten.", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Collection Details", "Payment &amp; Reference", "Find Collection Transactions", "collection-register-modern"]) {
+for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Account balances", "Combined opening balance", "Previous balances will not be overwritten.", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Find Collection Transactions", "collection-register-modern"]) {
   assert.ok(app.includes(token), `Missing modern Transactions UI token: ${token}`);
 }
 assert.doesNotMatch(app.slice(app.indexOf("function expenseOverviewCard"), app.indexOf("function normalizeCollectionType")), /transactionSparkline\(/,
@@ -16,6 +16,12 @@ assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.reconciliation-mobile
 for (const selector of [".collection-form-modern", ".collection-filter-grid", ".collection-register-table", ".collection-type-badge"]) {
   assert.ok(styles.includes(`${selector} {`), `Missing modern Collections style: ${selector}`);
 }
+const collectionFormSource = app.slice(app.indexOf("function renderCashCollectionsTab"), app.indexOf("function renderAccountTransfersTab"));
+for (const removedHeading of ["Collection Details", "Payment &amp; Reference", "Notes &amp; Attachment"]) {
+  assert.ok(!collectionFormSource.includes(removedHeading), `Collection form must not show the old ${removedHeading} section heading`);
+}
+assert.ok(collectionFormSource.includes("collection-primary-grid"), "Collection form must keep Date, Received From, Amount and Particulars in one compact row");
+assert.ok(styles.includes("grid-template-columns: 150px minmax(320px, 1fr) 105px 210px;"), "Collection Amount and Particulars fields must use compact widths");
 for (const selector of [".opening-balance-effective-card", ".opening-balance-modal-account", ".opening-balance-input-wrap", ".opening-balance-modal-total", ".opening-balance-modal-footer"]) {
   assert.ok(styles.includes(`${selector} {`), `Missing polished Opening Balances modal style: ${selector}`);
 }
@@ -23,7 +29,6 @@ assert.match(styles, /\.opening-balance-modal-grid\s*\{[^}]*grid-template-column
   "Opening Balance account cards should use a three-column desktop layout");
 assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.opening-balance-modal-grid,[\s\S]*?grid-template-columns:\s*1fr/,
   "Opening Balance account cards should stack on mobile");
-const collectionFormSource = app.slice(app.indexOf("function renderCashCollectionsTab"), app.indexOf("function renderAccountTransfersTab"));
 assert.doesNotMatch(collectionFormSource, /collectionTypeSelect\("cashCollectionType"/,
   "Add Collection must not show a Collection Type option");
 assert.match(app, /const collectionType = normalizeCollectionType\(existing\?\.collectionType \|\| existing\?\.collection_type \|\| "other_cash_collection"\)/,

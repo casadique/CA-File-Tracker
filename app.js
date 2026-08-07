@@ -18329,31 +18329,24 @@ function renderCashCollectionsTab() {
             </div>
             <span class="collection-form-status">${state.filters.editCashId ? "Editing record" : "New entry"}</span>
           </header>
-          <section class="collection-form-section" aria-labelledby="collectionDetailsHeading">
-            <div class="collection-section-head"><div><span>01</span><h4 id="collectionDetailsHeading">Collection Details</h4></div><p>Who paid, why it was received and the amount.</p></div>
-            <div class="collection-fields-grid collection-details-grid">
+          <div class="collection-entry-body">
+            <div class="collection-fields-grid collection-primary-grid">
               ${expenseDateField("cashDate", "Collection Date", editing?.date || todayDate())}
               ${cashReceivedFromField(editing?.receivedFrom || "")}
               ${expenseInput("cashAmount", "Amount", editing?.amount || "", "number", "0.01", "compact-field amount-field")}
               ${collectionParticularsSelect(editing?.particulars || "Fee Collection")}
             </div>
-          </section>
-          <section class="collection-form-section" aria-labelledby="collectionPaymentHeading">
-            <div class="collection-section-head"><div><span>02</span><h4 id="collectionPaymentHeading">Payment &amp; Reference</h4></div><p>Choose the method and destination account.</p></div>
             <div class="collection-fields-grid collection-payment-grid">
               ${expenseSelect("cashModeEntry", "Payment Method", paymentModes(), editing?.paymentMethod || editing?.payment_method || editing?.mode || "Cash")}
               ${financeAccountSelect("cashAccountEntry", "Account", transactionAccountKey(editing || {}, "cash"))}
               ${expenseInput("cashVoucherNo", "Ref No.", editing?.voucherNo || "", "text", "", "compact-field ref-field")}
               ${expenseInput("cashCollectedBy", "Collected By", editing?.createdBy || editing?.enteredBy || state.currentUser || "", "text")}
             </div>
-          </section>
-          <section class="collection-form-section collection-supporting-section" aria-labelledby="collectionNotesHeading">
-            <div class="collection-section-head"><div><span>03</span><h4 id="collectionNotesHeading">Notes &amp; Attachment</h4></div><p>Add optional supporting information.</p></div>
             <div class="collection-supporting-grid">
               ${expenseTextarea("cashRemarks", "Remarks", editing?.remarks || "")}
               ${cashAttachmentField(editing)}
             </div>
-          </section>
+          </div>
           <div class="action-row collection-form-actions">
             <button class="secondary-button" type="button" id="resetCashForm">${state.filters.editCashId ? "Cancel" : "Reset"}</button>
             <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editCashId ? "Update Collection" : "Save Collection"}</button>
