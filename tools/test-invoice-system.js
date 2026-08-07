@@ -4,6 +4,7 @@ const path = require("path");
 const {
   TEST_GSTIN,
   PRESUMPTIVE_TAX_DECLARATION,
+  BILL_OF_SUPPLY_PAYMENT_DETAILS,
   defaultInvoiceSettings,
   calculateInvoice,
   amountInWords,
@@ -27,6 +28,18 @@ assert.equal(settings.district, "Kannur");
 assert.equal(settings.pinCode, "670307");
 assert.equal(settings.email, "info@muhammadandassociates.com");
 assert.equal(settings.mobile, "+91 8089 190 842");
+assert.equal(settings.accountName, "MUHAMMAD AND ASSOCIATES");
+assert.equal(settings.bankName, "FEDERAL BANK");
+assert.equal(settings.accountNumber, "11260200015193");
+assert.equal(settings.branch, "PAYYANUR");
+assert.equal(settings.ifsc, "FDRL0001126");
+assert.deepEqual(BILL_OF_SUPPLY_PAYMENT_DETAILS, {
+  accountName: "MUHAMMAD AND ASSOCIATES",
+  bankName: "FEDERAL BANK",
+  accountNumber: "11260200015193",
+  branch: "PAYYANUR",
+  ifsc: "FDRL0001126",
+});
 const base = {
   taxMode: "Exclusive", placeOfSupplyStateCode: "32", recipient: { stateCode: "32" },
   lines: [{ description: "ITR Filing for FY 2025-26", sac: "998221", quantity: 1, unit: "Service", rate: 10000, discount: 0, gstRate: 18 }],
@@ -89,7 +102,7 @@ assert.doesNotMatch(service, /Reverse Charge:.*File Reference:/, "internal file 
 (async () => {
   const invoice = {
     invoiceId: "test", draftReference: "DRAFT-TEST", status: "Draft", documentType: "Bill of Supply", invoiceDate: "2026-08-06", dueDate: "2026-08-06", financialYear: "2026-27", placeOfSupply: "Kerala", reverseCharge: "No", fileReference: "FILE-1",
-    supplierSnapshot: { ...settings, legalName: "Muhammad & Associates", professionalDescription: "Chartered Accountants", gstin: TEST_GSTIN, pan: "AVFPM0043F", bankName: "Federal Bank", accountName: "Muhammad & Associates", accountNumber: "123456", ifsc: "FDRL0000001" },
+    supplierSnapshot: { ...settings, legalName: "Muhammad & Associates", professionalDescription: "Chartered Accountants", gstin: TEST_GSTIN, pan: "AVFPM0043F" },
     recipientSnapshot: { billingName: "Test Client", billingAddress: "Client address", state: "Kerala", stateCode: "32", gstin: "32ABCDE1234F1Z5" },
     items: billTotals.lines, ...billTotals,
     discountAmount: billTotals.totalDiscount, outstandingAmount: billTotals.netAmountPayable,

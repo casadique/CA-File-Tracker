@@ -7,6 +7,13 @@ const { getClient, updateClient } = require("./clientService");
 
 const TEST_GSTIN = "32AVFPM0043F1Z7";
 const PRESUMPTIVE_TAX_DECLARATION = "Taxable person paying tax in terms of Notification No. 2/2019-Central Tax (Rate) dated 07.03.2019, not eligible to collect tax on supplies.";
+const BILL_OF_SUPPLY_PAYMENT_DETAILS = Object.freeze({
+  accountName: "MUHAMMAD AND ASSOCIATES",
+  bankName: "FEDERAL BANK",
+  accountNumber: "11260200015193",
+  branch: "PAYYANUR",
+  ifsc: "FDRL0001126",
+});
 const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const INVOICE_STATUSES = new Set(["Not Issued", "Draft", "Issued", "Cancelled", "Credit Note Issued"]);
 
@@ -72,11 +79,11 @@ function defaultInvoiceSettings() {
     documentType: "Bill of Supply",
     authorisedSignatory: "",
     signatureImage: "",
-    bankName: "",
-    accountName: "Muhammad & Associates",
-    accountNumber: "",
-    ifsc: "",
-    branch: "",
+    bankName: BILL_OF_SUPPLY_PAYMENT_DETAILS.bankName,
+    accountName: BILL_OF_SUPPLY_PAYMENT_DETAILS.accountName,
+    accountNumber: BILL_OF_SUPPLY_PAYMENT_DETAILS.accountNumber,
+    ifsc: BILL_OF_SUPPLY_PAYMENT_DETAILS.ifsc,
+    branch: BILL_OF_SUPPLY_PAYMENT_DETAILS.branch,
     upiId: "",
     paymentTerms: "Due on receipt",
     paymentTermsDays: 0,
@@ -109,6 +116,11 @@ function normalizedSettings(value = {}) {
   merged.defaultTaxMode = /inclusive/i.test(merged.defaultTaxMode) ? "Inclusive" : "Exclusive";
   merged.documentType = "Bill of Supply";
   merged.declaration = PRESUMPTIVE_TAX_DECLARATION;
+  merged.bankName = text(merged.bankName) || defaults.bankName;
+  merged.accountName = text(merged.accountName) || defaults.accountName;
+  merged.accountNumber = text(merged.accountNumber) || defaults.accountNumber;
+  merged.ifsc = (text(merged.ifsc) || defaults.ifsc).toUpperCase();
+  merged.branch = text(merged.branch) || defaults.branch;
   merged.roundOffPreference = /nearest/i.test(merged.roundOffPreference) ? "Nearest Rupee" : "None";
   merged.isTestGstin = merged.gstin === TEST_GSTIN;
   return merged;
@@ -705,6 +717,12 @@ function configuredImage(value) {
   return null;
 }
 
+function billOfSupplyPaymentDetails() {
+  // This is the firm's approved remittance account and must remain consistent
+  // on historical reprints as well as newly issued Bills of Supply.
+  return { ...BILL_OF_SUPPLY_PAYMENT_DETAILS };
+}
+
 function drawInvoicePdf(invoice, { draft = false } = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margins: { top: 32, left: 36, right: 36, bottom: 42 }, bufferPages: true });
@@ -784,10 +802,23 @@ function drawInvoicePdf(invoice, { draft = false } = {}) {
     doc.font(boldFont).fillColor(blue).fontSize(8).text("Amount in words", 36, totalsStartY + 2, { width: 285 });
     doc.font(regularFont).fillColor("#1e293b").fontSize(8).text(amountInWords(invoice.invoiceTotal), 36, totalsStartY + 16, { width: 285 });
     doc.y = Math.max(totalsEndY, totalsStartY + 50);
-    doc.moveDown(1.4);
-    doc.font(boldFont).fillColor(blue).fontSize(8).text("Payment Details", 36, doc.y);
-    doc.font(regularFont).fillColor("#334155").fontSize(7.5).text([supplier.bankName && `Bank: ${supplier.bankName}`, supplier.accountName && `Account Name: ${supplier.accountName}`, supplier.accountNumber && `Account No: ${supplier.accountNumber}`, supplier.ifsc && `IFSC: ${supplier.ifsc}`, supplier.branch && `Branch: ${supplier.branch}`, supplier.upiId && `UPI: ${supplier.upiId}`].filter(Boolean).join(" | ") || "Payment details not configured", 36, doc.y + 14, { width: pageWidth });
-    doc.moveDown(2.2);
+    doc.moveDown(0.9);
+    const payment = billOfSupplyPaymentDetails(supplier);
+    const paymentY = doc.y;
+    const paymentHeight = 67;
+    doc.roundedRect(36, paymentY, pageWidth, paymentHeight, 4).fillAndStroke("#F8FAFC", "#AFC0D8");
+    doc.font(boldFont).fillColor(blue).fontSize(8.5).text("Payment Instructions:", 46, paymentY + 7, { width: 150 });
+    doc.font(boldFont).fillColor("#1E293B").fontSize(7.5).text("Payment to be made by Cheque or Bank Transfer", 198, paymentY + 8, { width: 350, align: "right" });
+    const paymentRow = (label, value, x, y, labelWidth, valueWidth) => {
+      doc.font(regularFont).fillColor("#475569").fontSize(7.2).text(label, x, y, { width: labelWidth });
+      doc.font(boldFont).fillColor("#0F172A").fontSize(7.5).text(value, x + labelWidth, y, { width: valueWidth });
+    };
+    paymentRow("Beneficiary", payment.accountName, 46, paymentY + 25, 72, 250);
+    paymentRow("Bank Name", payment.bankName, 46, paymentY + 40, 72, 170);
+    paymentRow("Branch", payment.branch, 310, paymentY + 40, 52, 180);
+    paymentRow("Account No", payment.accountNumber, 46, paymentY + 54, 72, 170);
+    paymentRow("IFSC Code", payment.ifsc, 310, paymentY + 54, 52, 180);
+    doc.y = paymentY + paymentHeight + 8;
     doc.font(boldFont).fontSize(8).fillColor(blue).text("Declaration / Terms", 36, doc.y);
     doc.font(regularFont).fontSize(7.3).fillColor("#475569").text([supplier.declaration, supplier.paymentTerms && `Payment Terms: ${supplier.paymentTerms}`].filter(Boolean).join("\n"), 36, doc.y + 12, { width: 350 });
     doc.font(boldFont).fillColor("#1e293b").fontSize(8).text(`For ${supplier.legalName || "the Firm"}\n\nAuthorised Signatory${supplier.authorisedSignatory ? `\n${supplier.authorisedSignatory}` : ""}`, 390, doc.y - 10, { width: 168, align: "right" });
@@ -844,6 +875,7 @@ async function invoiceHistory(invoiceId) {
 module.exports = {
   TEST_GSTIN,
   PRESUMPTIVE_TAX_DECLARATION,
+  BILL_OF_SUPPLY_PAYMENT_DETAILS,
   GSTIN_PATTERN,
   defaultInvoiceSettings,
   normalizedSettings,
