@@ -15,6 +15,9 @@ const MS_DAY = 86400000;
 const DESKTOP_NOTIFICATION_DEVICE_KEY = `${STORAGE_KEY}-desktop-notification-device`;
 const DESKTOP_LOCAL_BASELINE_KEY = `${STORAGE_KEY}-desktop-local-baseline`;
 const DESKTOP_LOCAL_SENT_KEY = `${STORAGE_KEY}-desktop-local-sent`;
+const ADD_COLLECTION_DRAFT_VERSION = 1;
+const ADD_COLLECTION_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+const ADD_COLLECTION_DRAFT_DEBOUNCE_MS = 400;
 
 const defaultDailyQuotes = [
   { text: "Success comes from consistent small efforts.", author: "Robert Collier" },
@@ -379,6 +382,13 @@ let lastChatFastSyncAt = 0;
 let chatSearchTimer = null;
 let selectedDrawerClient = null;
 let clientSearchTimer = null;
+let addCollectionDraftTimer = null;
+let addCollectionDraftAttachment = null;
+let addCollectionSourceSearchTimer = null;
+let addCollectionSourceSearchRequest = 0;
+let addCollectionSourceSearchController = null;
+let addCollectionSaveInFlight = false;
+let suppressAddCollectionDraftCapture = false;
 const clientMasterUi = {
   search: "",
   status: "Active",
@@ -443,8 +453,17 @@ window.addEventListener("storage", (event) => {
 });
 
 window.addEventListener("focus", () => {
+  persistAddCollectionDraft();
   if (isSupabaseMode()) refreshCentralState({ force: true });
   else syncSharedState(localStorage.getItem(STORAGE_KEY), true);
+});
+
+window.addEventListener("beforeunload", (event) => {
+  const values = collectionDraftValuesFromForm();
+  if (!values || !addCollectionDraftIsMeaningful(values)) return;
+  persistAddCollectionDraft();
+  event.preventDefault();
+  event.returnValue = "";
 });
 
 window.addEventListener("scroll", () => {
@@ -1442,6 +1461,7 @@ async function backendApiJson(path, options = {}) {
       headers,
     });
   } catch (error) {
+    if (error?.name === "AbortError") throw error;
     if (canRetry) {
       await new Promise((resolve) => setTimeout(resolve, 400 * (retryAttempt + 1)));
       return backendApiJson(path, { ...options, retryAttempt: retryAttempt + 1 });
@@ -4357,6 +4377,7 @@ function bindTopActions() {
 function bindShell() {
   bindTopActions();
   const runLogout = async () => {
+    clearAddCollectionDraft();
     await deactivateDesktopSubscription({ unsubscribe: true });
     state.session = { loggedIn: false };
     setApiToken("");
@@ -4466,6 +4487,11 @@ function renderNav() {
   document.querySelectorAll("#nav button[data-page]").forEach((btn) => {
     btn.onclick = () => {
       const page = btn.dataset.page;
+      const draftValues = collectionDraftValuesFromForm();
+      if (draftValues && addCollectionDraftIsMeaningful(draftValues) && page !== "expenses") {
+        persistAddCollectionDraft();
+        if (!confirm("Leave Add Collection? Your unfinished draft will be kept for this session.")) return;
+      }
       if (fileViews[page]) {
         persistConfiguredFinancialFilterValues(state.filters.listView);
         activePage = "files";
@@ -4496,6 +4522,8 @@ function renderNav() {
   });
 }
 function renderAll() {
+  if (suppressAddCollectionDraftCapture) suppressAddCollectionDraftCapture = false;
+  else persistAddCollectionDraft();
   if (activePage === "invites") activePage = "users";
   if (activePage === "users" && state.currentRole !== "Admin") activePage = "dashboard";
   if (activePage === "backup" && !canUseBackupPage()) activePage = "dashboard";
@@ -18318,11 +18346,13 @@ function openOpeningBalanceModal() {
 function renderCashCollectionsTab() {
   const data = transactionLedgerData("collections", filteredCashCollections());
   const editing = editingCashCollection();
+  const draft = editing ? null : readAddCollectionDraft();
   return `
     ${renderTransactionLedgerHeader("collections", data)}
     ${renderTransactionSummary("collections", data)}
     <div class="transaction-workspace">
       <section class="expense-stack transaction-main-column">
+        ${addCollectionDraftNotice(draft)}
         <form id="cashCollectionForm" class="expense-form collection-form collection-form-modern">
           <header class="collection-form-head">
             <div class="collection-form-title">
@@ -18334,7 +18364,7 @@ function renderCashCollectionsTab() {
           <div class="collection-entry-body">
             <div class="collection-fields-grid collection-primary-grid">
               ${expenseDateField("cashDate", "Collection Date", editing?.date || todayDate())}
-              ${cashReceivedFromField(editing?.receivedFrom || "")}
+              ${cashReceivedFromField(editing || {})}
               ${expenseInput("cashAmount", "Amount", editing?.amount || "", "number", "0.01", "compact-field amount-field")}
               ${collectionParticularsSelect(editing?.particulars || "Fee Collection")}
             </div>
@@ -18761,16 +18791,24 @@ function renderExpenseItemManager() {
   `;
 }
 
-function cashReceivedFromField(value = "") {
-  const options = cashReceivedFromOptions(value);
+function cashReceivedFromField(collection = {}) {
+  const value = collection.receivedFrom || collection.received_from || "";
+  const clientId = collection.clientId || collection.client_id || "";
+  const fileId = collection.fileId || collection.file_id || "";
+  const billingRecordId = collection.billingRecordId || collection.billing_record_id || collection.billNo || collection.bill_no || "";
   return `
-    <div class="field expense-item-field">
-      <label>Received From</label>
-      <div class="expense-item-combo">
-        <select id="cashReceivedFrom"><option value="">Select client/source</option>${options.map((item) => `<option value="${escapeHtml(item)}" ${item === value ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select>
-        <input id="newCashReceivedFrom" placeholder="New client / source">
-        <button class="secondary-button" id="addCashReceivedFrom" type="button">Add</button>
+    <div class="field expense-item-field collection-source-field">
+      <label for="cashReceivedFromSearch">Received From</label>
+      <div class="collection-source-combobox">
+        <input id="cashReceivedFromSearch" type="search" role="combobox" aria-autocomplete="list" aria-controls="cashReceivedFromResults" aria-expanded="false" autocomplete="off" value="${escapeHtml(value)}" placeholder="Search client, PAN, file, service or FY">
+        <input id="cashReceivedFrom" type="hidden" value="${escapeHtml(value)}">
+        <input id="cashClientId" type="hidden" value="${escapeHtml(clientId)}">
+        <input id="cashFileId" type="hidden" value="${escapeHtml(fileId)}">
+        <input id="cashBillingRecordId" type="hidden" value="${escapeHtml(billingRecordId)}">
+        <button id="clearCashReceivedFrom" class="collection-source-clear ${value ? "" : "hidden"}" type="button" aria-label="Clear selected client or file">&times;</button>
+        <div id="cashReceivedFromResults" class="collection-source-results hidden" role="listbox" aria-label="Matching clients and billed files"></div>
       </div>
+      <div id="cashReceivedFromSelection" class="collection-source-selection ${value ? "" : "hidden"}">${value ? `<strong>${escapeHtml(value)}</strong><span>${fileId ? "Linked billed file" : clientId ? "Linked client" : "Other source"}</span>` : ""}</div>
     </div>
   `;
 }
@@ -18798,6 +18836,314 @@ function expenseFilterInput(key, label, type = "text") {
 
 function expenseFilterSelect(key, label, options) {
   return `<div class="field"><label>${label}</label><select data-expense-filter="${key}">${options.map((option) => `<option value="${escapeHtml(option)}" ${state.filters[key] === option ? "selected" : ""}>${escapeHtml(option || "All")}</option>`).join("")}</select></div>`;
+}
+
+function addCollectionDraftStorageKey() {
+  const user = loggedInUser() || {};
+  const identity = String(user.authUserId || user.id || user.email || state.session?.authUserId || state.session?.userId || state.session?.userEmail || state.currentUser || "guest")
+    .trim().toLowerCase().replace(/[^a-z0-9@._-]+/g, "-");
+  return `${STORAGE_KEY}-add-collection-draft-v${ADD_COLLECTION_DRAFT_VERSION}-${identity}`;
+}
+
+function readAddCollectionDraft() {
+  try {
+    const draft = JSON.parse(sessionStorage.getItem(addCollectionDraftStorageKey()) || "null");
+    if (!draft || draft.version !== ADD_COLLECTION_DRAFT_VERSION || Date.now() - Number(draft.savedAt || 0) > ADD_COLLECTION_DRAFT_TTL_MS) {
+      sessionStorage.removeItem(addCollectionDraftStorageKey());
+      return null;
+    }
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+function collectionDraftValuesFromForm() {
+  const form = document.querySelector("#cashCollectionForm");
+  if (!form) return null;
+  const value = (selector) => document.querySelector(selector)?.value || "";
+  const selectedFile = document.querySelector("#cashAttachment")?.files?.[0] || null;
+  if (selectedFile) addCollectionDraftAttachment = selectedFile;
+  return {
+    cashDate: value("#cashDate"),
+    cashReceivedFrom: value("#cashReceivedFrom"),
+    cashReceivedFromSearch: value("#cashReceivedFromSearch"),
+    cashClientId: value("#cashClientId"),
+    cashFileId: value("#cashFileId"),
+    cashBillingRecordId: value("#cashBillingRecordId"),
+    cashAmount: value("#cashAmount"),
+    cashParticularsEntry: value("#cashParticularsEntry"),
+    cashModeEntry: value("#cashModeEntry"),
+    cashAccountEntry: value("#cashAccountEntry"),
+    cashVoucherNo: value("#cashVoucherNo"),
+    cashCollectedBy: value("#cashCollectedBy"),
+    cashRemarks: value("#cashRemarks"),
+    attachmentName: selectedFile?.name || readAddCollectionDraft()?.values?.attachmentName || "",
+  };
+}
+
+function addCollectionDraftIsMeaningful(values = {}) {
+  const defaultDate = todayDate();
+  return Boolean(
+    values.cashReceivedFrom || values.cashReceivedFromSearch || values.cashClientId || values.cashFileId
+    || values.cashAmount || values.cashVoucherNo || values.cashRemarks || values.attachmentName
+    || (values.cashDate && values.cashDate !== defaultDate)
+    || (values.cashParticularsEntry && values.cashParticularsEntry !== "Fee Collection")
+    || (values.cashModeEntry && values.cashModeEntry !== "Cash")
+    || (values.cashAccountEntry && values.cashAccountEntry !== "cash")
+  );
+}
+
+function persistAddCollectionDraft(options = {}) {
+  clearTimeout(addCollectionDraftTimer);
+  const values = collectionDraftValuesFromForm();
+  if (!values || state.filters.editCashId || !addCollectionDraftIsMeaningful(values)) {
+    if (options.clearEmpty) sessionStorage.removeItem(addCollectionDraftStorageKey());
+    return;
+  }
+  try {
+    sessionStorage.setItem(addCollectionDraftStorageKey(), JSON.stringify({ version: ADD_COLLECTION_DRAFT_VERSION, savedAt: Date.now(), values }));
+  } catch (error) {
+    console.warn("Add Collection draft could not be saved", error);
+  }
+}
+
+function scheduleAddCollectionDraftSave() {
+  clearTimeout(addCollectionDraftTimer);
+  addCollectionDraftTimer = setTimeout(() => persistAddCollectionDraft(), ADD_COLLECTION_DRAFT_DEBOUNCE_MS);
+}
+
+function clearAddCollectionDraft() {
+  clearTimeout(addCollectionDraftTimer);
+  sessionStorage.removeItem(addCollectionDraftStorageKey());
+  addCollectionDraftAttachment = null;
+  suppressAddCollectionDraftCapture = true;
+}
+
+function applyAddCollectionDraft(draft) {
+  if (!draft?.values || state.filters.editCashId) return false;
+  const values = draft.values;
+  Object.entries(values).forEach(([id, fieldValue]) => {
+    if (id === "attachmentName") return;
+    const input = document.querySelector(`#${id}`);
+    if (input && fieldValue !== undefined && fieldValue !== null) input.value = fieldValue;
+  });
+  if (addCollectionDraftAttachment && typeof DataTransfer !== "undefined") {
+    try {
+      const transfer = new DataTransfer();
+      transfer.items.add(addCollectionDraftAttachment);
+      const input = document.querySelector("#cashAttachment");
+      if (input) input.files = transfer.files;
+    } catch { /* File restoration is not supported by this browser. */ }
+  }
+  const uploadLabel = document.querySelector("#cashAttachment")?.closest(".upload-drop")?.querySelector("strong");
+  if (uploadLabel && values.attachmentName) uploadLabel.textContent = addCollectionDraftAttachment ? `Selected: ${values.attachmentName}` : `${values.attachmentName} — select again if required`;
+  updateCashSourceSelection({
+    label: values.cashReceivedFrom,
+    clientId: values.cashClientId,
+    fileId: values.cashFileId,
+  });
+  document.querySelector("#clearCashReceivedFrom")?.classList.toggle("hidden", !values.cashReceivedFrom);
+  return true;
+}
+
+function addCollectionDraftNotice(draft) {
+  if (!draft?.values || !addCollectionDraftIsMeaningful(draft.values)) return "";
+  const savedAt = new Date(Number(draft.savedAt || Date.now())).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  return `<div class="collection-draft-notice" id="collectionDraftNotice"><span><strong>Unsaved collection restored</strong><small>Last saved at ${escapeHtml(savedAt)} · kept only in this browser session.</small></span><div><button type="button" class="secondary-button" id="continueCollectionDraft">Continue Draft</button><button type="button" class="text-button danger" id="discardCollectionDraft">Discard Draft</button></div></div>`;
+}
+
+function normalizeCollectionSearch(value = "") {
+  return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function collectionSearchRank(text, query) {
+  const haystack = normalizeCollectionSearch(text);
+  const needle = normalizeCollectionSearch(query);
+  if (!needle) return 99;
+  if (haystack === needle) return 0;
+  if (haystack.startsWith(needle)) return 1;
+  if (haystack.split(" ").some((word) => word.startsWith(needle))) return 2;
+  if (haystack.includes(needle)) return 3;
+  return 99;
+}
+
+function highlightCollectionSearchMatch(value, query) {
+  const text = String(value || "");
+  const needle = String(query || "").trim();
+  if (!needle) return escapeHtml(text);
+  const index = text.toLowerCase().indexOf(needle.toLowerCase());
+  if (index < 0) return escapeHtml(text);
+  return `${escapeHtml(text.slice(0, index))}<mark>${escapeHtml(text.slice(index, index + needle.length))}</mark>${escapeHtml(text.slice(index + needle.length))}`;
+}
+
+function localCollectionFileMatches(term) {
+  return (state.files || []).map((file) => {
+    const summary = feeReceiptSummaryForFile(file);
+    const registration = fileRegistrationNumber(file);
+    const searchText = [file.name, registration, file.id, file.serviceType, fileFy(file), file.billNo, file.bill_no].join(" ");
+    return { file, summary, rank: collectionSearchRank(searchText, term) };
+  }).filter((item) => item.rank < 99 && item.summary.billedAmount > 0)
+    .sort((a, b) => (a.summary.outstandingAmount <= 0) - (b.summary.outstandingAmount <= 0) || a.rank - b.rank || String(a.file.name || "").localeCompare(String(b.file.name || "")))
+    .slice(0, 20);
+}
+
+function updateCashSourceSelection(source = {}) {
+  const panel = document.querySelector("#cashReceivedFromSelection");
+  if (!panel) return;
+  const label = source.label || "";
+  panel.classList.toggle("hidden", !label);
+  panel.innerHTML = label ? `<strong>${escapeHtml(label)}</strong><span>${source.fileId ? "Linked billed file" : source.clientId ? "Linked client" : "Other source"}</span>` : "";
+}
+
+function selectCashCollectionSource(source = {}) {
+  const set = (id, value) => { const input = document.querySelector(`#${id}`); if (input) input.value = value || ""; };
+  set("cashReceivedFrom", source.label);
+  set("cashReceivedFromSearch", source.label);
+  set("cashClientId", source.clientId);
+  set("cashFileId", source.fileId);
+  set("cashBillingRecordId", source.billingRecordId);
+  if (source.file) {
+    const summary = source.summary || feeReceiptSummaryForFile(source.file);
+    set("cashAmount", summary.outstandingAmount > 0 ? String(summary.outstandingAmount) : "");
+    set("cashVoucherNo", source.file.billNo || source.file.bill_no || "");
+    set("cashParticularsEntry", "Fee Collection");
+  }
+  updateCashSourceSelection(source);
+  document.querySelector("#clearCashReceivedFrom")?.classList.toggle("hidden", !source.label);
+  closeCashCollectionSourceResults();
+  scheduleAddCollectionDraftSave();
+}
+
+function closeCashCollectionSourceResults() {
+  const input = document.querySelector("#cashReceivedFromSearch");
+  const results = document.querySelector("#cashReceivedFromResults");
+  input?.setAttribute("aria-expanded", "false");
+  input?.removeAttribute("aria-activedescendant");
+  results?.classList.add("hidden");
+}
+
+async function searchCashCollectionSources(term) {
+  const requestId = ++addCollectionSourceSearchRequest;
+  const results = document.querySelector("#cashReceivedFromResults");
+  const input = document.querySelector("#cashReceivedFromSearch");
+  if (!results || !input) return;
+  const query = term.trim();
+  if (query.length < 2) return closeCashCollectionSourceResults();
+  results.classList.remove("hidden");
+  results.classList.toggle("open-up", input.getBoundingClientRect().bottom + 370 > window.innerHeight && input.getBoundingClientRect().top > 370);
+  input.setAttribute("aria-expanded", "true");
+  results.innerHTML = `<div class="collection-source-state">Searching clients and billed files...</div>`;
+  const fileMatches = localCollectionFileMatches(query);
+  let clients = [];
+  try {
+    addCollectionSourceSearchController?.abort();
+    addCollectionSourceSearchController = new AbortController();
+    const payload = await apiJson(`/api/clients/search?q=${encodeURIComponent(query)}&limit=50`, { signal: addCollectionSourceSearchController.signal });
+    clients = payload.clients || [];
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    console.warn("Client source search failed; showing matching files", error);
+  }
+  if (requestId !== addCollectionSourceSearchRequest || !document.querySelector("#cashReceivedFromResults")) return;
+  const clientRows = clients.map((client) => ({
+    kind: "client", client,
+    rank: collectionSearchRank([client.client_name, client.client_code, client.pan_reg_no, client.gst_no, client.contact_number, client.email].join(" "), query),
+  })).sort((a, b) => a.rank - b.rank || String(a.client.client_name || "").localeCompare(String(b.client.client_name || "")));
+  const sourceRows = (state.otherCashCollectionSources || []).map((label) => ({ kind: "source", label, rank: collectionSearchRank(label, query) }))
+    .filter((row) => row.rank < 99);
+  const rows = [
+    ...fileMatches.map((item) => ({ kind: "file", ...item })),
+    ...clientRows,
+    ...sourceRows,
+  ].sort((a, b) => a.rank - b.rank
+    || (a.kind === "client" ? -1 : 1) - (b.kind === "client" ? -1 : 1)
+    || Number(a.summary?.outstandingAmount <= 0) - Number(b.summary?.outstandingAmount <= 0))
+    .slice(0, 30);
+  results.innerHTML = rows.map((row, index) => {
+    if (row.kind === "file") {
+      const file = row.file;
+      const settled = row.summary.outstandingAmount <= 0;
+      return `<button type="button" id="cash-source-option-${index}" role="option" class="collection-source-option" data-source-kind="file" data-source-id="${escapeHtml(file.id)}" ${settled ? "disabled aria-disabled=\"true\"" : ""}><span><strong>${highlightCollectionSearchMatch(file.name || "-", query)}</strong><small>${escapeHtml(fileRegistrationNumber(file) || "No PAN/Reg No.")} · ${escapeHtml(file.serviceType || "-")} · FY ${escapeHtml(fileFy(file) || "NA")}</small></span><em>${settled ? "Fully received" : `Balance ${rupee(row.summary.outstandingAmount)}`}</em></button>`;
+    }
+    if (row.kind === "source") return `<button type="button" id="cash-source-option-${index}" role="option" class="collection-source-option" data-source-kind="source" data-source-label="${escapeHtml(row.label)}"><span><strong>${highlightCollectionSearchMatch(row.label, query)}</strong><small>Saved collection payer</small></span><em>Other source</em></button>`;
+    const client = row.client;
+    return `<button type="button" id="cash-source-option-${index}" role="option" class="collection-source-option" data-source-kind="client" data-source-id="${escapeHtml(client.id)}"><span><strong>${highlightCollectionSearchMatch(client.client_name || "-", query)}</strong><small>${escapeHtml(client.client_code || "No client code")} · ${escapeHtml(client.pan_reg_no || "No PAN/Reg No.")}</small></span><em>Client</em></button>`;
+  }).join("") || `<div class="collection-source-state">No matching client or billed file found.</div>`;
+  results.querySelectorAll("[data-source-kind='file']").forEach((button) => button.addEventListener("click", () => {
+    const match = fileMatches.find((item) => item.file.id === button.dataset.sourceId);
+    if (!match || button.disabled) return;
+    selectCashCollectionSource({ label: match.file.name, fileId: match.file.id, clientId: match.file.clientId || match.file.client_id || "", billingRecordId: match.file.invoiceId || match.file.invoice_id || match.file.billNo || match.file.bill_no || "", file: match.file, summary: match.summary });
+  }));
+  results.querySelectorAll("[data-source-kind='client']").forEach((button) => button.addEventListener("click", () => {
+    const client = clients.find((item) => item.id === button.dataset.sourceId);
+    if (client) selectCashCollectionSource({ label: client.client_name, clientId: client.id });
+  }));
+  results.querySelectorAll("[data-source-kind='source']").forEach((button) => button.addEventListener("click", () => {
+    selectCashCollectionSource({ label: button.dataset.sourceLabel || "" });
+  }));
+}
+
+function bindCashCollectionSourceCombobox() {
+  const input = document.querySelector("#cashReceivedFromSearch");
+  const results = document.querySelector("#cashReceivedFromResults");
+  if (!input || !results) return;
+  input.addEventListener("input", () => {
+    document.querySelector("#cashReceivedFrom").value = "";
+    document.querySelector("#cashClientId").value = "";
+    document.querySelector("#cashFileId").value = "";
+    document.querySelector("#cashBillingRecordId").value = "";
+    updateCashSourceSelection();
+    document.querySelector("#clearCashReceivedFrom")?.classList.add("hidden");
+    scheduleAddCollectionDraftSave();
+    clearTimeout(addCollectionSourceSearchTimer);
+    addCollectionSourceSearchTimer = setTimeout(() => searchCashCollectionSources(input.value), 250);
+  });
+  input.addEventListener("focus", () => { if (input.value.trim().length >= 2) searchCashCollectionSources(input.value); });
+  input.addEventListener("blur", () => setTimeout(() => {
+    if (!document.activeElement?.closest(".collection-source-field")) closeCashCollectionSourceResults();
+  }, 0));
+  document.querySelector("#clearCashReceivedFrom")?.addEventListener("click", () => {
+    ["cashReceivedFrom", "cashClientId", "cashFileId", "cashBillingRecordId"].forEach((id) => { const field = document.querySelector(`#${id}`); if (field) field.value = ""; });
+    input.value = "";
+    updateCashSourceSelection();
+    document.querySelector("#clearCashReceivedFrom")?.classList.add("hidden");
+    closeCashCollectionSourceResults();
+    scheduleAddCollectionDraftSave();
+    input.focus();
+  });
+  input.addEventListener("keydown", (event) => {
+    const options = [...results.querySelectorAll("[role='option']:not([disabled])")];
+    const current = options.findIndex((option) => option.classList.contains("is-active"));
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      options.forEach((option) => option.classList.remove("is-active"));
+      const next = event.key === "ArrowDown" ? Math.min(current + 1, options.length - 1) : Math.max(current < 0 ? options.length - 1 : current - 1, 0);
+      options[next]?.classList.add("is-active");
+      if (options[next]) input.setAttribute("aria-activedescendant", options[next].id);
+    } else if (event.key === "Enter" && current >= 0) {
+      event.preventDefault(); options[current].click();
+    } else if (event.key === "Escape") closeCashCollectionSourceResults();
+  });
+}
+
+function bindAddCollectionDraft() {
+  const form = document.querySelector("#cashCollectionForm");
+  if (!form || state.filters.editCashId) return;
+  const draft = readAddCollectionDraft();
+  if (draft) applyAddCollectionDraft(draft);
+  form.addEventListener("input", scheduleAddCollectionDraftSave);
+  form.addEventListener("change", scheduleAddCollectionDraftSave);
+  document.querySelector("#cashAttachment")?.addEventListener("change", scheduleAddCollectionDraftSave);
+  document.querySelector("#continueCollectionDraft")?.addEventListener("click", () => {
+    document.querySelector("#collectionDraftNotice")?.remove();
+    document.querySelector("#cashReceivedFromSearch")?.focus();
+  });
+  document.querySelector("#discardCollectionDraft")?.addEventListener("click", () => {
+    if (!confirm("Discard this unfinished collection draft?")) return;
+    clearAddCollectionDraft();
+    renderAll();
+  });
 }
 
 function financeAccountFilterSelect(key, label) {
@@ -18927,6 +19273,8 @@ function bindExpensePage() {
   });
   const cashForm = document.querySelector("#cashCollectionForm");
   if (cashForm) cashForm.onsubmit = saveCashCollectionEntry;
+  bindCashCollectionSourceCombobox();
+  bindAddCollectionDraft();
   bindPaymentAccountControls("#expenseMode", "#expenseAccount");
   bindPaymentAccountControls("#cashModeEntry", "#cashAccountEntry");
   const transferForm = document.querySelector("#accountTransferForm");
@@ -18934,7 +19282,13 @@ function bindExpensePage() {
   document.querySelector("#cancelExpenseEdit")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
   document.querySelector("#cancelCashEdit")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
   document.querySelector("#resetExpenseForm")?.addEventListener("click", () => { state.filters.editExpenseId = ""; state.filters.expenseItemSelection = ""; saveState(); renderAll(); });
-  document.querySelector("#resetCashForm")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
+  document.querySelector("#resetCashForm")?.addEventListener("click", () => {
+    if (!state.filters.editCashId && addCollectionDraftIsMeaningful(collectionDraftValuesFromForm() || {}) && !confirm("Clear this Add Collection draft?")) return;
+    clearAddCollectionDraft();
+    state.filters.editCashId = "";
+    saveState();
+    renderAll();
+  });
   document.querySelector("#manageExpenseItems")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = "Yes"; state.filters.expenseItemManagerAction = "add"; saveState(); renderAll(); });
   const expenseItemSelect = document.querySelector("#expenseParticularsEntry");
   expenseItemSelect?.addEventListener("focus", () => { expenseItemSelect.dataset.previousValue = expenseItemSelect.value; });
@@ -18991,7 +19345,6 @@ function bindExpensePage() {
     if (tab === "balance") return exportBalanceExcel();
     return exportCashExcel();
   });
-  document.querySelector("#addCashReceivedFrom")?.addEventListener("click", addCashReceivedFromSource);
   document.querySelector("#expenseSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
   document.querySelector("#expenseReset")?.addEventListener("click", resetExpenseFilters);
   document.querySelector("#cashSearch")?.addEventListener("click", () => { saveState(); renderAll(); });
@@ -19245,14 +19598,27 @@ function readExpenseAttachment(file) {
 async function saveCashCollectionEntry(event) {
   event.preventDefault();
   const submitButton = event.submitter || document.querySelector("#cashCollectionForm button[type='submit']");
-  if (submitButton?.disabled) return;
-  if (submitButton) submitButton.disabled = true;
+  if (submitButton?.disabled || addCollectionSaveInFlight) return;
+  addCollectionSaveInFlight = true;
+  const originalButtonHtml = submitButton?.innerHTML || "";
+  if (submitButton) { submitButton.disabled = true; submitButton.textContent = "Saving Collection..."; }
   const amount = Number(document.querySelector("#cashAmount")?.value || 0);
   if (!amount) {
-    if (submitButton) submitButton.disabled = false;
+    addCollectionSaveInFlight = false;
+    if (submitButton) { submitButton.disabled = false; submitButton.innerHTML = originalButtonHtml; }
     return toast("Please enter collection amount.");
   }
+  const receivedFrom = document.querySelector("#cashReceivedFrom")?.value.trim() || "";
+  const selectedClientId = document.querySelector("#cashClientId")?.value || "";
+  const selectedFileId = document.querySelector("#cashFileId")?.value || "";
   const existing = editingCashCollection();
+  const feeCollectionSelected = document.querySelector("#cashParticularsEntry")?.value === "Fee Collection";
+  if (!receivedFrom || (!existing && feeCollectionSelected && !selectedClientId && !selectedFileId)) {
+    addCollectionSaveInFlight = false;
+    if (submitButton) { submitButton.disabled = false; submitButton.innerHTML = originalButtonHtml; }
+    document.querySelector("#cashReceivedFromSearch")?.focus();
+    return toast("Select a client or billed file from the Received From search results.");
+  }
   const uploadedAttachment = await readExpenseAttachment(document.querySelector("#cashAttachment")?.files?.[0]);
   const attachment = uploadedAttachment || existing?.attachment || null;
   const paymentMethod = document.querySelector("#cashModeEntry").value;
@@ -19274,7 +19640,18 @@ async function saveCashCollectionEntry(event) {
     account_key: accountKey,
     accountName: financeAccountLabel(accountKey),
     account_name: financeAccountLabel(accountKey),
-    receivedFrom: properCaseName(document.querySelector("#newCashReceivedFrom")?.value.trim() || document.querySelector("#cashReceivedFrom").value.trim()),
+    receivedFrom: properCaseName(receivedFrom),
+    clientId: selectedClientId,
+    client_id: selectedClientId,
+    fileId: selectedFileId,
+    file_id: selectedFileId,
+    billingRecordId: document.querySelector("#cashBillingRecordId")?.value || "",
+    billing_record_id: document.querySelector("#cashBillingRecordId")?.value || "",
+    sourceType: selectedFileId ? "billed_file" : "client",
+    source_type: selectedFileId ? "billed_file" : "client",
+    billNo: document.querySelector("#cashVoucherNo")?.value.trim() || "",
+    serviceType: selectedFileId ? (state.files || []).find((file) => file.id === selectedFileId)?.serviceType || "" : "",
+    fy: selectedFileId ? fileFy((state.files || []).find((file) => file.id === selectedFileId) || {}) : "",
     remarks: document.querySelector("#cashRemarks")?.value.trim() || existing?.remarks || "",
     createdBy: document.querySelector("#cashCollectedBy")?.value.trim() || existing?.createdBy || state.currentUser || "",
     enteredBy: document.querySelector("#cashCollectedBy")?.value.trim() || existing?.enteredBy || state.currentUser || "",
@@ -19285,26 +19662,89 @@ async function saveCashCollectionEntry(event) {
   };
   if (isSupabaseMode()) {
     try {
-      await saveCashCollectionToApi(record);
+      if (selectedFileId && !existing) {
+        const linkedFile = (state.files || []).find((file) => file.id === selectedFileId);
+        if (!linkedFile) throw new Error("The selected billed file is no longer available. Search and select it again.");
+        const summary = feeReceiptSummaryForFile(linkedFile);
+        const receiptId = crypto.randomUUID();
+        const reference = record.voucherNo || "";
+        await saveLinkedFeeReceiptToApi(selectedFileId, {
+          feeReceiptId: receiptId,
+          billNo: linkedFile.billNo || linkedFile.bill_no || record.voucherNo || "",
+          billDate: linkedFile.billDate || linkedFile.bill_date || linkedFile.billedDate || record.date,
+          billedAmount: summary.billedAmount,
+          receivedAmount: record.amount,
+          discountAmount: 0,
+          receivedDate: record.date,
+          paymentMode: record.paymentMethod,
+          accountKey: record.accountKey,
+          receivedFrom: record.receivedFrom,
+          remarks: record.remarks,
+          referenceNumber: reference,
+          utrNumber: record.paymentMethod === "Bank Transfer" ? reference : "",
+          upiReference: record.paymentMethod === "UPI" ? reference : "",
+          chequeNumber: record.paymentMethod === "Cheque" ? reference : "",
+          chequeDate: record.paymentMethod === "Cheque" ? record.date : "",
+          bankName: record.paymentMethod === "Cheque" ? financeAccountLabel(record.accountKey) : "",
+          pushToTransactions: true,
+        }, {
+          ...record,
+          collectionType: "fee_collection",
+          collection_type: "fee_collection",
+          feeReceiptId: receiptId,
+          fee_receipt_id: receiptId,
+        });
+      } else {
+        await saveCashCollectionToApi(record);
+      }
       rememberCashReceivedFrom(record.receivedFrom);
+      clearAddCollectionDraft();
       state.filters.editCashId = "";
       invalidateTransactionLedger("collections");
-      toast(existing ? "Cash collection updated and synced" : "Cash collection saved and synced");
+      toast(existing ? "Cash collection updated and synced" : selectedFileId ? "Collection and fee receipt saved together" : "Cash collection saved and synced");
       renderAll();
       return;
     } catch (error) {
       console.error("Collection save failed", { id: record.id, message: error.message });
       return toast(`Collection save failed: ${error.message || "Please retry."}`);
     } finally {
-      if (submitButton) submitButton.disabled = false;
+      addCollectionSaveInFlight = false;
+      if (submitButton) { submitButton.disabled = false; submitButton.innerHTML = originalButtonHtml; }
     }
   }
   rememberCashReceivedFrom(record.receivedFrom);
-  state.otherCashCollections = existing ? state.otherCashCollections.map((item) => item.id === existing.id ? record : item) : [record, ...(state.otherCashCollections || [])];
+  if (selectedFileId && !existing) {
+    const linkedFile = (state.files || []).find((file) => file.id === selectedFileId);
+    const summary = feeReceiptSummaryForFile(linkedFile || {});
+    if (record.amount > summary.outstandingAmount + 0.005) {
+      addCollectionSaveInFlight = false;
+      if (submitButton) { submitButton.disabled = false; submitButton.innerHTML = originalButtonHtml; }
+      return toast(`Collection amount cannot exceed the outstanding balance of ${money(summary.outstandingAmount)}.`);
+    }
+    const receiptId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const receipt = {
+      id: receiptId, fileId: selectedFileId, file_id: selectedFileId,
+      amount: record.amount, receivedAmount: record.amount, received_amount: record.amount,
+      receiptDate: record.date, receipt_date: record.date, receivedAt: now, received_at: now,
+      paymentMode: record.paymentMethod, payment_mode: record.paymentMethod,
+      accountKey: record.accountKey, account_key: record.accountKey,
+      receivedFrom: record.receivedFrom, received_from: record.receivedFrom,
+      remarks: record.remarks, referenceNumber: record.voucherNo, reference_number: record.voucherNo,
+      status: "active", pushToTransactions: true, push_to_transactions: true,
+      transactionId: record.id, transaction_id: record.id, createdAt: now, updatedAt: now,
+    };
+    state.feeReceipts = [receipt, ...(state.feeReceipts || [])];
+    state.otherCashCollections = [{ ...record, collectionType: "fee_collection", collection_type: "fee_collection", feeReceiptId: receiptId, fee_receipt_id: receiptId, sourceType: "fee_receipt", source_type: "fee_receipt", sourceId: receiptId, source_id: receiptId }, ...(state.otherCashCollections || [])];
+  } else {
+    state.otherCashCollections = existing ? state.otherCashCollections.map((item) => item.id === existing.id ? record : item) : [record, ...(state.otherCashCollections || [])];
+  }
   state.filters.editCashId = "";
   invalidateTransactionLedger("collections");
+  clearAddCollectionDraft();
   saveState();
   toast(existing ? "Cash collection updated" : "Cash collection saved");
+  addCollectionSaveInFlight = false;
   renderAll();
 }
 

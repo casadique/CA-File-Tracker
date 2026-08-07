@@ -29,7 +29,7 @@ function canUseCredentials(req, permission) {
 }
 
 router.get("/search", requireAuth, async (req, res, next) => {
-  try { res.json(await clients.listClients({ search: req.query.q, status: "Active", page: 1, pageSize: Math.min(20, Number(req.query.limit) || 20) })); } catch (error) { next(error); }
+  try { res.json(await clients.listClients({ search: req.query.q, status: "Active", page: 1, pageSize: Math.min(50, Number(req.query.limit) || 20) })); } catch (error) { next(error); }
 });
 router.get("/", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try { res.json(await clients.listClients(req.query)); } catch (error) { next(error); }

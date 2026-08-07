@@ -22,6 +22,7 @@
     "test:opening-balance": "node tools/test-opening-balance-layout.js",
     "test:transactions": "node tools/test-transactions-modernization.js",
     "test:transaction-registers": "node tools/test-transaction-registers.js",
+    "test:add-collection": "node tools/test-add-collection-draft-search.js",
     "test:invoices": "node tools/test-invoice-system.js",
     "test:expense-items": "node tools/test-expense-item-dropdown.js",
     "test:fee-collection-editor": "node tools/test-fee-collection-editor.js",
