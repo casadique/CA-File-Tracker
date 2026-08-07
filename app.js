@@ -8654,7 +8654,7 @@ function bindPaymentAccountControls(paymentSelector, accountSelector) {
 }
 
 function feeReceiptTextarea(name, label, value = "") {
-  return `<div class="field full-span"><label>${escapeHtml(label)}</label><textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value || "")}</textarea></div>`;
+  return `<div class="field full-span receipt-remarks-field"><label>${escapeHtml(label)}</label><textarea name="${escapeHtml(name)}" rows="2">${escapeHtml(value || "")}</textarea></div>`;
 }
 
 function updateFeeReceiptBalancePreview() {
@@ -8801,11 +8801,44 @@ function validateFeeReceipt(receipt = {}, outstandingAmount = null) {
   if (receipt.paymentMode === "Cash" && receipt.accountKey !== "cash") return "Cash receipts must use Cash in Hand.";
   if (receipt.paymentMode !== "Cash" && !["federal_bank", "tmb"].includes(receipt.accountKey)) return "Select Federal Bank or TMB for this non-cash receipt.";
   if (receipt.paymentMode === "Bank Transfer" && !(receipt.utrNumber || receipt.referenceNumber)) return "Enter the bank UTR or transfer reference number.";
-  if (receipt.paymentMode === "UPI" && !receipt.upiReference) return "Enter the UPI reference number.";
+  if (receipt.paymentMode === "UPI" && !(receipt.upiReference || receipt.referenceNumber)) return "Enter the UPI reference number or payment reference.";
   if (receipt.paymentMode === "Cheque" && (!receipt.chequeNumber || !receipt.chequeDate || !receipt.bankName)) return "Enter the cheque number, cheque date and bank name.";
   if (Number.isFinite(outstandingAmount) && receipt.receivedAmount + receipt.discountAmount > outstandingAmount + 0.005) return `Received amount and discount cannot exceed the outstanding balance of ${money(outstandingAmount)}.`;
   if (receipt.receivedAmount > receipt.billedAmount && !confirm("Received Amount is more than Billed Amount. Do you want to continue?")) return "Receipt save cancelled.";
   return "";
+}
+
+function showFeeReceiptError(message = "") {
+  const modal = document.querySelector("#markReceivedModal");
+  const errorBox = modal?.querySelector("#feeReceiptSaveError");
+  if (!errorBox) return;
+  const text = String(message || "Unable to save the receipt. Please check the details and retry.");
+  errorBox.textContent = text;
+  errorBox.hidden = false;
+  const fieldName = /UPI reference/i.test(text) ? "receiptUpiReference"
+    : /UTR|transfer reference/i.test(text) ? "receiptUtrNumber"
+    : /cheque number/i.test(text) ? "receiptChequeNumber"
+    : /received date/i.test(text) ? "receiptReceivedDate"
+    : /received amount/i.test(text) ? "receiptReceivedAmount"
+    : /discount/i.test(text) ? "receiptDiscountAmount"
+    : /account|Federal Bank|TMB|Cash in Hand/i.test(text) ? "receiptAccount"
+    : "";
+  const field = fieldName ? modal.querySelector(`[name='${fieldName}']`) : null;
+  if (field && !field.disabled) {
+    field.setAttribute("aria-invalid", "true");
+    field.focus();
+  }
+  errorBox.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function clearFeeReceiptError() {
+  const modal = document.querySelector("#markReceivedModal");
+  const errorBox = modal?.querySelector("#feeReceiptSaveError");
+  if (errorBox) {
+    errorBox.hidden = true;
+    errorBox.textContent = "";
+  }
+  modal?.querySelectorAll("[aria-invalid='true']").forEach((field) => field.removeAttribute("aria-invalid"));
 }
 
 function feeReceiptStatusLabel(file = {}) {
@@ -10805,6 +10838,7 @@ function openMarkReceivedModal(fileId) {
         <button class="icon-button" id="closeReceivedModal">X</button>
       </div>
       <div class="drawer-body">
+        <div id="feeReceiptSaveError" class="receipt-save-error" role="alert" aria-live="assertive" hidden></div>
         <div class="receipt-form-grid">
           <div class="receipt-form-row receipt-billing-row">
             ${feeReceiptField("receiptBillDate", "Bill Date", receipt.billDate, "date")}
@@ -10847,6 +10881,10 @@ function openMarkReceivedModal(fileId) {
   document.querySelectorAll("[name='receiptBilledAmount'], [name='receiptReceivedAmount'], [name='receiptDiscountAmount']").forEach((input) => {
     input.addEventListener("input", updateFeeReceiptBalancePreview);
   });
+  modal.querySelectorAll("input, select, textarea").forEach((control) => {
+    control.addEventListener("input", clearFeeReceiptError);
+    control.addEventListener("change", clearFeeReceiptError);
+  });
   bindPaymentAccountControls("[name='receiptPaymentMode']", "[name='receiptAccount']");
   bindReceiptModeFields();
   updateFeeReceiptBalancePreview();
@@ -10883,7 +10921,8 @@ async function saveReceivedFromModal(fileId) {
   const currentSummary = feeReceiptSummaryForFile(file);
   const receipt = feeReceiptFromModal(file);
   const validationMessage = validateFeeReceipt(receipt, currentSummary.outstandingAmount);
-  if (validationMessage) return toast(validationMessage);
+  if (validationMessage) return showFeeReceiptError(validationMessage);
+  clearFeeReceiptError();
   const button = document.querySelector("#saveReceivedModal");
   if (button) button.disabled = true;
   const user = loggedInUser() || {};
@@ -10903,7 +10942,7 @@ async function saveReceivedFromModal(fileId) {
     } catch (error) {
       console.error("Fee receipt save failed", error);
       if (button) button.disabled = false;
-      return toast(`Fee receipt save failed: ${error.message || "Please retry."}`);
+      return showFeeReceiptError(`Fee receipt save failed: ${error.message || "Please retry."}`);
     }
   }
   if (receipt.pushToTransactions) {
@@ -10913,7 +10952,7 @@ async function saveReceivedFromModal(fileId) {
     } catch (error) {
       console.error("Fee receipt transaction push failed", error);
       if (button) button.disabled = false;
-      return toast(`Receipt not pushed: ${error.message || "Please retry."}`);
+      return showFeeReceiptError(`Receipt not pushed: ${error.message || "Please retry."}`);
     }
   }
   state.feeReceipts = [{

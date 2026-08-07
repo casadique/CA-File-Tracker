@@ -123,6 +123,22 @@ async function main() {
   assert.equal(settledFile.balanceAmount, 0);
   assert.equal(settledFile.paymentStatus, "Fee Received");
 
+  const backdatedUpi = await saveFeeReceipt("fee-mode-test-file", {
+    feeReceiptId: "fee-upi-backdated-2026-08-04",
+    receivedDate: "2026-08-04",
+    receivedAmount: 100,
+    discountAmount: 0,
+    paymentMode: "UPI",
+    accountKey: "tmb",
+    referenceNumber: "UPI-04082026",
+    pushToTransactions: false,
+  }, {}, profile.id, profile);
+  const backdatedUpiReceipt = backdatedUpi.feeReceipts.find((item) => item.id === "fee-upi-backdated-2026-08-04");
+  assert.equal(backdatedUpiReceipt.receiptDate, "2026-08-04");
+  assert.equal(backdatedUpiReceipt.paymentMode, "UPI");
+  assert.equal(backdatedUpiReceipt.accountKey, "tmb");
+  assert.equal(backdatedUpiReceipt.referenceNumber, "UPI-04082026");
+
   const firstPartial = await saveFeeReceipt("fee-partial-test-file", {
     feeReceiptId: "fee-partial-receipt-1",
     receivedDate: "2026-08-04",
@@ -199,6 +215,13 @@ async function main() {
   );
 
   const browserAppSource = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  assert.match(browserAppSource, /rows="2"/, "Receipt remarks must use a compact two-line field");
+  assert.match(browserAppSource, /receipt\.upiReference \|\| receipt\.referenceNumber/,
+    "UPI receipts must accept either the dedicated UPI reference or the general payment reference");
+  assert.match(browserAppSource, /id="feeReceiptSaveError"[\s\S]*?role="alert"/,
+    "Receipt save errors must remain visible inside the receipt modal");
+  assert.doesNotMatch(browserAppSource, /return toast\(`Fee receipt save failed:/,
+    "Receipt API failures must not disappear in a short-lived toast");
   const ownNumberSource = browserAppSource.match(
     /function billedPdfOwnNumber[\s\S]*?(?=\nfunction billedPdfPaymentStatus)/,
   )?.[0] || "";
