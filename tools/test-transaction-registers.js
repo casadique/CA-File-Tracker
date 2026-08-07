@@ -60,6 +60,7 @@ for (const token of ["Today", "Last 7 Days", "This Month", "All Transactions", "
 for (const selector of [".transaction-ledger-head", ".transaction-ledger-summary", ".transaction-filter-toolbar", ".transaction-detail-modal", ".transaction-pagination"]) assert.ok(styles.includes(`${selector} {`), `Missing transaction-register style: ${selector}`);
 for (const marker of ["transaction-menu-toggle", "More actions for this transaction", "aria-label=\"Transaction actions\""]) assert.ok(app.includes(marker), `Missing visible transaction action marker: ${marker}`);
 for (const heading of ["<th>Ref No</th>", "<th>Vo. No</th>"]) assert.ok(app.includes(heading), `Missing shortened transaction heading: ${heading}`);
+assert.match(app, /collection-register-table[\s\S]*?<th>Mode<\/th>/, "Collection register must use the compact Mode heading");
 assert.match(styles, /\.transaction-register-modern td\.action-col\s*\{[\s\S]*position:\s*sticky;[\s\S]*right:\s*0;/, "transaction action column must remain visible while scrolling");
 assert.match(styles, /\.transaction-row-actions \.transaction-menu-toggle\s*\{[\s\S]*min-width:\s*44px;[\s\S]*border:\s*2px solid/, "transaction overflow button needs a prominent touch target");
 assert.ok(routes.includes('router.get("/transactions", requireAuth, requireRole(...financeRoles)'));
