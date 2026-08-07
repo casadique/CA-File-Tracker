@@ -9757,7 +9757,9 @@ async function downloadFeeReceiptPdf(receiptId) {
   try {
     const blob = await fetchFeeReceiptPdf(receiptId, true); const receipt = feeReceiptById(receiptId) || {};
     const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url;
-    link.download = `Money-Receipt-${String(receipt.receiptNumber || receiptId).replace(/[^A-Za-z0-9_-]+/g, "-")}.pdf`;
+    const receiptNumber = String(receipt.receiptNumber || receipt.receipt_number || receiptId).replace(/[^A-Za-z0-9_-]+/g, "-");
+    const receiptDate = displayDate(receipt.paymentDate || receipt.payment_date || receipt.receiptDate || receipt.receipt_date || "").replace(/[^0-9-]+/g, "");
+    link.download = `Receipt-${receiptNumber}-${receiptDate || "Undated"}.pdf`;
     document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch (error) { toast(error.message || "Unable to download receipt PDF."); }
 }

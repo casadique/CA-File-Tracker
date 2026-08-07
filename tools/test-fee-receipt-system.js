@@ -11,6 +11,7 @@ const {
   issueReceiptRecord,
   markReceiptReversed,
   drawReceiptPdf,
+  safeReceiptFilename,
 } = require(path.join(root, "src", "services", "receiptService"));
 
 function payment(id, amount, date = "2026-08-06") {
@@ -41,6 +42,7 @@ assert.equal(second.receiptSnapshot.summary.amountReceived, 5500);
 assert.equal(second.receiptSnapshot.summary.discount, 500);
 assert.equal(second.receiptSnapshot.summary.outstanding, 0);
 assert.equal(second.paymentStatus, "Paid in Full");
+assert.equal(safeReceiptFilename(second), "Receipt-MR-2026-27-0002-06-08-2026.pdf");
 
 const advanceState = { feeReceipts: [], receiptSequences: [], receiptEvents: [], invoices: [], invoiceSettings: state.invoiceSettings };
 const advanceFile = { id: "advance-file", name: "Advance Client", serviceType: "Tax Consultation", fy: "2026-27", billed: false };
@@ -62,10 +64,14 @@ assert.match(routeSource, /receipts\/:receiptId\/pdf/);
 assert.match(routeSource, /receipts\/historical\/generate/);
 assert.match(routeSource, /receipts\/:receiptId\/generate-historical/);
 assert.match(clientSource, /Payment Recorded Successfully[\s\S]*?Download PDF[\s\S]*?Print/);
+assert.doesNotMatch(serviceSource, /if \(snapshot\.historicalNote\)/, "Historical generation note must not print on receipts");
+assert.match(serviceSource, /fontSize\(6\)\.text\(pdfMoney\(snapshot\.payment\.amountReceived\)/, "Main received figure must use the reduced font size");
+assert.match(serviceSource, /For \$\{firm\.legalName[\s\S]*?lineBreak: false/, "Firm signature name must remain on one line");
 assert.match(serviceSource, /Receipt Voucher[\s\S]*?Advance Received/);
 
 drawReceiptPdf(second).then((pdf) => {
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
   assert.ok(pdf.length > 5000, "Receipt PDF should contain a complete rendered document");
+  assert.equal((pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length, 1, "Receipt PDF must remain a single page");
   console.log("Fee receipt numbering, idempotency, partial payments, voucher rules, reversal, UI wiring and PDF checks passed.");
 }).catch((error) => { console.error(error); process.exitCode = 1; });

@@ -175,7 +175,7 @@ function drawReceiptPdf(receipt) {
     const payer = snapshot.payer || {}; const client = snapshot.client || {}; const service = snapshot.service || {};
     doc.font(regular).fillColor("#1E293B").fontSize(7.4).text(`Received with thanks from ${payer.name || client.name || "-"}${payer.onBehalfOf ? `, on behalf of ${payer.onBehalfOf}` : ""}, a sum of ${pdfMoney(snapshot.payment.amountReceived)} (${snapshot.payment.amountInWords}) towards professional services relating to ${service.name || "professional services"}${service.financialYear ? ` for FY ${service.financialYear}` : ""}.`, 24, doc.y, { width, lineGap: 1.5 });
     doc.moveDown(0.8); const amountY = doc.y; doc.roundedRect(24, amountY, width, 54, 5).strokeColor("#9FC8BA").stroke();
-    doc.font(regular).fillColor("#64748B").fontSize(6).text("AMOUNT RECEIVED NOW", 34, amountY + 9); doc.font(bold).fillColor(green).fontSize(18).text(pdfMoney(snapshot.payment.amountReceived), 34, amountY + 23, { width: 155 });
+    doc.font(regular).fillColor("#64748B").fontSize(6).text("AMOUNT RECEIVED NOW", 34, amountY + 9); doc.font(bold).fillColor(green).fontSize(6).text(pdfMoney(snapshot.payment.amountReceived), 34, amountY + 28, { width: 155 });
     const paymentDetails = [["Mode", snapshot.payment.mode], ["Account", snapshot.payment.account], ["Reference", snapshot.payment.reference || snapshot.payment.transactionReference], ["Collected by", snapshot.payment.collectedBy]].filter(([, value]) => value);
     paymentDetails.slice(0, 4).forEach(([label, value], index) => { const x = 210 + (index % 2) * 95; const y = amountY + 8 + Math.floor(index / 2) * 22; doc.font(regular).fillColor("#64748B").fontSize(5.5).text(label, x, y, { width: 88 }); doc.font(bold).fillColor("#1E293B").fontSize(6.7).text(value, x, y + 8, { width: 88, ellipsis: true }); });
     doc.y = amountY + 62;
@@ -185,17 +185,23 @@ function drawReceiptPdf(receipt) {
     rows.forEach(([label, value], index) => { const y = doc.y; if (index === rows.length - 1) doc.rect(24, y - 2, width, 16).fill(light); doc.font(index === rows.length - 1 ? bold : regular).fillColor("#1E293B").fontSize(6.8).text(label, 30, y + 2, { width: 220 }); doc.text(pdfMoney(value), 285, y + 2, { width: 105, align: "right" }); doc.y = y + 16; });
     doc.moveDown(0.5); const declaration = snapshot.receiptType === "Receipt Voucher" ? firm.declaration : RECEIPT_DECLARATION;
     doc.font(bold).fillColor(navy).fontSize(6.5).text("Declaration", 24, doc.y); doc.font(regular).fillColor("#475569").fontSize(6.2).text(declaration, 24, doc.y + 9, { width }); doc.moveDown(2.2);
-    if (snapshot.historicalNote) { doc.font(regular).fillColor("#7C2D12").fontSize(6).text(snapshot.historicalNote, 24, doc.y, { width }); doc.moveDown(1); }
     if (snapshot.payment.remarks) { doc.font(bold).fillColor(navy).fontSize(6.3).text("Remarks", 24, doc.y); doc.font(regular).fillColor("#334155").fontSize(6.2).text(snapshot.payment.remarks, 24, doc.y + 9, { width: 245, height: 25, ellipsis: true }); }
-    doc.font(bold).fillColor("#1E293B").fontSize(6.5).text(`For ${firm.legalName || "the Firm"}\n\nAuthorised Signatory`, 290, doc.y - 2, { width: 107, align: "right" });
+    const signatureY = doc.y - 2;
+    doc.font(bold).fillColor("#1E293B").fontSize(6.5).text(`For ${firm.legalName || "the Firm"}`, 235, signatureY, { width: 162, align: "right", lineBreak: false });
+    doc.text("Authorised Signatory", 235, signatureY + 22, { width: 162, align: "right", lineBreak: false });
     if (receipt.documentStatus === "Reversed" || receipt.document_status === "Reversed" || receipt.status === "not_received") { doc.save(); doc.rotate(-35, { origin: [doc.page.width / 2, doc.page.height / 2] }); doc.font(bold).fontSize(48).fillColor("#EF4444").opacity(0.18).text("REVERSED", 35, doc.page.height / 2 - 25, { width: 350, align: "center" }); doc.restore(); doc.opacity(1); }
-    const pages = doc.bufferedPageRange(); for (let page = pages.start; page < pages.start + pages.count; page += 1) { doc.switchToPage(page); doc.font(regular).fillColor("#64748B").fontSize(5.4).text(`${RECEIPT_FOOTER}\nVerification: ${receipt.verificationReference || receipt.verification_reference || "-"} | System-generated receipt | Page ${page + 1} of ${pages.count}`, 24, doc.page.height - 24, { width, align: "center", lineBreak: false }); }
+    const pages = doc.bufferedPageRange(); for (let page = pages.start; page < pages.start + pages.count; page += 1) { doc.switchToPage(page); doc.font(regular).fillColor("#64748B").fontSize(5).text(`Payment acknowledgement only - not a Bill of Supply or Tax Invoice. | Verification: ${receipt.verificationReference || receipt.verification_reference || "-"} | Page ${page + 1} of ${pages.count}`, 24, doc.page.height - 36, { width, align: "center", lineBreak: false }); }
     doc.end();
   });
 }
 
 async function receiptPdf(receiptId) { const { receipt } = await receiptById(receiptId); return { receipt, pdf: await drawReceiptPdf(receipt) }; }
-function safeReceiptFilename(receipt) { return `Money-Receipt-${text(receipt.receiptNumber || receipt.id).replace(/[^A-Za-z0-9_-]+/g, "-")}.pdf`; }
+function safeReceiptFilename(receipt) {
+  const snapshot = receipt.receiptSnapshot || receipt.receipt_snapshot || {};
+  const number = text(receipt.receiptNumber || receipt.receipt_number || receipt.id).replace(/[^A-Za-z0-9_-]+/g, "-");
+  const date = displayDate(snapshot.paymentDate || receipt.paymentDate || receipt.payment_date || receipt.receiptDate || receipt.receipt_date).replace(/[^0-9-]+/g, "");
+  return `Receipt-${number}-${date || "Undated"}.pdf`;
+}
 async function receiptHistory(receiptId) { return (await receiptById(receiptId)).events; }
 
 async function historicalReceiptPreview() {
