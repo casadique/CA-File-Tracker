@@ -2744,12 +2744,9 @@ function upsertInviteForUser(user, password = user?.password || "") {
 }
 
 function activeUserList() {
-  const invitedEmails = new Set((state.invites || [])
-    .filter((invite) => !isRevokedAccess(invite))
-    .map((invite) => normalizeEmail(invite.email)));
   return (state.users || [])
     .filter((user) => normalizeEmail(user.email) !== "casadique@gmail.com")
-    .filter((user) => invitedEmails.has(normalizeEmail(user.email)) || user.source === "team-login")
+    .filter((user) => user.isActive !== false && user.is_active !== false)
     .filter((user) => !isRevokedAccess(user))
     .filter((user, index, list) => list.findIndex((item) => normalizeEmail(item.email) === normalizeEmail(user.email)) === index);
 }

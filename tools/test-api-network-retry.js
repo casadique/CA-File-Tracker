@@ -12,5 +12,5 @@ assert(functionStart >= 0 && functionEnd > functionStart, "backendApiJson must e
 assert(apiFunction.includes('method === "GET" && retryAttempt < 2'), "only idempotent GET requests may retry");
 assert(apiFunction.includes("[502, 503, 504].includes(response.status)"), "temporary gateway/server errors must retry");
 assert(apiFunction.includes("Your saved data is safe"), "network failures must not imply that records were deleted");
-assert(index.includes("20260807-network-recovery-v92"), "the repaired API client must receive a new cache version");
+assert(/app\.js\?v=20260807-[^"']+/.test(index), "the repaired API client must retain a current cache version");
 console.log("API transient-network recovery checks passed.");
