@@ -16142,7 +16142,7 @@ body,
 .collection-register-table th:nth-child(2), .expense-register-table th:nth-child(2) { width: 105px; }
 .collection-register-table th:nth-child(3) { width: 145px; }
 .collection-register-table th:nth-child(4) { width: 220px; }
-.collection-register-table th:nth-child(5) { width: 240px; }
+.collection-register-table th:nth-child(5) { width: 165px; }
 .collection-register-table th:nth-child(6) { width: 130px; }
 .collection-register-table th:nth-child(7) { width: 135px; }
 .collection-register-table th:nth-child(8) { width: 145px; }
@@ -16158,6 +16158,7 @@ body,
 .transaction-register-wrap td { vertical-align: middle; }
 .transaction-particulars-cell,
 .transaction-remarks-cell { color: #475569; line-height: 1.4; }
+.collection-register-table .transaction-particulars-cell { overflow-wrap: anywhere; }
 .transaction-value-badge { display: inline-flex; max-width: 100%; padding: 4px 8px; overflow: hidden; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 999px; font-size: 10px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
 .transaction-value-badge.type { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
 .transaction-value-badge.method { color: #4338ca; background: #eef2ff; border-color: #c7d2fe; }
