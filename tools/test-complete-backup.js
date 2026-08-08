@@ -27,7 +27,9 @@ const legacyRoute = fs.readFileSync(path.join(__dirname, "../src/routes/legacyRo
 const clientScript = fs.readFileSync(path.join(__dirname, "../backup-client.js"), "utf8");
 assert(stateRoute.includes("createCompleteBackup"));
 assert(legacyRoute.includes("archiveCompleteBackup"));
-assert(clientScript.includes("/api/state/backup"));
-assert(clientScript.includes("includePayload"));
+assert(legacyRoute.includes('router.post("/backup/download"'));
+assert(clientScript.includes("/api/backup/download"));
+assert(clientScript.includes("fetchCompleteBackupDownload"));
+assert(clientScript.includes("response.blob()"));
 assert(clientScript.includes("clientMaster: payload.clientMaster"));
 console.log("Complete backup coverage and secret-redaction tests passed.");

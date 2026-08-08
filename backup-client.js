@@ -11,19 +11,39 @@ async function saveBackupToFolder(reason = "manual", includePayload = false) {
 async function downloadFullBackup() {
   if (!canUseBackupPage()) return toast("Only Admin and Manager can create full backups.");
   try {
-    const result = await saveBackupToFolder("manual", true);
-    const payload = result.payload || await apiJson("/api/state/backup");
-    const fileName = `ca-file-tracker-complete-backup-${todayDate()}`;
-    downloadJson(fileName, payload);
-    if (payload.complete) {
-      toast("Complete backup downloaded, including Client Master, users, invoices, bills and transactions.");
-    } else {
-      toast(`Backup downloaded with ${payload.warnings?.length || 0} coverage warning(s).`);
-    }
-    if (result.archiveWarning) toast("Backup downloaded, but the server archive could not be retained.");
+    const response = await fetchCompleteBackupDownload();
+    const filename = response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)"?/i)?.[1]
+      || `ca-file-tracker-complete-backup-${todayDate()}.json`;
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    const archiveWarning = decodeURIComponent(response.headers.get("X-Backup-Archive-Warning") || "");
+    toast("Complete backup downloaded, including Client Master, users, invoices, bills and transactions.");
+    if (archiveWarning) toast("Backup downloaded, but the server archive could not be retained.");
   } catch (error) {
     toast(error.message || "Complete backup could not be generated.");
   }
+}
+
+async function fetchCompleteBackupDownload() {
+  const request = () => fetch("/api/backup/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(apiToken() ? { Authorization: `Bearer ${apiToken()}` } : {}) },
+    body: JSON.stringify({ reason: "manual" }),
+  });
+  let response = await request();
+  if (response.status === 401 && await refreshApiSession()) response = await request();
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Complete backup could not be generated.");
+  }
+  return response;
 }
 
 function handleBackupRestore(event) {

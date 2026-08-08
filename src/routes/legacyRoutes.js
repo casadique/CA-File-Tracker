@@ -57,6 +57,26 @@ router.post("/backup", requireAuth, requireRole("Admin", "Manager"), async (req,
   }
 });
 
+router.post("/backup/download", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
+  try {
+    const payload = await createCompleteBackup(req.profile.name);
+    let archiveWarning = "";
+    try {
+      await archiveCompleteBackup(payload, req.body.reason || "manual");
+    } catch (error) {
+      archiveWarning = error.message || "The server-side archive could not be stored.";
+    }
+    const filename = `ca-file-tracker-complete-backup-${payload.exportedAt.slice(0, 10)}.json`;
+    res.set("Cache-Control", "no-store");
+    res.set("Content-Type", "application/json; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="${filename}"`);
+    res.set("X-Backup-Archive-Warning", encodeURIComponent(archiveWarning));
+    res.send(JSON.stringify(payload));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/import-xlsx", requireAuth, upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file?.buffer) {

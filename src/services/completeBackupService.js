@@ -117,22 +117,39 @@ function checksumFor(payload) {
 async function createCompleteBackup(exportedBy = "", options = {}) {
   const exportedAt = new Date().toISOString();
   const state = redactSecrets(options.state || await getAppState());
-  const clientMaster = options.clientMaster || await backupClientsSecure();
+  let clientMaster = options.clientMaster || [];
   const relationalData = {};
   const warnings = [];
   const unavailableTables = [];
 
-  for (const table of RELATIONAL_TABLES) {
+  if (!options.clientMaster) {
     try {
-      relationalData[table] = redactSecrets(await readWholeTable(table));
+      clientMaster = await backupClientsSecure();
     } catch (error) {
-      relationalData[table] = [];
-      if (["42P01", "PGRST205"].includes(error.code) || /does not exist|schema cache/i.test(error.message || "")) {
-        unavailableTables.push(table);
-      } else {
-        warnings.push(`${table}: ${error.message || "table could not be read"}`);
+      warnings.push(`clientMaster: ${error.message || "secure client export could not be read"}`);
+    }
+  }
+
+  let nextTable = 0;
+  const readTable = async () => {
+    while (nextTable < RELATIONAL_TABLES.length) {
+      const table = RELATIONAL_TABLES[nextTable++];
+      try {
+        relationalData[table] = redactSecrets(await readWholeTable(table));
+      } catch (error) {
+        relationalData[table] = [];
+        if (["42P01", "PGRST205"].includes(error.code) || /does not exist|schema cache/i.test(error.message || "")) {
+          unavailableTables.push(table);
+        } else {
+          warnings.push(`${table}: ${error.message || "table could not be read"}`);
+        }
       }
     }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, RELATIONAL_TABLES.length) }, readTable));
+  if (!clientMaster.length && relationalData.clients?.length) {
+    clientMaster = relationalData.clients;
+    warnings.push("clientMaster: used the database client snapshot after the secure client export was unavailable.");
   }
 
   let authenticationUsers = [];
