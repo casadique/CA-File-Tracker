@@ -18839,7 +18839,7 @@ function cashReceivedFromField(collection = {}) {
     <div class="field expense-item-field collection-source-field">
       <label for="cashReceivedFromSearch">Received From</label>
       <div class="collection-source-combobox">
-        <input id="cashReceivedFromSearch" type="search" role="combobox" aria-autocomplete="list" aria-controls="cashReceivedFromResults" aria-expanded="false" autocomplete="off" value="${escapeHtml(value)}" placeholder="Search client, PAN, file, service or FY">
+        <input id="cashReceivedFromSearch" type="search" role="combobox" aria-autocomplete="list" aria-controls="cashReceivedFromResults" aria-expanded="false" autocomplete="off" value="${escapeHtml(value)}" placeholder="Search or enter client/source name">
         <input id="cashReceivedFrom" type="hidden" value="${escapeHtml(value)}">
         <input id="cashClientId" type="hidden" value="${escapeHtml(clientId)}">
         <input id="cashFileId" type="hidden" value="${escapeHtml(fileId)}">
@@ -19647,16 +19647,17 @@ async function saveCashCollectionEntry(event) {
     if (submitButton) { submitButton.disabled = false; submitButton.innerHTML = originalButtonHtml; }
     return toast("Please enter collection amount.");
   }
-  const receivedFrom = document.querySelector("#cashReceivedFrom")?.value.trim() || "";
+  const receivedFrom = document.querySelector("#cashReceivedFrom")?.value.trim()
+    || document.querySelector("#cashReceivedFromSearch")?.value.trim()
+    || "";
   const selectedClientId = document.querySelector("#cashClientId")?.value || "";
   const selectedFileId = document.querySelector("#cashFileId")?.value || "";
   const existing = editingCashCollection();
-  const feeCollectionSelected = document.querySelector("#cashParticularsEntry")?.value === "Fee Collection";
-  if (!receivedFrom || (!existing && feeCollectionSelected && !selectedClientId && !selectedFileId)) {
+  if (!receivedFrom) {
     addCollectionSaveInFlight = false;
     if (submitButton) { submitButton.disabled = false; submitButton.innerHTML = originalButtonHtml; }
     document.querySelector("#cashReceivedFromSearch")?.focus();
-    return toast("Select a client or billed file from the Received From search results.");
+    return toast("Enter or select the Received From name.");
   }
   const uploadedAttachment = await readExpenseAttachment(document.querySelector("#cashAttachment")?.files?.[0]);
   const attachment = uploadedAttachment || existing?.attachment || null;
@@ -19686,8 +19687,8 @@ async function saveCashCollectionEntry(event) {
     file_id: selectedFileId,
     billingRecordId: document.querySelector("#cashBillingRecordId")?.value || "",
     billing_record_id: document.querySelector("#cashBillingRecordId")?.value || "",
-    sourceType: selectedFileId ? "billed_file" : "client",
-    source_type: selectedFileId ? "billed_file" : "client",
+    sourceType: selectedFileId ? "billed_file" : selectedClientId ? "client" : "manual_source",
+    source_type: selectedFileId ? "billed_file" : selectedClientId ? "client" : "manual_source",
     billNo: document.querySelector("#cashVoucherNo")?.value.trim() || "",
     serviceType: selectedFileId ? (state.files || []).find((file) => file.id === selectedFileId)?.serviceType || "" : "",
     fy: selectedFileId ? fileFy((state.files || []).find((file) => file.id === selectedFileId) || {}) : "",

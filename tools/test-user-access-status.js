@@ -13,5 +13,5 @@ assert(implementation.includes("user.isActive !== false && user.is_active !== fa
 assert(!implementation.includes('user.source === "team-login"'), "Supabase-auth users must not be filtered out");
 assert(!implementation.includes("invitedEmails.has"), "an obsolete local invitation must not be required");
 assert(implementation.includes("!isRevokedAccess(user)"), "revoked users must remain hidden");
-assert(index.includes("20260807-expense-register-v95"), "the repaired user list must remain on the current cache version");
+assert(index.includes("20260808-collection-free-text-v97"), "the repaired user list must remain on the current cache version");
 console.log("User Access Status Supabase-profile visibility checks passed.");

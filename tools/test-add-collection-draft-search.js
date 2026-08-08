@@ -21,7 +21,9 @@ for (const token of [
   "collectionSearchRank",
   "addCollectionSourceSearchController?.abort()",
   "api/clients/search",
-  "Select a client or billed file from the Received From search results.",
+  "Search or enter client/source name",
+  "document.querySelector(\"#cashReceivedFromSearch\")?.value.trim()",
+  "sourceType: selectedFileId ? \"billed_file\" : selectedClientId ? \"client\" : \"manual_source\"",
   "saveLinkedFeeReceiptToApi(selectedFileId",
   "addCollectionSaveInFlight",
 ]) assert.ok(app.includes(token), `Missing Add Collection safeguard: ${token}`);
