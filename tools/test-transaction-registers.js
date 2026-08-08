@@ -60,13 +60,15 @@ for (const token of ["Today", "Last 7 Days", "This Month", "All Transactions", "
 for (const selector of [".transaction-ledger-head", ".transaction-ledger-summary", ".transaction-filter-toolbar", ".transaction-detail-modal", ".transaction-pagination"]) assert.ok(styles.includes(`${selector} {`), `Missing transaction-register style: ${selector}`);
 for (const marker of ["transaction-menu-toggle", "More actions for this transaction", "aria-label=\"Transaction actions\""]) assert.ok(app.includes(marker), `Missing visible transaction action marker: ${marker}`);
 for (const heading of ["<th>Ref No</th>", "<th>Vo. No</th>"]) assert.ok(app.includes(heading), `Missing shortened transaction heading: ${heading}`);
-assert.match(app, /collection-register-table[\s\S]*?<th>Mode<\/th>/, "Collection register must use the compact Mode heading");
+const collectionRegister = app.slice(app.indexOf("function renderCashCollectionTable"), app.indexOf("function transactionValueBadge"));
+assert.match(collectionRegister, /<th>Received From<\/th>[\s\S]*?<th>Mode<\/th>/, "Collection register must use the compact Mode heading");
+assert.doesNotMatch(collectionRegister, /<th>Collection Type<\/th>|data-label="Collection Type"/, "Collection Type must not appear in the Collection Register display");
 assert.match(app, /expense-register-table[\s\S]*?<th>Mode<\/th>/, "Expense register must use the compact Mode heading");
 for (const [column, width] of [[6, 100], [8, 85], [10, 105]]) {
   assert.match(styles, new RegExp(`\\.expense-register-table th:nth-child\\(${column}\\) \\{ width: ${width}px; \\}`), `Expense column ${column} must use its compact width`);
 }
-assert.match(styles, /\.collection-register-table th:nth-child\(5\) \{ width: 165px; \}/, "Collection Particulars must use the reduced desktop width");
-for (const [column, width] of [[6, 90], [7, 100], [8, 115], [10, 110]]) {
+assert.match(styles, /\.collection-register-table th:nth-child\(4\) \{ width: 165px; \}/, "Collection Particulars must use the reduced desktop width");
+for (const [column, width] of [[5, 90], [6, 100], [7, 115], [9, 110]]) {
   assert.match(styles, new RegExp(`\\.collection-register-table th:nth-child\\(${column}\\) \\{ width: ${width}px; \\}`), `Collection column ${column} must use its compact width`);
 }
 assert.match(styles, /\.transaction-register-modern td\.action-col\s*\{[\s\S]*position:\s*sticky;[\s\S]*right:\s*0;/, "transaction action column must remain visible while scrolling");
