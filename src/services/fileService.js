@@ -1212,10 +1212,14 @@ function notificationRecipients(state, file) {
   const map = new Map();
   recipients.forEach((user) => {
     if (!user) return;
-    const key = String(user.id || user.email || user.name || "").toLowerCase();
+    const key = notificationRecipientKey(user);
     if (key) map.set(key, user);
   });
   return [...map.values()];
+}
+
+function notificationRecipientKey(user = {}) {
+  return String(user.authUserId || user.auth_user_id || user.email || user.id || user.name || "").trim().toLowerCase();
 }
 
 function checkedNotificationRecipients(state, file) {
@@ -1243,7 +1247,7 @@ function checkedNotificationRecipients(state, file) {
       || users.find((item) => sameText(item.email, identity))
       || users.find((item) => sameText(item.name, identity));
     if (!user) return;
-    const key = String(user.id || user.email || user.name || "").toLowerCase();
+    const key = notificationRecipientKey(user);
     if (key) map.set(key, user);
   });
   return [...map.values()];

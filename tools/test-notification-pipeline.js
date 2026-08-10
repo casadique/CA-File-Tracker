@@ -6,6 +6,7 @@ const {
   createNotificationEvent,
   deterministicNotificationId,
 } = require("../src/services/notificationEventService");
+const { notificationDeliveryKey } = require("../src/services/pushNotificationService");
 const { applyDueReminderMetadata } = require("../src/services/fileService");
 const { applyVerifiedDuplicateCleanup } = require("../src/services/notificationRetentionService");
 
@@ -17,6 +18,11 @@ assert.equal(first.id, second.id, "the same business event must have a determini
 assert.equal(first.id, deterministicNotificationId(eventKey));
 const state = { fileNotifications: [] };
 assert.equal(appendNotificationEvents(state, [first, second]).created.length, 1);
+assert.equal(
+  notificationDeliveryKey({ eventKey: "status_change:file-1:2026-08-10T12:04:00.000Z:staff-a", notification_type: "Status Updated", fileId: "file-1" }),
+  notificationDeliveryKey({ eventKey: "status_change:file-1:2026-08-10T12:04:00.000Z:staff-b", notification_type: "Status Updated", fileId: "file-1" }),
+  "one status event must have one delivery key per authenticated user"
+);
 assert.equal(state.fileNotifications.length, 1, "duplicate in-app events must be blocked");
 
 const sameDay = {

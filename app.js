@@ -823,6 +823,7 @@ function normalizeState(appState) {
     ...item,
     id: item.id || crypto.randomUUID(),
     dedupeKey: item.dedupeKey || notificationDedupeKey(item),
+    sourceEventId: item.sourceEventId || item.source_event_id || "",
     targetUserId: item.targetUserId || "",
     targetUserEmail: item.targetUserEmail || "",
     targetUserName: item.targetUserName || "",
@@ -3743,8 +3744,9 @@ function allNotificationItems() {
     }
     items.push({
       id: notice.event_id || notice.eventId || notice.id,
-      sourceEventId: notice.event_id || notice.eventId || notice.id,
+      sourceNotificationId: notice.event_id || notice.eventId || notice.id,
       sourceKey: notice.dedupeKey || notificationDedupeKey(notice),
+      sourceEventId: notice.sourceEventId || notice.source_event_id || "",
       type: notice.changeType || "File Update",
       category: notificationCategory(notice.changeType || "File Update"),
       tone: notice.tone || "progress",
@@ -3816,7 +3818,7 @@ function dedupeNotificationItems(items = []) {
   items.forEach((item) => {
     if (!item) return;
     const key = [
-      item.sourceKey || "",
+      notificationDisplayGroupKey(item),
       item.category || "",
       item.type || "",
       item.fileId || "",
@@ -3828,6 +3830,13 @@ function dedupeNotificationItems(items = []) {
     if (!existing || (item.createdAt || 0) >= (existing.createdAt || 0)) map.set(key, item);
   });
   return [...map.values()];
+}
+
+function notificationDisplayGroupKey(item = {}) {
+  const sourceEventId = String(item.sourceEventId || "").trim();
+  if (sourceEventId) return sourceEventId;
+  const sourceKey = String(item.sourceKey || "").trim();
+  return sourceKey.includes(":") ? sourceKey.slice(0, sourceKey.lastIndexOf(":")) : sourceKey;
 }
 
 function notifications() {

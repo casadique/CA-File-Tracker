@@ -27,6 +27,8 @@ function createNotificationEvent(input = {}) {
     eventId: id,
     event_key: eventKey,
     eventKey,
+    source_event_id: input.sourceEventId || input.source_event_id || "",
+    sourceEventId: input.sourceEventId || input.source_event_id || "",
     dedupeKey: eventKey,
     notification_type: input.changeType || input.eventType || "Notification",
     changeType: input.changeType || input.eventType || "Notification",

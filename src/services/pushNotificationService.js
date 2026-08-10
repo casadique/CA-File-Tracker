@@ -466,7 +466,7 @@ async function dispatchFileNotifications(state = {}, notifications = []) {
       notice.targetUserId, notice.targetUserEmail, notice.targetUserName,
       recipient?.id, recipient?.email, recipient?.name);
     if (!authUserId || !notice.id) continue;
-    const key = `${authUserId}:${notice.id}`;
+    const key = `${authUserId}:${notificationDeliveryKey(notice)}`;
     if (unique.has(key)) continue;
     const category = notificationCategory(notice);
     const targetPage = fileNotificationRoute(category, recipient);
@@ -491,6 +491,14 @@ async function dispatchFileNotifications(state = {}, notifications = []) {
     }));
   }
   return Promise.allSettled(unique.values());
+}
+
+function notificationDeliveryKey(notice = {}) {
+  const source = String(notice.source_event_id || notice.sourceEventId || "").trim();
+  if (source) return `${notice.notification_type || notice.changeType || "notification"}:${notice.fileId || notice.related_record_id || ""}:${source}`;
+  const eventKey = String(notice.event_key || notice.eventKey || notice.dedupeKey || notice.id || "").trim();
+  const groupedEventKey = eventKey.includes(":") ? eventKey.slice(0, eventKey.lastIndexOf(":")) : eventKey;
+  return `${notice.notification_type || notice.changeType || "notification"}:${notice.fileId || notice.related_record_id || ""}:${groupedEventKey}`;
 }
 
 async function dispatchChatNotification(state = {}, message = {}) {
@@ -662,6 +670,7 @@ module.exports = {
   saveOrganizationSettings,
   sendToUser,
   dispatchFileNotifications,
+  notificationDeliveryKey,
   dispatchChatNotification,
   dispatchDueReminders,
   deliverySummary,
