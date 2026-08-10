@@ -10038,6 +10038,34 @@ body.expense-item-modal-open {
 .opening-balance-field-heading > span { color: #b45309; font-size: 9px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
 .opening-balance-reason-field textarea { min-height: 76px; resize: vertical; }
 .opening-balance-reason-field > small { display: block; margin-top: 5px; color: #64748b; font-size: 10px; }
+.opening-balance-edit-versions {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #eff6ff, #f8fafc);
+}
+.opening-balance-edit-versions > header strong,
+.opening-balance-edit-versions > header small { display: block; }
+.opening-balance-edit-versions > header strong { color: #1e3a8a; font-size: 13px; }
+.opening-balance-edit-versions > header small { margin-top: 3px; color: #64748b; font-size: 10px; }
+.opening-balance-edit-versions > div { display: grid; gap: 8px; margin-top: 11px; }
+.opening-balance-edit-versions article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 1px solid #dbeafe;
+  border-radius: 11px;
+  background: #fff;
+}
+.opening-balance-edit-versions article.is-editing { border-color: #34d399; background: #ecfdf5; }
+.opening-balance-edit-versions article span strong,
+.opening-balance-edit-versions article span small { display: block; }
+.opening-balance-edit-versions article span strong { color: #0f172a; font-size: 12px; }
+.opening-balance-edit-versions article span small { margin-top: 2px; color: #64748b; font-size: 10px; }
+.opening-balance-edit-versions .primary-button { flex: 0 0 auto; min-height: 36px; padding: 7px 12px; white-space: nowrap; }
 .opening-balance-history { margin-top: 14px; }
 .opening-balance-history > summary { color: #2563eb; cursor: pointer; font-size: 12px; font-weight: 800; }
 .opening-balance-history .table-wrap { margin-top: 10px; }
@@ -10106,6 +10134,8 @@ body.expense-item-modal-open {
   .opening-balance-modal-footer { align-items: stretch; flex-direction: column; margin-inline: -14px; padding: 14px; }
   .opening-balance-modal-footer > span { display: grid; grid-template-columns: auto 1fr; }
   .opening-balance-modal-footer .primary-button { min-width: 0; }
+  .opening-balance-edit-versions article { align-items: stretch; flex-direction: column; }
+  .opening-balance-edit-versions .primary-button { width: 100%; }
   .reconciliation-inputs .full-span { grid-column: auto; }
   .reconciliation-summary-grid-modern { grid-template-columns: 1fr 1fr; }
   .reconciliation-history-filters { grid-template-columns: 1fr 1fr; }

@@ -1337,6 +1337,70 @@ async function saveOpeningBalances(payloads = [], userId, profile, reason = "") 
   }, userId);
 }
 
+async function updateOpeningBalances(effectiveDate, payloads = [], userId, profile, reason = "") {
+  if (String(profile?.role || "").trim() !== "Admin") {
+    throw Object.assign(new Error("Only Admin can edit opening balances."), { status: 403 });
+  }
+  const originalDate = normalizeDate(effectiveDate);
+  if (!originalDate) throw Object.assign(new Error("A valid opening-balance date is required."), { status: 400 });
+  if (!Array.isArray(payloads) || !payloads.length || payloads.length > 3) {
+    throw Object.assign(new Error("Provide the opening-balance records that need correction."), { status: 400 });
+  }
+  const changeReason = String(reason || "").trim();
+  if (!changeReason) throw Object.assign(new Error("A correction reason is required when editing opening balances."), { status: 400 });
+  return patchAppStateAtomic((state) => {
+    const now = new Date();
+    const records = payloads.map((payload) => normalizeOpeningBalance(payload, now, profile));
+    const recognisedAccounts = new Set(["cash", "federal_bank", "tmb"]);
+    if (records.some((record) => record.date !== originalDate)) {
+      throw Object.assign(new Error("The effective date of an existing opening balance cannot be changed."), { status: 400 });
+    }
+    if (new Set(records.map((record) => record.accountKey)).size !== records.length || records.some((record) => !recognisedAccounts.has(record.accountKey))) {
+      throw Object.assign(new Error("Opening-balance corrections must contain unique recognised accounts."), { status: 400 });
+    }
+    const existingByAccount = new Map((state.openingBalances || [])
+      .filter((item) => isActiveTransaction(item) && financeDateOf(item) === originalDate)
+      .map((item) => [financeAccountOf(item, "cash"), item]));
+    const missing = records.find((record) => !existingByAccount.has(record.accountKey));
+    if (missing) throw Object.assign(new Error(`${financeAccountName(missing.accountKey)} has no opening balance for ${originalDate}.`), { status: 404 });
+    const changedRecords = records.filter((record) => {
+      const existing = existingByAccount.get(record.accountKey);
+      return Number(existing.amount ?? existing.opening_balance ?? 0) !== Number(record.amount || 0);
+    });
+    if (!changedRecords.length) throw Object.assign(new Error("No opening-balance amounts were changed."), { status: 409 });
+    const updatedById = new Map(changedRecords.map((record) => {
+      const existing = existingByAccount.get(record.accountKey);
+      const previousAmount = Number(existing.amount ?? existing.opening_balance ?? 0) || 0;
+      const corrected = {
+        ...existing,
+        amount: Number(record.amount || 0),
+        opening_balance: Number(record.amount || 0),
+        previousValue: previousAmount,
+        previous_value: previousAmount,
+        newValue: Number(record.amount || 0),
+        new_value: Number(record.amount || 0),
+        originalReason: existing.originalReason || existing.original_reason || existing.reason || existing.remarks || "",
+        original_reason: existing.original_reason || existing.originalReason || existing.reason || existing.remarks || "",
+        reason: changeReason,
+        remarks: changeReason,
+        changeReason,
+        change_reason: changeReason,
+        editedBy: profile?.name || "",
+        edited_by: profile?.id || profile?.email || userId || "",
+        editedAt: now.toISOString(),
+        edited_at: now.toISOString(),
+        updatedAt: now.toISOString(),
+        updated_at: now.toISOString(),
+      };
+      return [existing.id, corrected];
+    }));
+    state.openingBalances = (state.openingBalances || []).map((item) => updatedById.get(item.id) || item)
+      .sort((a, b) => financeDateOf(b).localeCompare(financeDateOf(a)));
+    [...updatedById.values()].forEach((record) => appendAudit(state, "Opening balance version corrected", record, profile, now));
+    return state;
+  }, userId);
+}
+
 async function deleteOpeningBalance(id, userId, profile) {
   return patchAppState((state) => {
     const before = (state.openingBalances || []).find((item) => item.id === id);
@@ -1665,8 +1729,8 @@ function appendAudit(state, action, record, profile, now) {
         outstandingBalance: record.outstandingBalance || record.outstanding_balance || 0,
         paymentMode: record.paymentMode || record.payment_mode || record.mode || "",
         account: record.accountName || record.account_name || financeAccountName(record.accountKey || record.account_key || ""),
-        previousValue: record.previousValue || record.previous_value || null,
-        newValue: record.newValue || record.new_value || null,
+        previousValue: record.previousValue ?? record.previous_value ?? null,
+        newValue: record.newValue ?? record.new_value ?? null,
         particulars: record.particulars,
         status: record.status || record.receiptStatus || record.receipt_status || "",
         previousPushStatus: record.previousPushStatus || record.previous_push_status || "",
@@ -1740,6 +1804,7 @@ module.exports = {
   deleteCollection,
   saveOpeningBalance,
   saveOpeningBalances,
+  updateOpeningBalances,
   deleteOpeningBalance,
   submitCashReconciliation,
   decideCashReconciliation,

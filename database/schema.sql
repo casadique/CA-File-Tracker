@@ -44,6 +44,9 @@ create policy "authenticated users can read central app state"
   to authenticated
   using (true);
 
+revoke insert, update, delete, truncate, references, trigger
+  on table public.app_state from anon, authenticated;
+
 drop policy if exists "authenticated users can read audit events" on public.audit_events;
 create policy "authenticated users can read audit events"
   on public.audit_events for select

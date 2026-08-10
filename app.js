@@ -18,6 +18,9 @@ const DESKTOP_LOCAL_SENT_KEY = `${STORAGE_KEY}-desktop-local-sent`;
 const ADD_COLLECTION_DRAFT_VERSION = 1;
 const ADD_COLLECTION_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const ADD_COLLECTION_DRAFT_DEBOUNCE_MS = 400;
+const EXPENSE_DRAFT_VERSION = 1;
+const EXPENSE_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+const EXPENSE_DRAFT_DEBOUNCE_MS = 400;
 
 const defaultDailyQuotes = [
   { text: "Success comes from consistent small efforts.", author: "Robert Collier" },
@@ -384,11 +387,14 @@ let selectedDrawerClient = null;
 let clientSearchTimer = null;
 let addCollectionDraftTimer = null;
 let addCollectionDraftAttachment = null;
+let expenseDraftTimer = null;
+let expenseDraftAttachment = null;
 let addCollectionSourceSearchTimer = null;
 let addCollectionSourceSearchRequest = 0;
 let addCollectionSourceSearchController = null;
 let addCollectionSaveInFlight = false;
 let suppressAddCollectionDraftCapture = false;
+let suppressExpenseDraftCapture = false;
 const clientMasterUi = {
   search: "",
   status: "Active",
@@ -453,18 +459,27 @@ window.addEventListener("storage", (event) => {
 });
 
 window.addEventListener("focus", () => {
-  persistAddCollectionDraft();
+  persistTransactionEntryDrafts();
   if (isSupabaseMode()) refreshCentralState({ force: true });
   else syncSharedState(localStorage.getItem(STORAGE_KEY), true);
 });
 
 window.addEventListener("beforeunload", (event) => {
-  const values = collectionDraftValuesFromForm();
-  if (!values || !addCollectionDraftIsMeaningful(values)) return;
-  persistAddCollectionDraft();
+  const collectionValues = collectionDraftValuesFromForm();
+  const expenseValues = expenseDraftValuesFromForm();
+  const hasCollectionDraft = Boolean(collectionValues && addCollectionDraftIsMeaningful(collectionValues));
+  const hasExpenseDraft = Boolean(expenseValues && expenseDraftIsMeaningful(expenseValues));
+  if (!hasCollectionDraft && !hasExpenseDraft) return;
+  persistTransactionEntryDrafts();
   event.preventDefault();
   event.returnValue = "";
 });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) persistTransactionEntryDrafts();
+});
+
+window.addEventListener("pagehide", persistTransactionEntryDrafts);
 
 window.addEventListener("scroll", () => {
   lastDashboardScrollAt = Date.now();
@@ -1537,10 +1552,18 @@ async function saveStateToApi() {
 
 async function saveFileToApi(file) {
   if (!isSupabaseMode() || !file?.id) return;
+  const payloadFile = { ...file };
+  if (!dueDateEditPolicy(file).allowed) {
+    delete payloadFile.dueDate;
+    delete payloadFile.due_date;
+  }
   try {
     return await apiJson(`/api/files/${encodeURIComponent(file.id)}`, {
       method: "PUT",
-      body: JSON.stringify({ file }),
+      body: JSON.stringify({
+        file: payloadFile,
+        sourceAction: activePage || state.filters?.listView || "file-drawer",
+      }),
     });
   } catch (error) {
     console.warn("Central file save failed", error);
@@ -1745,6 +1768,17 @@ async function saveOpeningBalancesBatchToApi(openingBalances, reason) {
   return result;
 }
 
+async function updateOpeningBalancesBatchToApi(date, openingBalances, reason) {
+  const result = await apiJson(`/api/finance/opening-balances/batch/${encodeURIComponent(date)}`, {
+    method: "PUT",
+    body: JSON.stringify({ openingBalances, reason }),
+  });
+  if (result?.openingBalances) state.openingBalances = result.openingBalances;
+  if (result?.auditLog) state.auditLog = result.auditLog;
+  saveState({ skipMerge: true, skipRemote: true });
+  return result;
+}
+
 async function deleteOpeningBalanceFromApi(id) {
   const result = await apiJson(`/api/finance/opening-balances/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.openingBalances) state.openingBalances = result.openingBalances;
@@ -1813,6 +1847,7 @@ async function deleteVisitorFromApi(id) {
 
 async function loadStateFromApi() {
   if (!apiToken()) return false;
+  persistTransactionEntryDrafts();
   try {
     const payload = await apiJson("/api/state");
     if (!payload.state) return false;
@@ -1833,6 +1868,7 @@ async function refreshCentralState(options = {}) {
   if (!options.force && Date.now() - lastCentralRefreshAt < 12000) return false;
   if (!options.force && document.hidden) return false;
   if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
+  persistTransactionEntryDrafts();
   lastCentralRefreshAt = Date.now();
   try {
     const payload = await apiJson("/api/state");
@@ -2043,10 +2079,31 @@ function dedupeFileNotifications(rows = []) {
       map.set(key, { ...existing, ...normalized });
     }
   });
-  return [...map.values()].sort((a, b) =>
+  const exactRows = [...map.values()].sort((a, b) =>
     (Number(b.createdAt || 0) || Date.parse(b.created_at || b.date || "") || 0)
     - (Number(a.createdAt || 0) || Date.parse(a.created_at || a.date || "") || 0)
   );
+  const output = [];
+  const latestBySemanticKey = new Map();
+  exactRows.forEach((notice) => {
+    const recipient = notice.targetUserEmail || notice.targetUserName || notice.targetUserAuthId || notice.targetUserId || notice.user_id || "";
+    const semanticKey = [recipient, notice.changeType || notice.notification_type, notice.fileId || notice.related_record_id, notice.changeText, notice.changedBy]
+      .map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " "))
+      .filter(Boolean).join("|");
+    const timestamp = notificationItemTime(notice);
+    const recent = semanticKey && notice.changeText && timestamp ? latestBySemanticKey.get(semanticKey) : null;
+    if (recent && Math.abs(recent.timestamp - timestamp) <= 2 * 60 * 1000) {
+      const merged = notificationCompleteness(notice) > notificationCompleteness(recent.notice)
+        ? { ...recent.notice, ...notice }
+        : { ...notice, ...recent.notice };
+      output[recent.index] = merged;
+      recent.notice = merged;
+      return;
+    }
+    const index = output.push(notice) - 1;
+    if (semanticKey && notice.changeText && timestamp) latestBySemanticKey.set(semanticKey, { index, notice, timestamp });
+  });
+  return output;
 }
 
 function mergeFileNotifications(existingRows = [], incomingRows = []) {
@@ -3170,6 +3227,111 @@ function currentFileAssignee(file = {}) {
   };
 }
 
+function exactDueDateAssigneeIds(file = {}) {
+  const ids = new Set();
+  const add = (value) => {
+    const clean = String(value || "").trim().toLowerCase();
+    if (clean) ids.add(clean);
+  };
+  const addObject = (value) => {
+    if (!value || typeof value !== "object") return;
+    [value.id, value.userId, value.user_id, value.authUserId, value.auth_user_id, value.profileId, value.profile_id].forEach(add);
+  };
+  const reassigned = Boolean(
+    file.reAssignedStaffId || file.re_assigned_staff_id || file.reassignedToId || file.reassigned_to_id
+    || file.currentAssignedStaffId || file.current_assigned_user_id
+  );
+  (reassigned
+    ? [file.reAssignedStaffId, file.re_assigned_staff_id, file.reassignedToId, file.reassigned_to_id, file.currentAssignedStaffId, file.current_assigned_user_id]
+    : [file.assignedStaffId, file.assigned_staff_id, file.assignedUserId, file.assigned_user_id, file.currentAssignedStaffId, file.current_assigned_user_id]
+  ).forEach(add);
+  [file.assigneeIds, file.assignee_ids, file.assignedUserIds, file.assigned_user_ids, file.assignedStaffIds, file.assigned_staff_ids].forEach((values) => {
+    if (Array.isArray(values)) values.forEach((value) => typeof value === "object" ? addObject(value) : add(value));
+  });
+  [file.assignees, file.assignedUsers, file.assigned_users].forEach((values) => {
+    if (Array.isArray(values)) values.forEach(addObject);
+  });
+  return ids;
+}
+
+function currentDueDateActorIds() {
+  const user = loggedInUser() || {};
+  return new Set([
+    user.id, user.authUserId, user.auth_user_id,
+    state.session?.userId, state.session?.authUserId,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean));
+}
+
+function dueDateEditPolicy(file = {}) {
+  const role = normalizeRole(state.currentRole || state.session?.role || "Guest");
+  if (["Admin", "Manager"].includes(role)) return { allowed: true, reason: "" };
+  if (role !== "Staff Manager") {
+    return { allowed: false, reason: "Only Admin or Manager can change the due date." };
+  }
+  const assigneeIds = exactDueDateAssigneeIds(file);
+  if (!assigneeIds.size) {
+    return { allowed: false, reason: "Assign this work to another user before setting the due date." };
+  }
+  const isSelfAssigned = [...currentDueDateActorIds()].some((id) => assigneeIds.has(id));
+  return isSelfAssigned
+    ? { allowed: false, reason: "You cannot change the due date of work assigned to you." }
+    : { allowed: true, reason: "" };
+}
+
+function dueDateField(file = {}) {
+  const policy = dueDateEditPolicy(file);
+  const value = escapeHtml(file.dueDate || file.due_date || "");
+  return `<div class="field ${policy.allowed ? "" : "readonly-field"}" data-due-date-field title="${escapeHtml(policy.reason)}">
+    <label>Due Date</label>
+    <input id="dueDateEditor" ${policy.allowed ? 'name="dueDate"' : ""} type="date" value="${value}" ${policy.allowed ? "required" : 'disabled aria-disabled="true"'}>
+    ${policy.allowed ? "" : `<small class="small-muted" data-due-date-help>${escapeHtml(policy.reason)}</small>`}
+  </div>`;
+}
+
+function proposedDrawerAssigneeFile() {
+  const reassigned = findUserByStaffIdentity(document.querySelector("#reAssignedStaffSelect")?.value) || {};
+  const assigned = findUserByStaffIdentity(document.querySelector("#assignedStaffSelect")?.value) || {};
+  const active = reassigned.id || reassigned.authUserId ? reassigned : assigned;
+  return {
+    assignedStaffId: active.id || "",
+    assigned_user_id: active.authUserId || active.auth_user_id || "",
+    currentAssignedStaffId: active.id || active.authUserId || active.auth_user_id || "",
+  };
+}
+
+function bindDueDatePermission(file = {}, isExisting = false) {
+  const field = document.querySelector("[data-due-date-field]");
+  const input = document.querySelector("#dueDateEditor");
+  if (!field || !input) return;
+  const sync = () => {
+    const policy = dueDateEditPolicy(isExisting ? file : proposedDrawerAssigneeFile());
+    input.disabled = !policy.allowed;
+    input.required = policy.allowed;
+    input.setAttribute("aria-disabled", String(!policy.allowed));
+    if (policy.allowed) input.setAttribute("name", "dueDate");
+    else input.removeAttribute("name");
+    field.classList.toggle("readonly-field", !policy.allowed);
+    field.title = policy.reason;
+    let help = field.querySelector("[data-due-date-help]");
+    if (!policy.allowed && !help) {
+      help = document.createElement("small");
+      help.className = "small-muted";
+      help.dataset.dueDateHelp = "";
+      field.appendChild(help);
+    }
+    if (help) {
+      help.textContent = policy.reason;
+      help.classList.toggle("hidden", policy.allowed);
+    }
+  };
+  if (!isExisting) {
+    ["#assignedStaffSelect", "#reAssignedStaffSelect", "#workflowStatus"].forEach((selector) => {
+      document.querySelector(selector)?.addEventListener("change", sync);
+    });
+  }
+  sync();
+}
+
 function staffAssigneeMatches(left = {}, right = {}) {
   if (!left || !right) return false;
   return (hasAssignedStaffValue(left.name) && hasAssignedStaffValue(right.name) && sameStaffName(left.name, right.name))
@@ -3829,13 +3991,32 @@ function dedupeNotificationItems(items = []) {
     const existing = map.get(key);
     if (!existing || (item.createdAt || 0) >= (existing.createdAt || 0)) map.set(key, item);
   });
-  return [...map.values()];
+  const candidates = [...map.values()].sort((left, right) => notificationItemTime(right) - notificationItemTime(left));
+  const output = [];
+  const latestBySemanticKey = new Map();
+  candidates.forEach((item) => {
+    const semanticKey = [item.category, item.type, item.fileId, item.clientName || item.title, item.text, item.actor]
+      .map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " "))
+      .filter(Boolean).join("|");
+    const timestamp = notificationItemTime(item);
+    const recent = semanticKey && item.fileId && timestamp ? latestBySemanticKey.get(semanticKey) : null;
+    if (recent && Math.abs(recent.timestamp - timestamp) <= 2 * 60 * 1000) {
+      output[recent.index] = { ...item, ...recent.item, isRead: Boolean(item.isRead || recent.item.isRead) };
+      recent.item = output[recent.index];
+      return;
+    }
+    const index = output.push(item) - 1;
+    if (semanticKey && item.fileId && timestamp) latestBySemanticKey.set(semanticKey, { index, item, timestamp });
+  });
+  return output;
 }
 
 function notificationDisplayGroupKey(item = {}) {
   const sourceEventId = String(item.sourceEventId || "").trim();
   if (sourceEventId) return sourceEventId;
   const sourceKey = String(item.sourceKey || "").trim();
+  // Legacy events carry the recipient only as the final component of their
+  // event key. Removing it groups one change for every intended recipient.
   return sourceKey.includes(":") ? sourceKey.slice(0, sourceKey.lastIndexOf(":")) : sourceKey;
 }
 
@@ -4533,6 +4714,8 @@ function renderNav() {
 function renderAll() {
   if (suppressAddCollectionDraftCapture) suppressAddCollectionDraftCapture = false;
   else persistAddCollectionDraft();
+  if (suppressExpenseDraftCapture) suppressExpenseDraftCapture = false;
+  else persistExpenseDraft();
   if (activePage === "invites") activePage = "users";
   if (activePage === "users" && state.currentRole !== "Admin") activePage = "dashboard";
   if (activePage === "backup" && !canUseBackupPage()) activePage = "dashboard";
@@ -12119,6 +12302,9 @@ function openFileDrawer(id) {
   if (id ? !canEditFileRecord(file) : !canCreateFile()) return toast("You do not have permission to edit this file.");
   const canAssignThisFile = canAssignFile(id ? file : null);
   const workflowAllowsAssignment = currentWorkflowStage(file) !== "Received";
+  const dueDateDisplayFile = id || ["Admin", "Manager"].includes(normalizeRole(state.currentRole))
+    ? file
+    : { ...file, dueDate: "", due_date: "" };
   const drawer = document.querySelector("#fileDrawer");
   drawer.innerHTML = `
     <div class="drawer-head">
@@ -12141,7 +12327,7 @@ function openFileDrawer(id) {
         ${workflowStatusField(file)}
         ${staffAssignField("assignedStaff", "Assigned Staff", file.assignedStaff || "Not Assigned", !canAssignThisFile || !workflowAllowsAssignment)}
         ${formField("workAllotmentDate", "Work Allotment Date", file.workAllotmentDate || "", "date", false)}
-        ${formField("dueDate", "Due Date", file.dueDate, "date")}
+        ${dueDateField(dueDateDisplayFile)}
         ${selectField("priority", "Priority", ["Low", "Medium", "High", "Urgent"], file.priority)}
         ${staffAssignField("reAssignedStaff", "Re Assigned", "", !canAssignThisFile || !workflowAllowsAssignment, true, true, {
           currentAssignee: currentFileAssignee(file),
@@ -12209,6 +12395,7 @@ function openFileDrawer(id) {
   bindStaffPicker("assignedStaff");
   bindStaffPicker("reAssignedStaff");
   bindWorkflowAssignmentAvailability(canAssignThisFile);
+  bindDueDatePermission(file, Boolean(id));
   bindCorrectionWorkflowFields();
   bindAllotmentDateDefaults();
   document.querySelector("#attachmentsInput").onchange = (e) => {
@@ -12795,6 +12982,20 @@ async function saveFileFromDrawer() {
   }
   const assignedUser = findUserByStaffIdentity(assigned) || {};
   const reAssignedUser = findUserByStaffIdentity(reAssignedStaff) || {};
+  const activeAssignedUser = hasAssignedStaffValue(reAssignedStaff) ? reAssignedUser : assignedUser;
+  const proposedDueDateFile = existingFile || {
+    assignedStaffId: activeAssignedUser.id || "",
+    assigned_user_id: activeAssignedUser.authUserId || activeAssignedUser.auth_user_id || "",
+    currentAssignedStaffId: activeAssignedUser.id || activeAssignedUser.authUserId || activeAssignedUser.auth_user_id || "",
+  };
+  const dueDatePolicy = dueDateEditPolicy(proposedDueDateFile);
+  const submittedDueDate = normalizeImportDate(data.get("dueDate") || "");
+  const existingDueDate = normalizeImportDate(existingFile?.dueDate || existingFile?.due_date || "");
+  if (!dueDatePolicy.allowed && data.has("dueDate") && submittedDueDate !== existingDueDate) {
+    restoreSaveFileButton(saveButton);
+    return toast(dueDatePolicy.reason);
+  }
+  const dueDateValue = dueDatePolicy.allowed ? submittedDueDate : existingDueDate;
   const wasCompleted = isCheckedCompleted(existingFile);
   const wasReturned = Boolean(existingFile?.stages?.["Correction Required"]);
   const justCompleted = stagesObj.Completed && (!wasCompleted || wasReturned);
@@ -12902,7 +13103,7 @@ async function saveFileFromDrawer() {
     reassigned_by: assignedChanged && hasAssignedStaffValue(reAssignedStaff) ? (state.currentUser || "") : (existingFile?.reassigned_by || existingFile?.reassignedBy || ""),
     reassignedAt: hasAssignedStaffValue(reAssignedStaff) ? (reAssignedDate || todayDate()) : (existingFile?.reassignedAt || existingFile?.reassigned_at || ""),
     reassigned_at: hasAssignedStaffValue(reAssignedStaff) ? (reAssignedDate || todayDate()) : (existingFile?.reassigned_at || existingFile?.reassignedAt || ""),
-    dueDate: data.get("dueDate"),
+    dueDate: dueDateValue,
     priority: data.get("priority"),
     completionDate,
     workDoneBy: stagesObj["Work Done"] ? (existingFile?.workDoneBy || state.currentUser || "") : (existingFile?.workDoneBy || ""),
@@ -13142,6 +13343,9 @@ async function saveFileFromDrawer() {
     }
   } catch (error) {
     console.error("Central file update failed", error);
+    if (existingFile) state.files = state.files.map((file) => file.id === existingFile.id ? existingFile : file);
+    else state.files = state.files.filter((file) => file.id !== record.id);
+    saveState({ skipMerge: true, skipRemote: true });
     fileSaveRequests.delete(saveKey);
     restoreSaveFileButton(saveButton);
     return toast(`Central update failed: ${error.message || "Please retry."}`);
@@ -18283,26 +18487,29 @@ function renderTransactionEmptyState(kind) {
 
 function renderExpenseEntryTab() {
   const data = transactionLedgerData("expenses", filteredExpenses());
+  const editing = editingExpense();
+  const draft = editing ? null : readExpenseDraft();
   return `
     ${renderTransactionLedgerHeader("expenses", data)}
     ${renderTransactionSummary("expenses", data)}
     <div class="transaction-workspace">
       <section class="expense-stack transaction-main-column">
+        ${expenseDraftNotice(draft)}
         <form id="expenseForm" class="expense-form expense-entry-form">
           <div class="expense-card-head">
             <h3>${state.filters.editExpenseId ? "Edit Expense" : "Add Expense"}</h3>
             <p>Record and manage business expenses</p>
           </div>
-          ${expenseDateField("expenseDate", "Expense Date", editingExpense()?.date || todayDate())}
-          ${expenseItemField(editingExpense()?.particulars || state.filters.expenseItemSelection || "")}
-          ${expenseInput("expensePaidTo", "Paid To", editingExpense()?.paidTo || "", "text", "", "wide-field")}
-          ${expenseInput("expenseAmount", "Amount", editingExpense()?.amount || "", "number", "0.01", "compact-field amount-field")}
-          ${expenseSelect("expenseMode", "Payment Method", paymentModes(), editingExpense()?.paymentMethod || editingExpense()?.payment_method || editingExpense()?.mode || "Cash")}
-          ${financeAccountSelect("expenseAccount", "Account", transactionAccountKey(editingExpense() || {}, "cash"))}
-          ${expenseInput("expenseVoucherNo", "Voucher No.", editingExpense()?.voucherNo || "", "text", "", "compact-field ref-field")}
-          ${expenseInput("expenseEnteredBy", "Entered By", editingExpense()?.createdBy || editingExpense()?.enteredBy || state.currentUser || "", "text")}
-          ${expenseTextarea("expenseRemarks", "Remarks", editingExpense()?.remarks || "")}
-          ${expenseAttachmentField(editingExpense())}
+          ${expenseDateField("expenseDate", "Expense Date", editing?.date || todayDate())}
+          ${expenseItemField(editing?.particulars || state.filters.expenseItemSelection || "")}
+          ${expenseInput("expensePaidTo", "Paid To", editing?.paidTo || "", "text", "", "wide-field")}
+          ${expenseInput("expenseAmount", "Amount", editing?.amount || "", "number", "0.01", "compact-field amount-field")}
+          ${expenseSelect("expenseMode", "Payment Method", paymentModes(), editing?.paymentMethod || editing?.payment_method || editing?.mode || "Cash")}
+          ${financeAccountSelect("expenseAccount", "Account", transactionAccountKey(editing || {}, "cash"))}
+          ${expenseInput("expenseVoucherNo", "Voucher No.", editing?.voucherNo || "", "text", "", "compact-field ref-field")}
+          ${expenseInput("expenseEnteredBy", "Entered By", editing?.createdBy || editing?.enteredBy || state.currentUser || "", "text")}
+          ${expenseTextarea("expenseRemarks", "Remarks", editing?.remarks || "")}
+          ${expenseAttachmentField(editing)}
           <div class="action-row">
             <button class="secondary-button" type="button" id="resetExpenseForm">${state.filters.editExpenseId ? "Cancel" : "Reset"}</button>
             <button class="primary-button" type="submit"><span aria-hidden="true">${transactionIcon("save")}</span>${state.filters.editExpenseId ? "Update Expense" : "Save Expense"}</button>
@@ -18362,15 +18569,31 @@ function renderOpeningBalancePanel() {
   `;
 }
 
-function openOpeningBalanceModal() {
+/* Superseded by the editable, audited opening-balance modal below.
+function openOpeningBalanceModalLegacy(editDate = "") {
   if (state.currentRole !== "Admin") return toast("Only Admin can set opening balances.");
   document.querySelector("#openingBalanceModal")?.remove();
   const current = Object.fromEntries(financeAccounts.map((account) => [account.value, applicableOpeningBalance("", todayDate(), account.value)]));
   const history = (state.openingBalances || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true)
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const requestedEditDate = normalizeImportDate(editDate);
+  const editingRows = requestedEditDate ? history.filter((item) => normalizeImportDate(item.date || item.balance_date) === requestedEditDate) : [];
+  const editing = Boolean(requestedEditDate && editingRows.length);
+  const editingByAccount = Object.fromEntries(editingRows.map((item) => [transactionAccountKey(item), item]));
+  const historyByDate = new Map();
+  history.forEach((item) => {
+    const date = normalizeImportDate(item.date || item.balance_date);
+    if (!date) return;
+    const summary = historyByDate.get(date) || { date, accounts: 0, total: 0 };
+    summary.accounts += 1;
+    summary.total += Number(item.amount ?? item.opening_balance ?? 0) || 0;
+    historyByDate.set(date, summary);
+  });
+  const historyDateSummaries = [...historyByDate.values()].sort((a, b) => b.date.localeCompare(a.date));
   const modal = document.createElement("div");
   modal.id = "openingBalanceModal";
   modal.className = "finance-modal-backdrop";
+  modal.dataset.editDate = editing ? requestedEditDate : "";
   modal.innerHTML = `<section class="finance-modal opening-balances-modal" role="dialog" aria-modal="true" aria-labelledby="openingBalanceTitle">
     <header class="opening-balances-modal-header"><div class="opening-balances-modal-title"><span class="opening-balances-modal-mark" aria-hidden="true">&#8377;</span><div><span class="opening-balances-modal-eyebrow">Admin only</span><h2 id="openingBalanceTitle">Set Opening Balances</h2><p>Create a dated balance version while keeping every previous record intact.</p></div></div><button type="button" class="icon-button" data-close-opening aria-label="Close opening balances">×</button></header>
     <form id="openingBalanceForm" class="opening-balances-modal-form">
@@ -18389,6 +18612,60 @@ function openOpeningBalanceModal() {
   modal.querySelector("#openingBalanceForm").addEventListener("submit", saveOpeningBalances);
   modal.querySelectorAll("[data-opening-amount]").forEach((input) => input.addEventListener("input", updateOpeningBalancesTotal));
   modal.querySelector("#openingEffectiveDate")?.focus();
+}
+
+*/
+function openOpeningBalanceModal(editDate = "") {
+  if (state.currentRole !== "Admin") return toast("Only Admin can set opening balances.");
+  document.querySelector("#openingBalanceModal")?.remove();
+  const current = Object.fromEntries(financeAccounts.map((account) => [account.value, applicableOpeningBalance("", todayDate(), account.value)]));
+  const history = (state.openingBalances || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true)
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const requestedEditDate = normalizeImportDate(editDate);
+  const editingRows = requestedEditDate ? history.filter((item) => normalizeImportDate(item.date || item.balance_date) === requestedEditDate) : [];
+  const editing = Boolean(requestedEditDate && editingRows.length);
+  const editingByAccount = Object.fromEntries(editingRows.map((item) => [transactionAccountKey(item), item]));
+  const historyByDate = new Map();
+  history.forEach((item) => {
+    const date = normalizeImportDate(item.date || item.balance_date);
+    if (!date) return;
+    const summary = historyByDate.get(date) || { date, accounts: 0, total: 0 };
+    summary.accounts += 1;
+    summary.total += Number(item.amount ?? item.opening_balance ?? 0) || 0;
+    historyByDate.set(date, summary);
+  });
+  const historyDateSummaries = [...historyByDate.values()].sort((a, b) => b.date.localeCompare(a.date));
+  const modal = document.createElement("div");
+  modal.id = "openingBalanceModal";
+  modal.className = "finance-modal-backdrop";
+  modal.dataset.editDate = editing ? requestedEditDate : "";
+  modal.innerHTML = `<section class="finance-modal opening-balances-modal" role="dialog" aria-modal="true" aria-labelledby="openingBalanceTitle">
+    <header class="opening-balances-modal-header"><div class="opening-balances-modal-title"><span class="opening-balances-modal-mark" aria-hidden="true">&#8377;</span><div><span class="opening-balances-modal-eyebrow">Admin only</span><h2 id="openingBalanceTitle">${editing ? "Edit Opening Balance" : "Set Opening Balances"}</h2><p>${editing ? `Correct the existing balances effective ${escapeHtml(displayDate(requestedEditDate))}. Every change will be audited.` : "Create a dated balance version while keeping every previous record intact."}</p></div></div><button type="button" class="icon-button" data-close-opening aria-label="Close opening balances">&times;</button></header>
+    <form id="openingBalanceForm" class="opening-balances-modal-form">
+      <div class="opening-balance-effective-card"><div><label for="openingEffectiveDate">Effective date</label><small>${editing ? "The date is locked while correcting this version." : "The same effective date will be applied to all three accounts."}</small></div><input id="openingEffectiveDate" type="date" value="${editing ? requestedEditDate : todayDate()}" ${editing ? "disabled" : "required"}></div>
+      <div class="opening-balance-section-head"><div><span>Account balances</span><small>${editing ? "Change the incorrect amount and leave the other amounts as they are." : "Enter the new opening amount for each account."}</small></div><span class="opening-balance-version-badge">${editing ? "Editing existing version" : "New version"}</span></div>
+      <div class="opening-balance-modal-grid">${financeAccounts.map((account) => {
+        const existing = editingByAccount[account.value];
+        const unavailable = editing && !existing;
+        const shownAmount = editing ? Number(existing?.amount ?? existing?.opening_balance ?? 0) : Number(current[account.value]?.amount || 0);
+        const shownDate = editing ? requestedEditDate : current[account.value]?.date;
+        return `<label class="opening-balance-modal-account opening-balance-account-${account.value.replaceAll("_", "-")}"><span class="opening-balance-account-head"><span class="opening-balance-account-mark" aria-hidden="true">&#8377;</span><span><strong>${escapeHtml(account.label)}</strong><small>${unavailable ? "No entry for this date" : "Opening balance"}</small></span></span><span class="opening-balance-current"><span>${editing ? "Existing amount" : "Current balance"}</span><strong>${rupee(shownAmount)}</strong><small>${shownDate ? `Effective ${escapeHtml(displayDate(shownDate))}` : "No dated balance set"}</small></span><span class="opening-balance-input-label">${editing ? "Corrected opening balance" : "New opening balance"}</span><span class="opening-balance-input-wrap"><span aria-hidden="true">&#8377;</span><input class="opening-amount-input" type="number" min="0" step="0.01" data-opening-amount="${account.value}" data-opening-id="${escapeHtml(existing?.id || "")}" value="${editing && existing ? escapeHtml(existing.amount ?? existing.opening_balance ?? 0) : ""}" placeholder="${unavailable ? "Not available" : "0.00"}" aria-label="${editing ? "Corrected" : "New"} ${escapeHtml(account.label)} opening balance" ${unavailable ? "disabled" : "required"}></span></label>`;
+      }).join("")}</div>
+      <div class="opening-balance-modal-total"><div><span>Combined opening balance</span><small>Cash in Hand + Federal Bank + TMB</small></div><strong><span aria-hidden="true">&#8377;</span><output id="openingBalancesTotal">0.00</output></strong></div>
+      <div class="field opening-balance-reason-field"><div class="opening-balance-field-heading"><label for="openingBalanceReason">${editing ? "Correction Reason" : "Reason / Remarks"}</label><span>Required</span></div><textarea id="openingBalanceReason" rows="3" maxlength="500" placeholder="${editing ? "Explain why this existing opening balance is being corrected." : "Briefly explain why this opening-balance version is being recorded."}" required></textarea><small>${editing ? "The old amount, corrected amount, reason, editor and time will remain in the audit history." : "This note will remain attached to the balance history for audit reference."}</small></div>
+      ${historyDateSummaries.length ? `<section class="opening-balance-edit-versions" aria-label="Edit existing opening balances"><header><div><strong>Edit Existing Opening Balance</strong><small>Select an effective date to correct its recorded account balances.</small></div></header><div>${historyDateSummaries.map((summary) => `<article class="${editing && summary.date === requestedEditDate ? "is-editing" : ""}"><span><strong>${escapeHtml(expenseDisplayDate(summary.date))}</strong><small>${summary.accounts} account${summary.accounts === 1 ? "" : "s"} &middot; Total ${rupee(summary.total)}</small></span><button type="button" class="primary-button" data-edit-opening-date="${escapeHtml(summary.date)}">${editing && summary.date === requestedEditDate ? "Currently Editing" : "Edit Opening Balance"}</button></article>`).join("")}</div></section>` : ""}
+      ${history.length ? `<details class="opening-balance-history" ${editing ? "open" : ""}><summary>View previous opening-balance versions</summary><div class="table-wrap"><table class="transaction-table"><thead><tr><th>Date</th><th>Account</th><th class="amount-col">Amount</th><th>Version</th><th>Entered By</th><th>Reason</th><th>Action</th></tr></thead><tbody>${history.map((item) => `<tr><td>${expenseDisplayDate(item.date)}</td><td>${escapeHtml(financeAccountLabel(transactionAccountKey(item)))}</td><td class="amount-cell">${rupee(item.amount)}</td><td>${escapeHtml(item.version || "-")}</td><td>${escapeHtml(item.enteredBy || item.createdBy || "-")}</td><td>${escapeHtml(item.reason || item.remarks || "-")}</td><td><button type="button" class="mini-button" data-edit-opening-date="${escapeHtml(normalizeImportDate(item.date || item.balance_date))}">Edit Opening Balance</button></td></tr>`).join("")}</tbody></table></div></details>` : ""}
+      <footer class="opening-balances-modal-footer"><div><strong>${editing ? "This correction will be recorded in the audit trail." : "Previous balances will not be overwritten."}</strong><small>${editing ? "The effective date and original record IDs will remain unchanged." : "A new auditable version will be saved for the selected date."}</small></div><span><button type="button" class="secondary-button" data-close-opening>Cancel</button><button type="submit" class="primary-button">${editing ? "Update Opening Balance" : "Save Opening Balances"}</button></span></footer>
+    </form>
+  </section>`;
+  document.body.appendChild(modal);
+  modal.querySelectorAll("[data-close-opening]").forEach((button) => button.addEventListener("click", () => modal.remove()));
+  modal.addEventListener("click", (event) => { if (event.target === modal) modal.remove(); });
+  modal.querySelector("#openingBalanceForm").addEventListener("submit", saveOpeningBalances);
+  modal.querySelectorAll("[data-opening-amount]").forEach((input) => input.addEventListener("input", updateOpeningBalancesTotal));
+  modal.querySelectorAll("[data-edit-opening-date]").forEach((button) => button.addEventListener("click", () => openOpeningBalanceModal(button.dataset.editOpeningDate)));
+  updateOpeningBalancesTotal();
+  (editing ? modal.querySelector("#openingBalanceReason") : modal.querySelector("#openingEffectiveDate"))?.focus();
 }
 
 function renderCashCollectionsTab() {
@@ -19001,6 +19278,119 @@ function addCollectionDraftNotice(draft) {
   return `<div class="collection-draft-notice" id="collectionDraftNotice"><span><strong>Unsaved collection restored</strong><small>Last saved at ${escapeHtml(savedAt)} · kept only in this browser session.</small></span><div><button type="button" class="secondary-button" id="continueCollectionDraft">Continue Draft</button><button type="button" class="text-button danger" id="discardCollectionDraft">Discard Draft</button></div></div>`;
 }
 
+function expenseDraftStorageKey() {
+  const user = loggedInUser() || {};
+  const identity = String(user.authUserId || user.id || user.email || state.session?.authUserId || state.session?.userId || state.session?.userEmail || state.currentUser || "guest")
+    .trim().toLowerCase().replace(/[^a-z0-9@._-]+/g, "-");
+  return `${STORAGE_KEY}-expense-draft-v${EXPENSE_DRAFT_VERSION}-${identity}`;
+}
+
+function readExpenseDraft() {
+  try {
+    const draft = JSON.parse(sessionStorage.getItem(expenseDraftStorageKey()) || "null");
+    if (!draft || draft.version !== EXPENSE_DRAFT_VERSION || Date.now() - Number(draft.savedAt || 0) > EXPENSE_DRAFT_TTL_MS) {
+      sessionStorage.removeItem(expenseDraftStorageKey());
+      return null;
+    }
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+function expenseDraftValuesFromForm() {
+  const form = document.querySelector("#expenseForm");
+  if (!form) return null;
+  const value = (selector) => document.querySelector(selector)?.value || "";
+  const selectedFile = document.querySelector("#expenseAttachment")?.files?.[0] || null;
+  if (selectedFile) expenseDraftAttachment = selectedFile;
+  return {
+    expenseDate: value("#expenseDate"),
+    expenseParticularsEntry: value("#expenseParticularsEntry"),
+    expensePaidTo: value("#expensePaidTo"),
+    expenseAmount: value("#expenseAmount"),
+    expenseMode: value("#expenseMode"),
+    expenseAccount: value("#expenseAccount"),
+    expenseVoucherNo: value("#expenseVoucherNo"),
+    expenseEnteredBy: value("#expenseEnteredBy"),
+    expenseRemarks: value("#expenseRemarks"),
+    attachmentName: selectedFile?.name || readExpenseDraft()?.values?.attachmentName || "",
+  };
+}
+
+function expenseDraftIsMeaningful(values = {}) {
+  const defaultParticulars = (state.expenseItems || [])[0] || "";
+  return Boolean(
+    values.expensePaidTo || values.expenseAmount || values.expenseVoucherNo || values.expenseRemarks || values.attachmentName
+    || (values.expenseDate && values.expenseDate !== todayDate())
+    || (values.expenseParticularsEntry && values.expenseParticularsEntry !== defaultParticulars && !values.expenseParticularsEntry.startsWith("__"))
+    || (values.expenseMode && values.expenseMode !== "Cash")
+    || (values.expenseAccount && values.expenseAccount !== "cash")
+  );
+}
+
+function persistExpenseDraft(options = {}) {
+  clearTimeout(expenseDraftTimer);
+  const values = expenseDraftValuesFromForm();
+  if (!values || state.filters.editExpenseId || !expenseDraftIsMeaningful(values)) {
+    if (options.clearEmpty) sessionStorage.removeItem(expenseDraftStorageKey());
+    return;
+  }
+  try {
+    sessionStorage.setItem(expenseDraftStorageKey(), JSON.stringify({ version: EXPENSE_DRAFT_VERSION, savedAt: Date.now(), values }));
+  } catch (error) {
+    console.warn("Expense draft could not be saved", error);
+  }
+}
+
+function scheduleExpenseDraftSave() {
+  clearTimeout(expenseDraftTimer);
+  expenseDraftTimer = setTimeout(() => persistExpenseDraft(), EXPENSE_DRAFT_DEBOUNCE_MS);
+}
+
+function clearExpenseDraft() {
+  clearTimeout(expenseDraftTimer);
+  sessionStorage.removeItem(expenseDraftStorageKey());
+  expenseDraftAttachment = null;
+  suppressExpenseDraftCapture = true;
+}
+
+function applyExpenseDraft(draft) {
+  if (!draft?.values || state.filters.editExpenseId) return false;
+  const values = draft.values;
+  const particulars = document.querySelector("#expenseParticularsEntry");
+  if (particulars && values.expenseParticularsEntry && ![...particulars.options].some((option) => option.value === values.expenseParticularsEntry)) {
+    particulars.add(new Option(values.expenseParticularsEntry, values.expenseParticularsEntry), Math.max(0, particulars.options.length - 3));
+  }
+  Object.entries(values).forEach(([id, fieldValue]) => {
+    if (id === "attachmentName") return;
+    const input = document.querySelector(`#${id}`);
+    if (input && fieldValue !== undefined && fieldValue !== null) input.value = fieldValue;
+  });
+  if (expenseDraftAttachment && typeof DataTransfer !== "undefined") {
+    try {
+      const transfer = new DataTransfer();
+      transfer.items.add(expenseDraftAttachment);
+      const input = document.querySelector("#expenseAttachment");
+      if (input) input.files = transfer.files;
+    } catch { /* File restoration is not supported by this browser. */ }
+  }
+  const uploadLabel = document.querySelector("#expenseAttachment")?.closest(".upload-drop")?.querySelector("strong");
+  if (uploadLabel && values.attachmentName) uploadLabel.textContent = expenseDraftAttachment ? `Selected: ${values.attachmentName}` : `${values.attachmentName} - select again if required`;
+  return true;
+}
+
+function expenseDraftNotice(draft) {
+  if (!draft?.values || !expenseDraftIsMeaningful(draft.values)) return "";
+  const savedAt = new Date(Number(draft.savedAt || Date.now())).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  return `<div class="collection-draft-notice" id="expenseDraftNotice"><span><strong>Unsaved expense restored</strong><small>Last saved at ${escapeHtml(savedAt)} &middot; kept only in this browser session.</small></span><div><button type="button" class="secondary-button" id="continueExpenseDraft">Continue Draft</button><button type="button" class="text-button danger" id="discardExpenseDraft">Discard Draft</button></div></div>`;
+}
+
+function persistTransactionEntryDrafts() {
+  persistAddCollectionDraft();
+  persistExpenseDraft();
+}
+
 function normalizeCollectionSearch(value = "") {
   return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -19194,6 +19584,26 @@ function bindAddCollectionDraft() {
   });
 }
 
+function bindExpenseDraft() {
+  const form = document.querySelector("#expenseForm");
+  if (!form || state.filters.editExpenseId) return;
+  const draft = readExpenseDraft();
+  if (draft) applyExpenseDraft(draft);
+  form.addEventListener("input", scheduleExpenseDraftSave);
+  form.addEventListener("change", scheduleExpenseDraftSave);
+  document.querySelector("#expenseAttachment")?.addEventListener("change", scheduleExpenseDraftSave);
+  document.querySelector("#continueExpenseDraft")?.addEventListener("click", () => {
+    document.querySelector("#expenseDraftNotice")?.remove();
+    document.querySelector("#expenseParticularsEntry")?.focus();
+  });
+  document.querySelector("#discardExpenseDraft")?.addEventListener("click", () => {
+    if (!confirm("Discard this unfinished expense draft?")) return;
+    clearExpenseDraft();
+    state.filters.expenseItemSelection = "";
+    renderAll();
+  });
+}
+
 function financeAccountFilterSelect(key, label) {
   const options = [{ value: "", label: "All" }, ...financeAccounts, { value: "unclassified_bank", label: "Unclassified Bank" }];
   return `<div class="field"><label>${escapeHtml(label)}</label><select data-expense-filter="${escapeHtml(key)}">${options.map((option) => `<option value="${option.value}" ${state.filters[key] === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></div>`;
@@ -19274,6 +19684,7 @@ function bindExpensePage() {
   document.querySelectorAll("[data-remove-transaction-filter]").forEach((button) => button.addEventListener("click", () => removeTransactionFilter(button.dataset.removeTransactionFilter, button.dataset.filterKey)));
   const expenseForm = document.querySelector("#expenseForm");
   if (expenseForm) expenseForm.onsubmit = saveExpenseEntry;
+  bindExpenseDraft();
   const openingForm = document.querySelector("#openingBalanceForm");
   if (openingForm) openingForm.onsubmit = saveOpeningBalances;
   document.querySelectorAll("[data-opening-amount]").forEach((input) => {
@@ -19312,7 +19723,7 @@ function bindExpensePage() {
     if (tab === "balance") return exportReconciliationExcel();
     return exportCashExcel();
   });
-  document.querySelector("#openOpeningBalances")?.addEventListener("click", openOpeningBalanceModal);
+  document.querySelector("#openOpeningBalances")?.addEventListener("click", () => openOpeningBalanceModal());
   document.querySelector("#reviewUnclassifiedBank")?.addEventListener("click", () => {
     state.filters.expenseTab = "transfers";
     state.filters.showUnclassifiedBank = "Yes";
@@ -19329,7 +19740,14 @@ function bindExpensePage() {
   if (transferForm) transferForm.onsubmit = saveAccountTransferEntry;
   document.querySelector("#cancelExpenseEdit")?.addEventListener("click", () => { state.filters.editExpenseId = ""; saveState(); renderAll(); });
   document.querySelector("#cancelCashEdit")?.addEventListener("click", () => { state.filters.editCashId = ""; saveState(); renderAll(); });
-  document.querySelector("#resetExpenseForm")?.addEventListener("click", () => { state.filters.editExpenseId = ""; state.filters.expenseItemSelection = ""; saveState(); renderAll(); });
+  document.querySelector("#resetExpenseForm")?.addEventListener("click", () => {
+    if (!state.filters.editExpenseId && expenseDraftIsMeaningful(expenseDraftValuesFromForm() || {}) && !confirm("Clear this Add Expense draft?")) return;
+    clearExpenseDraft();
+    state.filters.editExpenseId = "";
+    state.filters.expenseItemSelection = "";
+    saveState();
+    renderAll();
+  });
   document.querySelector("#resetCashForm")?.addEventListener("click", () => {
     if (!state.filters.editCashId && addCollectionDraftIsMeaningful(collectionDraftValuesFromForm() || {}) && !confirm("Clear this Add Collection draft?")) return;
     clearAddCollectionDraft();
@@ -19337,7 +19755,7 @@ function bindExpensePage() {
     saveState();
     renderAll();
   });
-  document.querySelector("#manageExpenseItems")?.addEventListener("click", () => { state.filters.manageExpenseItemsOpen = "Yes"; state.filters.expenseItemManagerAction = "add"; saveState(); renderAll(); });
+  document.querySelector("#manageExpenseItems")?.addEventListener("click", () => { persistExpenseDraft(); state.filters.manageExpenseItemsOpen = "Yes"; state.filters.expenseItemManagerAction = "add"; saveState(); renderAll(); });
   const expenseItemSelect = document.querySelector("#expenseParticularsEntry");
   expenseItemSelect?.addEventListener("focus", () => { expenseItemSelect.dataset.previousValue = expenseItemSelect.value; });
   expenseItemSelect?.addEventListener("change", handleExpenseItemDropdownChange);
@@ -19501,6 +19919,7 @@ async function saveExpenseEntry(event) {
     try {
       await saveExpenseToApi(record);
       rememberExpenseItem(record.particulars);
+      clearExpenseDraft();
       state.filters.editExpenseId = "";
       state.filters.expenseItemSelection = "";
       invalidateTransactionLedger("expenses");
@@ -19516,6 +19935,7 @@ async function saveExpenseEntry(event) {
   }
   state.expenses = existing ? state.expenses.map((item) => item.id === existing.id ? record : item) : [record, ...(state.expenses || [])];
   rememberExpenseItem(record.particulars);
+  clearExpenseDraft();
   state.filters.editExpenseId = "";
   state.filters.expenseItemSelection = "";
   invalidateTransactionLedger("expenses");
@@ -19533,15 +19953,18 @@ function updateOpeningBalancesTotal() {
 
 async function saveOpeningBalances(event) {
   event.preventDefault();
-  if (state.currentRole !== "Admin") return toast("Only Admin can add opening balances.");
-  const date = document.querySelector("#openingEffectiveDate")?.value || "";
+  if (state.currentRole !== "Admin") return toast("Only Admin can add or edit opening balances.");
+  const modal = document.querySelector("#openingBalanceModal");
+  const editDate = normalizeImportDate(modal?.dataset.editDate || "");
+  const editing = Boolean(editDate);
+  const date = editDate || document.querySelector("#openingEffectiveDate")?.value || "";
   const reason = String(document.querySelector("#openingBalanceReason")?.value || "").trim();
   const now = new Date().toISOString();
   const records = financeAccounts.map((account) => {
     const amountInput = document.querySelector(`[data-opening-amount="${account.value}"]`);
     const amount = Number(amountInput?.value || 0);
     return {
-      id: crypto.randomUUID(),
+      id: amountInput?.dataset.openingId || crypto.randomUUID(),
       particulars: `Opening Balance - ${financeAccountLabel(account.value)}`,
       date,
       balance_date: date,
@@ -19560,22 +19983,31 @@ async function saveOpeningBalances(event) {
       updatedAt: now,
       updated_at: now,
     };
-  });
+  }).filter((record) => !editing || (state.openingBalances || []).some((item) => item.id === record.id && item.isDeleted !== true && item.is_deleted !== true));
   if (!date) return toast("Select the effective opening-balance date.");
   if (!reason) return toast("Enter a reason or remarks for the opening balances.");
   if (records.some((record) => !Number.isFinite(record.amount) || record.amount < 0)) return toast("Enter a valid opening amount for every account.");
-  const duplicate = records.find((record) => (state.openingBalances || []).some((item) => item.isDeleted !== true && item.date === date && transactionAccountKey(item) === record.accountKey));
+  const duplicate = !editing && records.find((record) => (state.openingBalances || []).some((item) => item.isDeleted !== true && item.date === date && transactionAccountKey(item) === record.accountKey));
   if (duplicate) return toast(`${financeAccountLabel(duplicate.accountKey)} already has an opening balance for this date.`);
-  if (!confirm(`Save new opening-balance versions effective ${displayDate(date)}? Previous history will be retained.`)) return;
+  if (editing && !records.length) return toast("No editable opening balances were found for this date.");
+  const changedRecords = editing ? records.filter((record) => {
+    const existing = (state.openingBalances || []).find((item) => item.id === record.id);
+    return Number(existing?.amount ?? existing?.opening_balance ?? 0) !== Number(record.amount || 0);
+  }) : records;
+  if (editing && !changedRecords.length) return toast("Change at least one opening-balance amount before updating.");
+  if (!confirm(editing
+    ? `Update the opening balance effective ${displayDate(date)}? The correction will be recorded in the audit trail.`
+    : `Save new opening-balance versions effective ${displayDate(date)}? Previous history will be retained.`)) return;
   const submitButton = event.submitter || document.querySelector("#openingBalanceForm button[type='submit']");
   if (submitButton) {
     submitButton.disabled = true;
-    submitButton.textContent = "Saving Balances...";
+    submitButton.textContent = editing ? "Updating Balance..." : "Saving Balances...";
   }
   if (isSupabaseMode()) {
     try {
-      await saveOpeningBalancesBatchToApi(records, reason);
-      toast("Opening account balances saved and synced");
+      if (editing) await updateOpeningBalancesBatchToApi(date, records, reason);
+      else await saveOpeningBalancesBatchToApi(records, reason);
+      toast(editing ? "Opening balance updated and synced" : "Opening account balances saved and synced");
       document.querySelector("#openingBalanceModal")?.remove();
       renderAll();
       return;
@@ -19583,10 +20015,25 @@ async function saveOpeningBalances(event) {
       console.error("Opening balance save failed", { message: error.message });
       if (submitButton) {
         submitButton.disabled = false;
-        submitButton.textContent = "Save Opening Balances";
+        submitButton.textContent = editing ? "Update Opening Balance" : "Save Opening Balances";
       }
-      return toast(`Opening balances could not be saved: ${error.message || "Please retry."}`);
+      return toast(`Opening balances could not be ${editing ? "updated" : "saved"}: ${error.message || "Please retry."}`);
     }
+  }
+  if (editing) {
+    const changedById = new Map(changedRecords.map((record) => [record.id, record]));
+    state.openingBalances = (state.openingBalances || []).map((item) => {
+      const changed = changedById.get(item.id);
+      if (!changed) return item;
+      const previousValue = Number(item.amount ?? item.opening_balance ?? 0) || 0;
+      return { ...item, amount: changed.amount, opening_balance: changed.amount, previousValue, newValue: changed.amount, originalReason: item.originalReason || item.reason || item.remarks || "", reason, remarks: reason, changeReason: reason, editedBy: state.currentUser || "", editedAt: now, updatedAt: now, updated_at: now };
+    });
+    state.auditLog = [...(state.auditLog || []), ...changedRecords.map((record) => ({ id: crypto.randomUUID(), action: "Opening balance version corrected", details: { id: record.id, date, account: financeAccountLabel(record.accountKey), previousValue: Number((state.openingBalances || []).find((item) => item.id === record.id)?.previousValue || 0), newValue: record.amount, changeReason: reason }, user: state.currentUser || "", role: state.currentRole || "", at: now }))].slice(-1000);
+    saveState();
+    toast("Opening balance updated");
+    modal?.remove();
+    renderAll();
+    return;
   }
   state.openingBalances = [...records, ...(state.openingBalances || [])];
   saveState();
@@ -19927,9 +20374,12 @@ function handleExpenseItemDropdownChange(event) {
   const value = event.currentTarget.value;
   if (!["__add_expense_item__", "__remove_expense_item__"].includes(value)) {
     state.filters.expenseItemSelection = value;
+    scheduleExpenseDraftSave();
     return saveViewState();
   }
   const previousValue = event.currentTarget.dataset.previousValue || state.filters.expenseItemSelection || "";
+  if (previousValue && !previousValue.startsWith("__")) event.currentTarget.value = previousValue;
+  persistExpenseDraft();
   if (previousValue && !previousValue.startsWith("__")) state.filters.expenseItemSelection = previousValue;
   state.filters.manageExpenseItemsOpen = "Yes";
   state.filters.expenseItemManagerAction = value === "__remove_expense_item__" ? "remove" : "add";

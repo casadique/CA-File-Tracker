@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const NOTIFICATION_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
 function cleanPart(value = "") {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9@._:-]+/g, "-");
@@ -10,6 +11,22 @@ function recipientIdentity(recipient = {}) {
 
 function notificationEventKey(type, fileId, sourceEventId, recipient = {}) {
   return [cleanPart(type || "notification"), cleanPart(fileId || "none"), cleanPart(sourceEventId || "event"), recipientIdentity(recipient)].join(":");
+}
+
+function notificationSemanticKey(event = {}, options = {}) {
+  const includeRecipient = options.includeRecipient !== false;
+  const recipient = includeRecipient ? cleanPart(
+    event.targetUserEmail || event.target_user_email
+    || event.targetUserName || event.target_user_name
+    || event.targetUserAuthId || event.target_user_auth_id
+    || event.targetUserId || event.target_user_id || event.user_id || event.userId || "unknown"
+  ) : "";
+  const type = cleanPart(event.notification_type || event.notificationType || event.changeType || event.eventType || event.type || "notification");
+  const fileId = cleanPart(event.fileId || event.file_id || event.related_record_id || event.relatedRecordId || "none");
+  const change = cleanPart(event.changeText || event.change_text || event.message || "");
+  const actor = cleanPart(event.changedBy || event.changed_by || "");
+  if (!fileId || fileId === "none" || !change) return "";
+  return [recipient, type, fileId, change, actor].filter(Boolean).join("|");
 }
 
 function deterministicNotificationId(eventKey = "") {
@@ -58,6 +75,13 @@ function createNotificationEvent(input = {}) {
 function appendNotificationEvents(state = {}, events = [], options = {}) {
   const rows = Array.isArray(state.fileNotifications) ? state.fileNotifications : [];
   const byKey = new Map(rows.map((row) => [row.event_key || row.eventKey || row.dedupeKey || row.id, row]));
+  const recentBySemanticKey = new Map();
+  rows.forEach((row) => {
+    const semanticKey = notificationSemanticKey(row);
+    const timestamp = notificationTime(row);
+    const existing = recentBySemanticKey.get(semanticKey);
+    if (semanticKey && timestamp && (!existing || timestamp > existing.timestamp)) recentBySemanticKey.set(semanticKey, { row, timestamp });
+  });
   const created = [];
   const duplicates = [];
   for (const event of events.filter(Boolean)) {
@@ -67,7 +91,16 @@ function appendNotificationEvents(state = {}, events = [], options = {}) {
       notificationLog("duplicate_event_blocked", event, { result: "reused" });
       continue;
     }
+    const semanticKey = notificationSemanticKey(event);
+    const eventTime = notificationTime(event) || Date.now();
+    const recent = semanticKey ? recentBySemanticKey.get(semanticKey) : null;
+    if (recent && Math.abs(eventTime - recent.timestamp) <= NOTIFICATION_DUPLICATE_WINDOW_MS) {
+      duplicates.push(recent.row);
+      notificationLog("duplicate_event_blocked", event, { result: "semantic_reuse" });
+      continue;
+    }
     byKey.set(key, event);
+    if (semanticKey) recentBySemanticKey.set(semanticKey, { row: event, timestamp: eventTime });
     created.push(event);
     notificationLog("notification_event_created", event, { result: "created" });
   }
@@ -105,6 +138,8 @@ module.exports = {
   createNotificationEvent,
   deterministicNotificationId,
   notificationEventKey,
+  notificationSemanticKey,
+  NOTIFICATION_DUPLICATE_WINDOW_MS,
   notificationLog,
   recipientIdentity,
 };

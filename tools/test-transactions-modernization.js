@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "styles.css"), "utf8");
 
-for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Account balances", "Combined opening balance", "Previous balances will not be overwritten.", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Find Collection Transactions", "collection-register-modern"]) {
+for (const token of ["Account Overview", "Unclassified legacy bank entries", "Set Opening Balances", "Edit Existing Opening Balance", "Edit Opening Balance", "opening-balance-edit-versions", "data-edit-opening-date", "updateOpeningBalancesBatchToApi", "Account balances", "Combined opening balance", "Previous balances will not be overwritten.", "Cash Reconciliation History", "Expected Closing Cash", "Physical Cash Counted", "Find Collection Transactions", "collection-register-modern"]) {
   assert.ok(app.includes(token), `Missing modern Transactions UI token: ${token}`);
 }
 assert.doesNotMatch(app.slice(app.indexOf("function expenseOverviewCard"), app.indexOf("function normalizeCollectionType")), /transactionSparkline\(/,
@@ -25,6 +25,8 @@ assert.ok(styles.includes("grid-template-columns: 150px minmax(320px, 1fr) 105px
 for (const selector of [".opening-balance-effective-card", ".opening-balance-modal-account", ".opening-balance-input-wrap", ".opening-balance-modal-total", ".opening-balance-modal-footer"]) {
   assert.ok(styles.includes(`${selector} {`), `Missing polished Opening Balances modal style: ${selector}`);
 }
+assert.ok(styles.includes(".opening-balance-edit-versions article"), "existing balance edit actions must be visible outside the horizontally scrolling history table");
+assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.opening-balance-edit-versions \.primary-button\s*\{[^}]*width:\s*100%/, "the date-level Edit Opening Balance button must remain visible on narrow screens");
 assert.match(styles, /\.opening-balance-modal-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3/,
   "Opening Balance account cards should use a three-column desktop layout");
 assert.match(styles, /@media \(max-width: 700px\)[\s\S]*?\.opening-balance-modal-grid,[\s\S]*?grid-template-columns:\s*1fr/,
@@ -62,21 +64,43 @@ async function main() {
     { date: "2026-08-01", accountKey: "tmb", amount: 1 },
   ], admin.id, admin, "Duplicate"), /already has an opening balance/);
 
+  const originalCash = state.openingBalances.find((item) => item.date === "2026-08-01" && item.accountKey === "cash");
+  const originalCashId = originalCash.id;
+  const originalCreatedAt = originalCash.createdAt;
+  await finance.updateOpeningBalances("2026-08-01", [
+    { date: "2026-08-01", accountKey: "cash", amount: 1250 },
+    { date: "2026-08-01", accountKey: "federal_bank", amount: 500 },
+    { date: "2026-08-01", accountKey: "tmb", amount: 200 },
+  ], admin.id, admin, "Corrected cash count from source records");
+  const correctedCash = state.openingBalances.find((item) => item.accountKey === "cash" && item.date === "2026-08-01");
+  assert.equal(correctedCash.id, originalCashId, "editing must retain the original opening-balance record ID");
+  assert.equal(correctedCash.createdAt, originalCreatedAt, "editing must retain the original creation timestamp");
+  assert.equal(correctedCash.amount, 1250);
+  assert.equal(correctedCash.previousValue, 1000);
+  assert.equal(correctedCash.reason, "Corrected cash count from source records");
+  assert.equal(state.auditLog.filter((entry) => entry.action === "Opening balance version corrected").length, 1);
+  await assert.rejects(() => finance.updateOpeningBalances("2026-08-01", [
+    { date: "2026-08-02", accountKey: "cash", amount: 1300 },
+  ], admin.id, admin, "Trying to change date"), /effective date.*cannot be changed/i);
+  await assert.rejects(() => finance.updateOpeningBalances("2026-08-01", [
+    { date: "2026-08-01", accountKey: "cash", amount: 1300 },
+  ], "staff-1", { id: "staff-1", name: "Staff", role: "Staff" }, "Unauthorised"), /Only Admin/);
+
   await finance.saveCollection({ id: "cash-in", date: "2026-08-02", amount: 200, paymentMethod: "Cash", accountKey: "cash", receivedFrom: "Client", particulars: "Collection" }, admin.id, admin);
   state.otherCashCollections.push({ id: "legacy", date: "2026-08-02", amount: 999, paymentMethod: "Bank Transfer", accountKey: "unclassified_bank", receivedFrom: "Legacy", particulars: "Legacy", status: "active" });
   await finance.saveExpense({ id: "cash-out", date: "2026-08-02", amount: 100, paymentMethod: "Cash", accountKey: "cash", particulars: "Office Expense" }, admin.id, admin);
   await finance.saveAccountTransfer({ id: "transfer-1", date: "2026-08-02", amount: 50, fromAccountKey: "federal_bank", toAccountKey: "cash", reference: "TR-1" }, admin.id, admin);
 
   let summary = finance.accountSummary(state, "2026-08-02");
-  assert.equal(summary.cashBalance, 1150);
+  assert.equal(summary.cashBalance, 1400);
   assert.equal(summary.federalBankBalance, 450);
   assert.equal(summary.tmbBalance, 200);
   assert.equal(summary.unclassifiedBankBalance, 999);
-  assert.equal(summary.totalBalance, 1800, "Total must exclude unclassified legacy entries");
+  assert.equal(summary.totalBalance, 2050, "Total must exclude unclassified legacy entries");
 
-  await finance.submitCashReconciliation({ from: "2026-08-01", to: "2026-08-02", physicalCashCount: 1160, remarks: "Counted" }, admin.id, admin);
+  await finance.submitCashReconciliation({ from: "2026-08-01", to: "2026-08-02", physicalCashCount: 1410, remarks: "Counted" }, admin.id, admin);
   const reconciliation = state.cashReconciliations[0];
-  assert.equal(reconciliation.expectedCash, 1150);
+  assert.equal(reconciliation.expectedCash, 1400);
   assert.equal(reconciliation.adjustmentAmount, 10);
   assert.equal(reconciliation.approvalStatus, "submitted");
   await assert.rejects(() => finance.decideCashReconciliation(reconciliation.id, "approve", {}, admin.id, admin), /remarks are required/i);
@@ -85,8 +109,8 @@ async function main() {
   await finance.decideCashReconciliation(reconciliation.id, "approve", { approvalRemarks: "Duplicate click" }, admin.id, admin);
   assert.equal(state.auditLog.length, auditCount, "Approval must be applied exactly once");
   summary = finance.accountSummary(state, "2026-08-02");
-  assert.equal(summary.cashBalance, 1160);
-  assert.equal(summary.totalBalance, 1810);
+  assert.equal(summary.cashBalance, 1410);
+  assert.equal(summary.totalBalance, 2060);
 
   console.log("Transactions modernization, balance integrity and reconciliation workflow checks passed.");
 }

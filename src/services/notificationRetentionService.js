@@ -1,7 +1,8 @@
 const NOTIFICATION_RETENTION_DAYS = 7;
 const NOTIFICATION_RETENTION_MS = NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const NOTIFICATION_CLEANUP_VERSION = "2026-08-03-notification-cleanup-v1";
-const VERIFIED_DUPLICATE_CLEANUP_VERSION = "2026-08-05-notification-dedupe-v2";
+const VERIFIED_DUPLICATE_CLEANUP_VERSION = "2026-08-10-notification-dedupe-v3";
+const { notificationSemanticKey, NOTIFICATION_DUPLICATE_WINDOW_MS } = require("./notificationEventService");
 
 function notificationTimestamp(notification = {}) {
   const value = notification.createdAt
@@ -92,14 +93,6 @@ function notificationCompleteness(row = {}) {
     .filter(Boolean).length;
 }
 
-function legacyDuplicateBase(row = {}) {
-  const recipient = String(row.targetUserId || row.targetUserEmail || row.targetUserName || row.user_id || "").trim().toLowerCase();
-  const file = String(row.fileId || row.file_id || row.related_record_id || "").trim().toLowerCase();
-  const type = String(row.notification_type || row.changeType || row.type || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
-  if (!recipient || !file || !type || !/(allot|assign|reassign|due|correct|check|status)/.test(type)) return "";
-  return `${recipient}|${file}|${type}`;
-}
-
 function applyVerifiedDuplicateCleanup(state = {}, options = {}) {
   if (state.notificationRetention?.duplicateCleanupVersion === VERIFIED_DUPLICATE_CLEANUP_VERSION) {
     return { state, changed: false, duplicateGroups: 0, archivedRows: 0 };
@@ -107,34 +100,47 @@ function applyVerifiedDuplicateCleanup(state = {}, options = {}) {
   const now = options.now || new Date();
   const rows = Array.isArray(state.fileNotifications) ? state.fileNotifications.map((row) => ({ ...row })) : [];
   const exact = new Map();
-  const legacy = new Map();
+  const semantic = new Map();
+  const parent = new Map();
+  const find = (index) => {
+    if (parent.get(index) !== index) parent.set(index, find(parent.get(index)));
+    return parent.get(index);
+  };
+  const union = (left, right) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+  };
   rows.forEach((row, index) => {
     if (isArchivedNotification(row)) return;
+    parent.set(index, index);
     const eventKey = String(row.event_key || row.eventKey || "").trim();
     if (eventKey) {
       if (!exact.has(eventKey)) exact.set(eventKey, []);
       exact.get(eventKey).push(index);
-      return;
     }
-    const base = legacyDuplicateBase(row);
+    const base = notificationSemanticKey(row);
     const timestamp = notificationTimestamp(row);
     if (!base || !timestamp) return;
-    if (!legacy.has(base)) legacy.set(base, []);
-    legacy.get(base).push({ index, timestamp });
+    if (!semantic.has(base)) semantic.set(base, []);
+    semantic.get(base).push({ index, timestamp });
   });
-  const groups = [...exact.values()].filter((group) => group.length > 1);
-  legacy.forEach((entries) => {
+  exact.forEach((indexes) => indexes.slice(1).forEach((index) => union(indexes[0], index)));
+  semantic.forEach((entries) => {
     entries.sort((a, b) => a.timestamp - b.timestamp);
-    let cluster = [];
-    entries.forEach((entry) => {
-      if (!cluster.length || entry.timestamp - cluster[cluster.length - 1].timestamp <= 90000) cluster.push(entry);
-      else {
-        if (cluster.length > 1) groups.push(cluster.map((item) => item.index));
-        cluster = [entry];
-      }
+    let clusterStart = entries[0];
+    entries.slice(1).forEach((entry) => {
+      if (entry.timestamp - clusterStart.timestamp <= NOTIFICATION_DUPLICATE_WINDOW_MS) union(clusterStart.index, entry.index);
+      else clusterStart = entry;
     });
-    if (cluster.length > 1) groups.push(cluster.map((item) => item.index));
   });
+  const components = new Map();
+  parent.forEach((_value, index) => {
+    const root = find(index);
+    if (!components.has(root)) components.set(root, []);
+    components.get(root).push(index);
+  });
+  const groups = [...components.values()].filter((group) => group.length > 1);
   const read = new Set(state.readNotifications || []);
   let archivedRows = 0;
   groups.forEach((indexes) => {

@@ -13,6 +13,7 @@ const {
   deleteCollection,
   saveOpeningBalance,
   saveOpeningBalances,
+  updateOpeningBalances,
   deleteOpeningBalance,
   submitCashReconciliation,
   decideCashReconciliation,
@@ -285,6 +286,13 @@ router.post("/opening-balances", requireAuth, requireRole("Admin"), async (req, 
 router.post("/opening-balances/batch", requireAuth, requireRole("Admin"), async (req, res, next) => {
   try {
     const state = await saveOpeningBalances(req.body.openingBalances || [], req.user.id, req.profile, req.body.reason);
+    res.json({ ok: true, openingBalances: state.openingBalances || [], auditLog: state.auditLog || [] });
+  } catch (error) { next(error); }
+});
+
+router.put("/opening-balances/batch/:date", requireAuth, requireRole("Admin"), async (req, res, next) => {
+  try {
+    const state = await updateOpeningBalances(req.params.date, req.body.openingBalances || [], req.user.id, req.profile, req.body.reason);
     res.json({ ok: true, openingBalances: state.openingBalances || [], auditLog: state.auditLog || [] });
   } catch (error) { next(error); }
 });

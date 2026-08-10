@@ -30,7 +30,9 @@ router.get("/", requireAuth, async (_req, res, next) => {
 router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
     const before = await getAppState();
-    const state = await upsertFile(req.body.file || req.body, req.user.id, req.profile);
+    const state = await upsertFile(req.body.file || req.body, req.user.id, req.profile, {
+      sourceAction: req.body.sourceAction || req.get("X-Source-Action") || "add-file",
+    });
     const savedId = (req.body.file || req.body)?.id;
     const savedFile = (state.files || []).find((file) => file.id === savedId) || (state.files || [])[0] || null;
     const fileNotifications = notificationsForFile(state, savedFile?.id || savedId, notificationIds(before));
@@ -44,7 +46,9 @@ router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "
 router.put("/:id", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
     const before = await getAppState();
-    const state = await upsertFile({ ...(req.body.file || req.body), id: req.params.id }, req.user.id, req.profile);
+    const state = await upsertFile({ ...(req.body.file || req.body), id: req.params.id }, req.user.id, req.profile, {
+      sourceAction: req.body.sourceAction || req.get("X-Source-Action") || "edit-file",
+    });
     const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
     const fileNotifications = notificationsForFile(state, req.params.id, notificationIds(before));
     res.json({ ok: true, file: savedFile, fileNotifications });

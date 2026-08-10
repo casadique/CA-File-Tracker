@@ -497,6 +497,9 @@ function notificationDeliveryKey(notice = {}) {
   const source = String(notice.source_event_id || notice.sourceEventId || "").trim();
   if (source) return `${notice.notification_type || notice.changeType || "notification"}:${notice.fileId || notice.related_record_id || ""}:${source}`;
   const eventKey = String(notice.event_key || notice.eventKey || notice.dedupeKey || notice.id || "").trim();
+  // File event keys end with a recipient identity. Strip that portion so the
+  // same change reaches a physical user only once, even if legacy user rows
+  // resolve to that same authenticated account.
   const groupedEventKey = eventKey.includes(":") ? eventKey.slice(0, eventKey.lastIndexOf(":")) : eventKey;
   return `${notice.notification_type || notice.changeType || "notification"}:${notice.fileId || notice.related_record_id || ""}:${groupedEventKey}`;
 }

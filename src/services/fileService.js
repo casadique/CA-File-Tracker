@@ -1,5 +1,11 @@
 const crypto = require("crypto");
-const { patchAppState, sortFilesNewestFirst, normalizeFileNotifications } = require("./appStateService");
+const appStateService = require("./appStateService");
+const {
+  patchAppState,
+  sortFilesNewestFirst,
+  normalizeFileNotifications,
+} = appStateService;
+const patchAppStateAtomic = appStateService.patchAppStateAtomic || patchAppState;
 const { appendNotificationEvents, createNotificationEvent } = require("./notificationEventService");
 const {
   RETIRED_COMBINED_REGISTRATION,
@@ -36,6 +42,113 @@ const WORKFLOW_STAGES = [
 
 const AUTHORISED_CHECKING_STAFF_NAMES = new Set(["nisha", "rizwana", "althaf"]);
 const AUTHORISED_CHECKING_STAFF_EMAILS = new Set(["nishagireesh986@gmail.com", "rizwanashir06@gmail.com", "althafmk2210@gmail.com"]);
+const DUE_DATE_FIELD_KEYS = new Set(["duedate"]);
+
+function canonicalPermissionRole(value = "") {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (normalized === "admin") return "Admin";
+  if (normalized === "manager") return "Manager";
+  if (normalized === "staff manager") return "Staff Manager";
+  if (normalized === "staff") return "Staff";
+  if (["viewer", "guest"].includes(normalized)) return "Viewer";
+  return "";
+}
+
+function dueDateEntries(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.keys(value)
+    .filter((key) => DUE_DATE_FIELD_KEYS.has(String(key).toLowerCase().replace(/[^a-z]/g, "")))
+    .map((key) => ({ key, value: value[key] }));
+}
+
+function normalizedDueMutationValue(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return "";
+  const normalized = strictDateOnly(value);
+  if (!normalized) throw httpError("Due date must be a valid date in YYYY-MM-DD format.", 400);
+  return normalized;
+}
+
+function activeAssigneeIds(file = {}) {
+  const ids = new Set();
+  const add = (value) => {
+    const clean = String(value || "").trim().toLowerCase();
+    if (clean) ids.add(clean);
+  };
+  const addObject = (value) => {
+    if (!value || typeof value !== "object") return;
+    [value.id, value.userId, value.user_id, value.authUserId, value.auth_user_id, value.profileId, value.profile_id].forEach(add);
+  };
+  const hasReassignment = Boolean(
+    file.reAssignedStaffId || file.re_assigned_staff_id || file.reassignedToId || file.reassigned_to_id
+    || file.currentAssignedStaffId || file.current_assigned_user_id
+  );
+  if (hasReassignment) {
+    [file.reAssignedStaffId, file.re_assigned_staff_id, file.reassignedToId, file.reassigned_to_id,
+      file.currentAssignedStaffId, file.current_assigned_user_id].forEach(add);
+  } else {
+    [file.assignedStaffId, file.assigned_staff_id, file.assignedUserId, file.assigned_user_id,
+      file.currentAssignedStaffId, file.current_assigned_user_id].forEach(add);
+  }
+  [file.assigneeIds, file.assignee_ids, file.assignedUserIds, file.assigned_user_ids,
+    file.assignedStaffIds, file.assigned_staff_ids].forEach((values) => {
+    if (Array.isArray(values)) values.forEach((value) => typeof value === "object" ? addObject(value) : add(value));
+  });
+  [file.assignees, file.assignedUsers, file.assigned_users].forEach((values) => {
+    if (Array.isArray(values)) values.forEach(addObject);
+  });
+  return ids;
+}
+
+function authenticatedActorIds(userId, profile = {}) {
+  return new Set([
+    userId,
+    profile.id,
+    profile.auth_user_id,
+    profile.authUserId,
+  ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean));
+}
+
+function canModifyDueDate({ userId = "", profile = {}, file = {} } = {}) {
+  const role = canonicalPermissionRole(profile?.role);
+  if (["Admin", "Manager"].includes(role)) return true;
+  if (role !== "Staff Manager") return false;
+  const assigneeIds = activeAssigneeIds(file);
+  if (!assigneeIds.size) return false;
+  return ![...authenticatedActorIds(userId, profile)].some((id) => assigneeIds.has(id));
+}
+
+function enforceDueDateMutationPermission(input = {}, before = null, userId = "", profile = {}) {
+  const entries = dueDateEntries(input);
+  if (!entries.length) return { input: { ...input }, dueDateChanged: false, previousDueDate: normalizedDueDate(before?.dueDate || before?.due_date) };
+  const previousDueDate = normalizedDueDate(before?.dueDate || before?.due_date);
+  const permissionFile = before || input;
+  const authorized = canModifyDueDate({ userId, profile, file: permissionFile });
+  const rawValues = entries.map((entry) => entry.value === null || entry.value === undefined ? "" : String(entry.value).trim());
+  if (!authorized && rawValues.some((value) => value !== previousDueDate)) {
+    throw httpError(
+      canonicalPermissionRole(profile?.role) === "Staff Manager"
+        ? "You cannot change the due date of work assigned to you."
+        : "Only Admin or Manager can change the due date.",
+      403
+    );
+  }
+  const values = entries.map((entry) => normalizedDueMutationValue(entry.value));
+  if (new Set(values).size > 1) throw httpError("Conflicting due-date fields were supplied.", 400);
+  const requestedDueDate = values[0] || "";
+  const dueDateChanged = requestedDueDate !== previousDueDate;
+  const sanitized = { ...input };
+  entries.forEach(({ key }) => delete sanitized[key]);
+  if (dueDateChanged || authorized) {
+    sanitized.dueDate = requestedDueDate;
+    if (Object.prototype.hasOwnProperty.call(before || {}, "due_date") || entries.some(({ key }) => key === "due_date")) {
+      sanitized.due_date = requestedDueDate;
+    }
+  } else if (before) {
+    sanitized.dueDate = before.dueDate || before.due_date || "";
+    if (Object.prototype.hasOwnProperty.call(before, "due_date")) sanitized.due_date = before.due_date || before.dueDate || "";
+  }
+  return { input: sanitized, dueDateChanged, previousDueDate, requestedDueDate };
+}
 
 async function listFiles(state, options = {}) {
   const sorted = sortFilesForRequest(state.files || [], options);
@@ -265,19 +378,21 @@ function assertReceivedAssignmentConsistency(record = {}) {
   }
 }
 
-async function upsertFile(file, userId, profile = {}) {
-  return patchAppState((state) => {
+async function upsertFile(file, userId, profile = {}, mutationContext = {}) {
+  return patchAppStateAtomic((state) => {
     const now = Date.now();
     const isNew = !file.id || !(state.files || []).some((item) => item.id === file.id);
+    const files = state.files || [];
+    const requestedId = file.id || "";
+    const index = requestedId ? files.findIndex((item) => item.id === requestedId) : -1;
+    const before = index >= 0 ? { ...files[index] } : null;
+    const dueMutation = enforceDueDateMutationPermission(file, before, userId, profile);
     const record = {
-      ...file,
+      ...dueMutation.input,
       id: file.id || crypto.randomUUID(),
       createdAt: file.createdAt || file.created_at || (isNew ? new Date(now).toISOString() : undefined),
       updatedAt: now,
     };
-    const files = state.files || [];
-    const index = files.findIndex((item) => item.id === record.id);
-    const before = index >= 0 ? { ...files[index] } : null;
     record.serviceType = canonicalServiceType(
       record.serviceType || record.service_type || before?.serviceType || before?.service_type
     );
@@ -325,9 +440,39 @@ async function upsertFile(file, userId, profile = {}) {
     }
     const savedRecord = index >= 0 ? files[index] : record;
     appendFileUpdateNotifications(state, before, savedRecord, profile, new Date(now));
+    appendDueDateAudit(state, before, savedRecord, userId, profile, mutationContext, new Date(now));
     state.files = sortFilesNewestFirst(files);
     return state;
   }, userId);
+}
+
+function appendDueDateAudit(state, before, after, userId, profile = {}, mutationContext = {}, now = new Date()) {
+  const previousDueDate = normalizedDueDate(before?.dueDate || before?.due_date);
+  const newDueDate = normalizedDueDate(after?.dueDate || after?.due_date);
+  if (previousDueDate === newDueDate) return;
+  const actorId = String(userId || profile?.auth_user_id || profile?.authUserId || profile?.id || "").trim();
+  const actorName = String(profile?.name || profile?.email || "").trim() || "Authenticated user";
+  const sourceAction = String(mutationContext?.sourceAction || mutationContext?.source || "file-update").trim().slice(0, 120) || "file-update";
+  state.auditLog = [...(state.auditLog || []), {
+    id: crypto.randomUUID(),
+    action: "Due date changed",
+    details: {
+      fileId: after.id,
+      workId: after.id,
+      fileName: after.name || "",
+      previousDueDate,
+      newDueDate,
+      changedByUserId: actorId,
+      changedByUserName: actorName,
+      userRole: canonicalPermissionRole(profile?.role),
+      sourceAction,
+    },
+    user: actorName,
+    userId: actorId,
+    role: canonicalPermissionRole(profile?.role),
+    sourceAction,
+    at: now.toISOString(),
+  }].slice(-1000);
 }
 
 function assertRemovalPermission(profile = {}) {
@@ -1106,8 +1251,10 @@ function applyDueReminderMetadata(record = {}, before = null, nowIso = new Date(
 }
 
 function appendFileUpdateNotifications(state, before, after, profile = {}, now = new Date()) {
+  const dueChanged = normalizedDueDate(before?.dueDate || before?.due_date) !== normalizedDueDate(after?.dueDate || after?.due_date);
+  if (dueChanged) appendDueDateChangeNotification(state, before, after, profile, now);
   const change = describeFileChange(before, after);
-  if (!change) return;
+  if (!change || change.type === "Due Date Changed") return;
   const assignmentChange = ["File Allotted", "File Reassigned", "Allotment Changed"].includes(change.type);
   const recipients = change.type === "File Checked"
     ? checkedNotificationRecipients(state, after)
@@ -1151,6 +1298,30 @@ function appendFileUpdateNotifications(state, before, after, profile = {}, now =
   if (notices.length) appendUniqueFileNotifications(state, notices);
 }
 
+function appendDueDateChangeNotification(state, before, after, profile = {}, now = new Date()) {
+  const recipient = resolveFileAssignee(state, after);
+  if (!recipient?.id && !recipient?.email && !recipient?.name) return;
+  const previous = displayDate(before?.dueDate || before?.due_date) || "Not set";
+  const next = displayDate(after.dueDate || after.due_date) || "Not set";
+  const version = after.due_date_version || after.dueDateVersion || `${after.dueDate || after.due_date || "cleared"}@${now.toISOString()}`;
+  appendUniqueFileNotifications(state, [createNotificationEvent({
+    eventKey: `due-date:${after.id}:${version}:${recipient.authUserId || recipient.auth_user_id || recipient.id || recipient.email || recipient.name}`,
+    eventType: "Due Date Changed",
+    changeType: "Due Date Changed",
+    fileId: after.id,
+    sourceEventId: version,
+    fileName: after.name || "File",
+    changeText: `${after.name || "File"} due date changed from ${previous} to ${next}.`,
+    changedBy: profile?.name || "Team",
+    changedByRole: profile?.role || "",
+    recipient,
+    category: "announcement",
+    route: `/?page=file-list&file=${encodeURIComponent(after.id || "")}`,
+    tone: "pending",
+    createdAt: now,
+  })]);
+}
+
 function appendUniqueFileNotifications(state, notices = [], limit = 800) {
   appendNotificationEvents(state, notices, { limit });
   state.fileNotifications = normalizeFileNotifications(state.fileNotifications || []).slice(0, limit);
@@ -1177,7 +1348,11 @@ function describeFileChange(before, after) {
       tone: "approval",
     };
   }
-  if (!sameText(before.dueDate, after.dueDate)) return { type: "Due Date Changed", text: `${after.name || "File"} due date changed to ${displayDate(after.dueDate)}.`, key: `due-${after.dueDate || ""}`, tone: "pending" };
+  if (!sameText(before.dueDate || before.due_date, after.dueDate || after.due_date)) {
+    const previous = displayDate(before.dueDate || before.due_date) || "Not set";
+    const next = displayDate(after.dueDate || after.due_date) || "Not set";
+    return { type: "Due Date Changed", text: `${after.name || "File"} due date changed from ${previous} to ${next}.`, key: `due-${after.dueDate || after.due_date || "cleared"}`, tone: "pending" };
+  }
   if (!sameText(before.priority, after.priority)) return { type: "Priority Changed", text: `${after.name || "File"} priority changed to ${after.priority || "Normal"}.`, key: `priority-${after.priority || ""}`, tone: "overdue" };
   if (checkingLabel(before) !== "Checked" && checkingLabel(after) === "Checked") {
     const fy = after.fy || after.financialYear || after.financial_year || "";
@@ -1218,10 +1393,6 @@ function notificationRecipients(state, file) {
   return [...map.values()];
 }
 
-function notificationRecipientKey(user = {}) {
-  return String(user.authUserId || user.auth_user_id || user.email || user.id || user.name || "").trim().toLowerCase();
-}
-
 function checkedNotificationRecipients(state, file) {
   const users = state.users || [];
   const assignee = currentFileAssignee(file);
@@ -1251,6 +1422,10 @@ function checkedNotificationRecipients(state, file) {
     if (key) map.set(key, user);
   });
   return [...map.values()];
+}
+
+function notificationRecipientKey(user = {}) {
+  return String(user.authUserId || user.auth_user_id || user.email || user.id || user.name || "").trim().toLowerCase();
 }
 
 function shouldBumpTaskActivity(before, after, profile = {}) {
@@ -1381,4 +1556,8 @@ module.exports = {
   applyStatusUpdatedTimestamp,
   applyDueReminderMetadata,
   workflowStatusLabel,
+  canModifyDueDate,
+  enforceDueDateMutationPermission,
+  activeAssigneeIds,
+  canonicalPermissionRole,
 };
