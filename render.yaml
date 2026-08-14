@@ -2,7 +2,7 @@ services:
   - type: web
     name: ca-file-tracker
     runtime: node
-    plan: starter
+    plan: standard
     buildCommand: npm ci
     startCommand: npm start
     autoDeploy: true
