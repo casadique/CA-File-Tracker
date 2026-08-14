@@ -82,7 +82,10 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     })
     .eq("id", APP_STATE_ID)
     .eq("updated_at", expectedUpdatedAt)
-    .select("state, updated_at")
+    // The caller already has the exact normalized state being written. Returning
+    // the multi-megabyte JSON document from Postgres adds a second full download
+    // to every save, so only request the version needed for conflict handling.
+    .select("updated_at")
     .maybeSingle();
   if (error) throw error;
   if (!data) {
@@ -90,7 +93,7 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     conflict.status = 409;
     throw conflict;
   }
-  return { state: data.state, updatedAt: data.updated_at };
+  return { state: normalized, updatedAt: data.updated_at };
 }
 
 function assertSafeStateReplacement(currentState = {}, incomingState = {}) {
@@ -142,7 +145,7 @@ async function patchAppStateAtomic(mutator, updatedBy = null, maxAttempts = 6) {
     try {
       const saved = await saveAppStateIfCurrent(next || record.state, updatedBy, record.updatedAt);
       perfLog("patchAppStateAtomic", startedAt, { attempts: attempt + 1 });
-      return normalizeServerState(saved.state);
+      return saved.state;
     } catch (error) {
       if (error.status !== 409 || attempt === maxAttempts - 1) throw error;
     }

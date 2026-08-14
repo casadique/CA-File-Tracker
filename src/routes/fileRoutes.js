@@ -29,13 +29,13 @@ router.get("/", requireAuth, async (_req, res, next) => {
 
 router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
-    const before = await getAppState();
+    const notificationBoundary = Date.now();
     const state = await upsertFile(req.body.file || req.body, req.user.id, req.profile, {
       sourceAction: req.body.sourceAction || req.get("X-Source-Action") || "add-file",
     });
     const savedId = (req.body.file || req.body)?.id;
     const savedFile = (state.files || []).find((file) => file.id === savedId) || (state.files || [])[0] || null;
-    const fileNotifications = notificationsForFile(state, savedFile?.id || savedId, notificationIds(before));
+    const fileNotifications = notificationsForFileSince(state, savedFile?.id || savedId, notificationBoundary);
     res.json({ ok: true, file: savedFile, fileNotifications });
     sendDesktopUpdates(state, fileNotifications);
   } catch (error) {
@@ -45,12 +45,12 @@ router.post("/", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "
 
 router.put("/:id", requireAuth, requireRole("Admin", "Manager", "Staff Manager", "Staff"), async (req, res, next) => {
   try {
-    const before = await getAppState();
+    const notificationBoundary = Date.now();
     const state = await upsertFile({ ...(req.body.file || req.body), id: req.params.id }, req.user.id, req.profile, {
       sourceAction: req.body.sourceAction || req.get("X-Source-Action") || "edit-file",
     });
     const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
-    const fileNotifications = notificationsForFile(state, req.params.id, notificationIds(before));
+    const fileNotifications = notificationsForFileSince(state, req.params.id, notificationBoundary);
     res.json({ ok: true, file: savedFile, fileNotifications });
     sendDesktopUpdates(state, fileNotifications);
   } catch (error) {
@@ -63,10 +63,10 @@ router.put("/:id", requireAuth, requireRole("Admin", "Manager", "Staff Manager",
 // browser session and this route while preserving the named-checker safeguard.
 router.post("/:id/check", requireAuth, async (req, res, next) => {
   try {
-    const before = await getAppState();
+    const notificationBoundary = Date.now();
     const state = await markFileChecked(req.params.id, req.body || {}, req.user.id, req.profile);
     const savedFile = (state.files || []).find((file) => file.id === req.params.id) || null;
-    const fileNotifications = notificationsForFile(state, req.params.id, notificationIds(before));
+    const fileNotifications = notificationsForFileSince(state, req.params.id, notificationBoundary);
     res.json({ ok: true, file: savedFile, fileNotifications });
     sendDesktopUpdates(state, fileNotifications);
   } catch (error) {
@@ -76,9 +76,9 @@ router.post("/:id/check", requireAuth, async (req, res, next) => {
 
 router.post("/:id/return-correction", requireAuth, requireRole("Admin", "Manager", "Staff Manager"), async (req, res, next) => {
   try {
-    const before = await getAppState();
+    const notificationBoundary = Date.now();
     const state = await returnFileForCorrection(req.params.id, req.body || {}, req.user.id, req.profile);
-    const fileNotifications = notificationsForFile(state, req.params.id, notificationIds(before));
+    const fileNotifications = notificationsForFileSince(state, req.params.id, notificationBoundary);
     res.json({
       ok: true,
       files: state.files || [],
@@ -137,16 +137,13 @@ router.delete("/:id", requireAuth, requireRole("Admin", "Manager"), async (req, 
 
 module.exports = router;
 
-function notificationIds(state = {}) {
-  return new Set((state.fileNotifications || []).map((notice) => String(notice.id || "")).filter(Boolean));
-}
-
-function notificationsForFile(state, fileId, existingIds = new Set()) {
+function notificationsForFileSince(state, fileId, boundary = 0) {
   const id = String(fileId || "");
   return (state.fileNotifications || [])
     .filter((notice) => {
       const noticeFileId = String(notice.fileId || notice.file_id || notice.relatedRecordId || notice.related_record_id || "");
-      return (!id || noticeFileId === id) && !existingIds.has(String(notice.id || ""));
+      const createdAt = Number(notice.createdAt || 0) || Date.parse(notice.created_at || notice.at || "") || 0;
+      return (!id || noticeFileId === id) && createdAt >= boundary;
     })
     .slice(0, 50);
 }
