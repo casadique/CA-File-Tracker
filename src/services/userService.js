@@ -2,13 +2,66 @@ const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
 const { getAppState, patchAppState } = require("./appStateService");
 
-const CLIENT_CREDENTIAL_PERMISSIONS = new Set(["view_client_credentials", "edit_client_credentials"]);
+const USER_PERMISSIONS = new Set([
+  "view_client_credentials",
+  "edit_client_credentials",
+  "manage_client_masters",
+  "can_assign_todo",
+]);
+const TODO_ASSIGNER_MIGRATION_VERSION = "todo-assigners-v1-2026-08-18";
+const INITIAL_TODO_ASSIGNERS = new Set(["nisha", "althaf", "rizwana", "najma", "chindu"]);
 
 function normalizePermissions(value) {
   const raw = Array.isArray(value) ? value : (value && typeof value === "object" ? Object.keys(value).filter((key) => value[key]) : []);
-  const permissions = [...new Set(raw.map((item) => String(item || "").trim()).filter((item) => CLIENT_CREDENTIAL_PERMISSIONS.has(item)))];
+  const permissions = [...new Set(raw.map((item) => String(item || "").trim()).filter((item) => USER_PERMISSIONS.has(item)))];
   if (permissions.includes("edit_client_credentials") && !permissions.includes("view_client_credentials")) permissions.push("view_client_credentials");
   return permissions;
+}
+
+async function migrateTodoAssignmentPermissions() {
+  const state = await getAppState();
+  if (state.todoPermissionMigrationVersion === TODO_ASSIGNER_MIGRATION_VERSION) return { changed: false, usersUpdated: 0 };
+
+  const { data: profiles, error } = await supabaseAdmin.from("app_users").select("*");
+  if (error) throw error;
+  const updatedProfiles = [];
+  for (const profile of profiles || []) {
+    const shouldAssign = profile.role === "Admin" || INITIAL_TODO_ASSIGNERS.has(String(profile.name || "").trim().toLowerCase());
+    if (!shouldAssign) continue;
+    const existingPermissions = Array.isArray(profile.permissions)
+      ? profile.permissions
+      : Object.keys(profile.permissions || {}).filter((key) => profile.permissions[key]);
+    const permissions = normalizePermissions([...existingPermissions, "can_assign_todo"]);
+    if (permissions.length === (profile.permissions || []).length && permissions.every((item) => (profile.permissions || []).includes(item))) {
+      updatedProfiles.push({ ...profile, permissions });
+      continue;
+    }
+    const { data, error: updateError } = await supabaseAdmin
+      .from("app_users")
+      .update({ permissions, updated_at: new Date().toISOString() })
+      .eq("id", profile.id)
+      .select("*")
+      .single();
+    if (updateError) throw updateError;
+    updatedProfiles.push(data);
+  }
+
+  await patchAppState((current) => {
+    const permissionByIdentity = new Map();
+    updatedProfiles.forEach((profile) => {
+      [profile.auth_user_id, profile.id, String(profile.email || "").toLowerCase()].filter(Boolean)
+        .forEach((key) => permissionByIdentity.set(String(key), profile.permissions));
+    });
+    current.users = (current.users || []).map((user) => {
+      const permissions = permissionByIdentity.get(String(user.authUserId || user.auth_user_id || ""))
+        || permissionByIdentity.get(String(user.id || ""))
+        || permissionByIdentity.get(String(user.email || "").toLowerCase());
+      return permissions ? { ...user, permissions } : user;
+    });
+    current.todoPermissionMigrationVersion = TODO_ASSIGNER_MIGRATION_VERSION;
+    return current;
+  });
+  return { changed: true, usersUpdated: updatedProfiles.length };
 }
 
 async function createUser({ email, password, name, role, permissions = [] }) {
@@ -260,4 +313,5 @@ module.exports = {
   sendPasswordReset,
   recoverAdminUser,
   profileForAuthUser,
+  migrateTodoAssignmentPermissions,
 };

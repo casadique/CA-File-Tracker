@@ -1324,7 +1324,7 @@ function openDesktopNotificationTarget(notification = {}) {
     resetFilters();
     state.filters.listView = fileViews[page];
   } else {
-    activePage = ["dashboard", "files", "expenses", "visitors", "dailyReport"].includes(page) ? page : "dashboard";
+    activePage = ["dashboard", "todo", "files", "expenses", "visitors", "dailyReport"].includes(page) ? page : "dashboard";
   }
   const notificationId = String(notification.id || "");
   if (notificationId && isSupabaseMode()) {
@@ -2707,7 +2707,7 @@ function applyTabSession(appState) {
 
 function restoreActivePage() {
   const local = tabSession();
-  const allowedPages = ["dashboard", "files", "staff", "staffDetails", "users", "invites", "visitors", "dailyReport", "expenses", "reports", "verification", "backup"];
+  const allowedPages = ["dashboard", "todo", "files", "staff", "staffDetails", "users", "invites", "visitors", "dailyReport", "expenses", "reports", "verification", "backup"];
   if (allowedPages.includes(local.activePage)) activePage = local.activePage;
 }
 
@@ -4291,6 +4291,7 @@ function mount() {
           <div class="top-actions" id="topActions">${renderTopActions()}</div>
         </header>
         <section class="page" id="dashboard"></section>
+        <section class="page" id="todo"></section>
         <section class="page" id="files"></section>
         <section class="page" id="staff"></section>
         <section class="page" id="staffDetails"></section>
@@ -4723,7 +4724,7 @@ function renderAll() {
   if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
   if (activePage === "staffDetails" && !canUseStaffDetails()) activePage = "dashboard";
   if (activePage === "clientMaster" && !["Admin", "Manager"].includes(normalizeRole(state.currentRole))) activePage = "dashboard";
-  if (isStaffLogin() && !["dashboard", "files", "staffDetails"].includes(activePage)) activePage = "dashboard";
+  if (isStaffLogin() && !["dashboard", "todo", "files", "staffDetails"].includes(activePage)) activePage = "dashboard";
   if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "billed", "feePending", "feeReceived"].includes(state.filters.listView) && !state.filters.fromDashboard) {
     state.filters.listView = "active";
   }
@@ -4740,6 +4741,7 @@ function renderAll() {
   }
   const titles = {
     dashboard: ["Dashboard", ""],
+    todo: ["To-Do List", "Private tasks, assignments, reminders and completion tracking"],
     files: ["File List", ""],
     staff: ["Staff Performance", ""],
     staffDetails: ["Staff Details", "Manage employee information, birthdays and work anniversaries"],
@@ -4796,6 +4798,7 @@ function renderActivePage() {
   }
   const renderers = {
     dashboard: renderDashboard,
+    todo: () => window.renderTodoPage?.(),
     files: renderFilesPage,
     staff: renderStaffPage,
     staffDetails: renderStaffDetailsPage,
@@ -5002,6 +5005,7 @@ function navGroupDefinitions() {
     return [
       { key: "main", label: "Main", collapsible: false, items: [
         navItem("dashboard", "dashboard", "Dashboard"),
+        navItem("todo", "task", "To-Do List"),
         navItem("my-task", "task", "My Task", "myTask"),
       ] },
       { key: "files", label: "File Management", collapsible: true, items: [
@@ -5022,6 +5026,7 @@ function navGroupDefinitions() {
   return [
     { key: "main", label: "Main", collapsible: false, items: [
       navItem("dashboard", "dashboard", "Dashboard"),
+      navItem("todo", "task", "To-Do List"),
       navItem("files", "file", "File List"),
     ] },
     { key: "files", label: "File Management", collapsible: true, items: [
@@ -14744,7 +14749,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="newUserRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
-        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Master Access</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="newUserManageClientMasters" type="checkbox"> Manage client types and masters</label></div>` : ""}
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>User Permissions</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="newUserManageClientMasters" type="checkbox"> Manage client types and masters</label><label class="permission-check"><input id="newUserCanAssignTodo" type="checkbox"> Assign To-Do tasks to others</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="createUser" ${canManage && rolePerm().roles ? "" : "disabled"}>Create User</button>
@@ -14771,7 +14776,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="accessRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
-        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>Client Master Access</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="accessManageClientMasters" type="checkbox"> Manage client types and masters</label></div>` : ""}
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>User Permissions</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="accessManageClientMasters" type="checkbox"> Manage client types and masters</label><label class="permission-check"><input id="accessCanAssignTodo" type="checkbox"> Assign To-Do tasks to others</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="updateAccess" ${canManage && rolePerm().roles ? "" : "disabled"}>Update User</button>
@@ -14804,6 +14809,7 @@ function renderUsersPage() {
     if (document.querySelector("#accessViewCredentials")) document.querySelector("#accessViewCredentials").checked = permissions.includes("view_client_credentials");
     if (document.querySelector("#accessEditCredentials")) document.querySelector("#accessEditCredentials").checked = permissions.includes("edit_client_credentials");
     if (document.querySelector("#accessManageClientMasters")) document.querySelector("#accessManageClientMasters").checked = permissions.includes("manage_client_masters");
+    if (document.querySelector("#accessCanAssignTodo")) document.querySelector("#accessCanAssignTodo").checked = selected?.role === "Admin" || permissions.includes("can_assign_todo");
   };
   setAccessForm();
   accessUser.onchange = setAccessForm;
@@ -14816,6 +14822,7 @@ function renderUsersPage() {
       document.querySelector("#newUserViewCredentials")?.checked ? "view_client_credentials" : "",
       document.querySelector("#newUserEditCredentials")?.checked ? "edit_client_credentials" : "",
       document.querySelector("#newUserManageClientMasters")?.checked ? "manage_client_masters" : "",
+      document.querySelector("#newUserCanAssignTodo")?.checked || role === "Admin" ? "can_assign_todo" : "",
     ].filter(Boolean);
     if (!name || !email || !password) return toast("Please enter name, email and password.");
     if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
@@ -14850,6 +14857,7 @@ function renderUsersPage() {
       document.querySelector("#accessViewCredentials")?.checked ? "view_client_credentials" : "",
       document.querySelector("#accessEditCredentials")?.checked ? "edit_client_credentials" : "",
       document.querySelector("#accessManageClientMasters")?.checked ? "manage_client_masters" : "",
+      document.querySelector("#accessCanAssignTodo")?.checked || normalizeRole(accessRole.value) === "Admin" ? "can_assign_todo" : "",
     ].filter(Boolean);
     if (!email) return toast("Please enter email ID.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Please enter a valid email ID.");

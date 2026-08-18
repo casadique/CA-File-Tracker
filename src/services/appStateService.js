@@ -113,6 +113,8 @@ function assertSafeStateReplacement(currentState = {}, incomingState = {}) {
     "fileNotifications",
     "invoices",
     "invoiceAuditEvents",
+    "todoTasks",
+    "todoActivity",
   ];
   const erased = protectedCollections.filter((key) =>
     Array.isArray(currentState[key])
@@ -273,6 +275,8 @@ function emptyState() {
     invoiceSequences: [],
     invoiceAuditEvents: [],
     invoiceSettings: {},
+    todoTasks: [],
+    todoActivity: [],
     auditLog: [],
     services: [],
     careOfList: [],
@@ -305,6 +309,8 @@ function normalizeServerState(state) {
     ),
     staffDetails: sortStaffDetailsNewestFirst(displayNormalizedState.staffDetails || []),
     correctionHistory: sortCorrectionsNewestFirst(displayNormalizedState.correctionHistory || []),
+    todoTasks: (displayNormalizedState.todoTasks || []).map((task) => ({ ...task })).sort((a, b) => Date.parse(b.updated_at || b.created_at || 0) - Date.parse(a.updated_at || a.created_at || 0)),
+    todoActivity: (displayNormalizedState.todoActivity || []).slice(-3000),
     careOfList: normalizeMasterList(displayNormalizedState.careOfList || []),
     staffMaster: normalizeMasterList(displayNormalizedState.staffMaster || []),
     modeList: normalizeMasterList(displayNormalizedState.modeList || []),

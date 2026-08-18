@@ -5,6 +5,7 @@ const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
 const { calculateDashboardCounts } = require("../services/fileViewRules");
 const { restoreClients } = require("../services/clientService");
+const { visibleTodoTasks } = require("../services/todoService");
 const { mergeStaffDetailsImport } = require("../services/staffDetailsService");
 const { createCompleteBackup } = require("../services/completeBackupService");
 
@@ -144,9 +145,20 @@ function stateForProfile(state, profile, userId) {
     ...state,
     chatMessages: visibleChatMessages(state, profile, userId),
     correctionHistory: visibleCorrectionHistory(state, profile, userId),
+    todoTasks: visibleTodoTasks(state, userId, profile),
   };
+  const visibleTodoIds = new Set((visibleState.todoTasks || []).map((task) => task.id));
+  visibleState.todoActivity = (state.todoActivity || []).filter((row) => visibleTodoIds.has(row.task_id));
+  visibleState.fileNotifications = (state.fileNotifications || []).filter((notice) => notice.category !== "todo" || todoNotificationForUser(notice, profile, userId));
   if (profile?.role !== "Admin") delete visibleState.fileDataBackups;
   return visibleState;
+}
+
+function todoNotificationForUser(notice, profile, userId) {
+  const ids = [userId, profile?.id].filter(Boolean).map(String);
+  const targetId = String(notice.targetUserAuthId || notice.targetUserId || "");
+  const targetEmail = String(notice.targetUserEmail || "").trim().toLowerCase();
+  return (targetId && ids.includes(targetId)) || (targetEmail && targetEmail === String(profile?.email || "").trim().toLowerCase());
 }
 
 function visibleCorrectionHistory(state, profile, userId) {

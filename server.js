@@ -13,6 +13,7 @@ const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
 const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates } = require("./src/services/appStateService");
 const { dispatchDueReminders } = require("./src/services/pushNotificationService");
+const { migrateTodoAssignmentPermissions } = require("./src/services/userService");
 
 const app = express();
 const publicRoot = __dirname;
@@ -100,6 +101,8 @@ async function startServer() {
     if (notificationMigration.changed) console.log("Seven-day notification retention enabled without deleting valid history.");
     const duplicateMigration = await migrateNotificationDuplicates();
     if (duplicateMigration.changed) console.log(`Notification duplicate audit completed: ${duplicateMigration.duplicateGroups} group(s), ${duplicateMigration.archivedRows} duplicate row(s) archived.`);
+    const todoPermissionMigration = await migrateTodoAssignmentPermissions();
+    if (todoPermissionMigration.changed) console.log(`To-Do assignment permission enabled for ${todoPermissionMigration.usersUpdated} user(s).`);
   } catch (error) {
     console.error("Startup data migration failed:", error.message);
   }

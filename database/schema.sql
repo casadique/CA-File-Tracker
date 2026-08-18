@@ -39,12 +39,8 @@ create policy "authenticated users can read active profiles"
   using (is_active = true);
 
 drop policy if exists "authenticated users can read central app state" on public.app_state;
-create policy "authenticated users can read central app state"
-  on public.app_state for select
-  to authenticated
-  using (true);
 
-revoke insert, update, delete, truncate, references, trigger
+revoke select, insert, update, delete, truncate, references, trigger
   on table public.app_state from anon, authenticated;
 
 drop policy if exists "authenticated users can read audit events" on public.audit_events;
