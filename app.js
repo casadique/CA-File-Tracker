@@ -1326,6 +1326,7 @@ function openDesktopNotificationTarget(notification = {}) {
   } else {
     activePage = ["dashboard", "todo", "files", "expenses", "visitors", "dailyReport"].includes(page) ? page : "dashboard";
   }
+  if (page === "todo" && typeof todoUi !== "undefined") todoUi.focusTask = route.searchParams.get("todo") || "";
   const notificationId = String(notification.id || "");
   if (notificationId && isSupabaseMode()) {
     apiJson(`/api/notifications/events/${encodeURIComponent(notificationId)}/open`, { method: "POST" }).catch(() => {});
@@ -1371,6 +1372,7 @@ function localDesktopAlertsEnabled() {
 }
 
 function desktopNotificationRouteForItem(item = {}) {
+  if (item.route) return item.route;
   if (item.chatId) return `/?page=dashboard&chat=${encodeURIComponent(item.chatId)}`;
   if (item.category === "billing") return `/?page=fee-pending&file=${encodeURIComponent(item.fileId || "")}`;
   if (item.category === "corrections") return `/?page=correction-required-files&file=${encodeURIComponent(item.fileId || "")}`;
@@ -3924,6 +3926,7 @@ function allNotificationItems() {
       date: notice.date || "",
       time: notice.time || "",
       createdAt: notice.createdAt || Date.parse(notice.created_at || "") || 0,
+      route: notice.route || "",
     });
   });
   if (["Admin", "Manager"].includes(state.currentRole)) {
@@ -4026,6 +4029,7 @@ function notifications() {
 
 function notificationCategory(type = "") {
   const text = String(type).toLowerCase();
+  if (text.includes("task") || text.includes("to-do") || text.includes("todo")) return "assignments";
   if (text.includes("bill") || text.includes("fee") || text.includes("payment")) return "billing";
   if (text.includes("correction") || text.includes("return")) return "corrections";
   if (text.includes("allot") || text.includes("assign")) return "assignments";
@@ -24854,6 +24858,12 @@ function openNotifications() {
       refreshNotificationsPanel();
     };
   });
+  document.querySelectorAll("[data-open-notification]").forEach((btn) => {
+    btn.onclick = () => {
+      const item = allNotificationItems().find((row) => row.id === btn.dataset.openNotification);
+      if (item) openDesktopNotificationTarget({ ...item, route: item.route || desktopNotificationRouteForItem(item), relatedRecordId: item.fileId });
+    };
+  });
   document.querySelectorAll("[data-delete-billed]").forEach((btn) => {
     btn.onclick = () => deleteBilledFileSafely(btn.dataset.deleteBilled, btn);
   });
@@ -24937,6 +24947,7 @@ function notificationCard(item) {
         </div>
       </div>
       <div class="notification-actions">
+        ${item.route ? `<button class="mini-button" data-open-notification="${escapeHtml(item.id)}">Open</button>` : ""}
         <button class="mini-button notification-read-button" data-mark-read="${escapeHtml(item.id)}" ${item.isRead ? "disabled" : ""}>Read</button>
       </div>
     </article>

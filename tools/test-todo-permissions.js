@@ -47,12 +47,14 @@ require.cache[configPath] = { id: configPath, filename: configPath, loaded: true
 
 const servicePath = require.resolve("../src/services/todoService");
 delete require.cache[servicePath];
-const { canAssignTodo, updateTodo, visibleTodoTasks } = require(servicePath);
+const { canAssignTodo, dueTodoReminders, updateTodo, updateTodoReminder, visibleTodoTasks } = require(servicePath);
 
 (async () => {
   assert.equal(canAssignTodo(profiles.admin), true);
   assert.equal(canAssignTodo(profiles.nisha), true);
   assert.equal(canAssignTodo(profiles.rahul), false);
+  assert.equal(canAssignTodo({ role: "Manager", permissions: [] }), true);
+  assert.equal(canAssignTodo({ role: "Co-ordinator", permissions: [] }), true);
 
   assert.deepEqual(visibleTodoTasks(centralState, ids.rahul, profiles.rahul).map((row) => row.id).sort(), ["admin-to-rahul", "althaf-to-rahul", "nisha-to-rahul", "rahul-personal"]);
   assert.deepEqual(visibleTodoTasks(centralState, ids.nisha, profiles.nisha).map((row) => row.id).sort(), ["nisha-personal", "nisha-to-rahul"]);
@@ -74,11 +76,22 @@ const { canAssignTodo, updateTodo, visibleTodoTasks } = require(servicePath);
   assert.equal(assignerUpdate.task.title, "Updated by Nisha");
   assert.equal(assignerUpdate.task.assigned_to_id, ids.chindu);
 
+  centralState.todoTasks.find((row) => row.id === "admin-to-rahul").reminder_at = "2000-01-01T00:00:00.000Z";
+  const firstReminderPoll = await dueTodoReminders(ids.rahul, profiles.rahul);
+  assert.equal(firstReminderPoll.reminders.length, 1);
+  assert.equal(firstReminderPoll.notices.length, 1);
+  const secondReminderPoll = await dueTodoReminders(ids.rahul, profiles.rahul);
+  assert.equal(secondReminderPoll.reminders.length, 1, "Unacknowledged reminder remains visible");
+  assert.equal(secondReminderPoll.notices.length, 0, "Reminder event is idempotent");
+  await updateTodoReminder("admin-to-rahul", { action: "dismiss", occurrence_key: firstReminderPoll.reminders[0].occurrence_key }, ids.rahul, profiles.rahul);
+  assert.equal((await dueTodoReminders(ids.rahul, profiles.rahul)).reminders.length, 0, "Dismissed reminder does not repeat");
+
   const routeSource = fs.readFileSync(path.resolve(__dirname, "..", "src", "routes", "stateRoutes.js"), "utf8");
   const schemaSource = fs.readFileSync(path.resolve(__dirname, "..", "database", "20260818_todo_privacy.sql"), "utf8");
   const uiSource = fs.readFileSync(path.resolve(__dirname, "..", "todo-client.js"), "utf8");
   assert.match(routeSource, /todoTasks:\s*visibleTodoTasks/);
   assert.match(routeSource, /todoActivity = .*visibleTodoIds/);
+  assert.match(routeSource, /todoReminderEvents = .*visibleTodoIds/);
   assert.match(schemaSource, /revoke select, insert, update, delete/);
   assert.match(uiSource, /All Staff To-Dos/);
   assert.match(uiSource, /Assigned by Me/);

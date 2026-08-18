@@ -149,6 +149,8 @@ function stateForProfile(state, profile, userId) {
   };
   const visibleTodoIds = new Set((visibleState.todoTasks || []).map((task) => task.id));
   visibleState.todoActivity = (state.todoActivity || []).filter((row) => visibleTodoIds.has(row.task_id));
+  const todoActorIds = new Set([userId, profile?.id].filter(Boolean).map(String));
+  visibleState.todoReminderEvents = (state.todoReminderEvents || []).filter((row) => visibleTodoIds.has(row.task_id) && (profile?.role === "Admin" || todoActorIds.has(String(row.user_id || ""))));
   visibleState.fileNotifications = (state.fileNotifications || []).filter((notice) => notice.category !== "todo" || todoNotificationForUser(notice, profile, userId));
   if (profile?.role !== "Admin") delete visibleState.fileDataBackups;
   return visibleState;

@@ -3,7 +3,7 @@ const { getAppState, patchAppStateAtomic } = require("./appStateService");
 const { supabaseAdmin } = require("../config/supabase");
 const { createNotificationEvent } = require("./notificationEventService");
 
-const TODO_STATUSES = new Set(["Pending", "In Progress", "Waiting", "Completed", "Cancelled"]);
+const TODO_STATUSES = new Set(["Pending", "In Progress", "On Hold", "Waiting", "Completed", "Cancelled"]);
 const TODO_PRIORITIES = new Set(["Low", "Medium", "High", "Urgent"]);
 
 function permissionSet(profile = {}) {
@@ -16,7 +16,8 @@ function isTodoAdmin(profile = {}) {
 }
 
 function canAssignTodo(profile = {}) {
-  return isTodoAdmin(profile) || permissionSet(profile).has("can_assign_todo");
+  const role = String(profile.role || "").trim().toLowerCase();
+  return isTodoAdmin(profile) || ["manager", "co-ordinator", "coordinator"].includes(role) || permissionSet(profile).has("can_assign_todo");
 }
 
 function actorIdentity(userId, profile = {}) {
@@ -44,7 +45,7 @@ function canViewTodo(task, actor, profile) {
 
 function visibleTodoTasks(state, userId, profile = {}, query = {}) {
   const actor = actorIdentity(userId, profile);
-  let rows = (state.todoTasks || []).filter((task) => canViewTodo(task, actor, profile));
+  let rows = (state.todoTasks || []).filter((task) => !task.deleted_at && canViewTodo(task, actor, profile));
   const scope = String(query.scope || "all").toLowerCase();
   if (scope === "mine" || scope === "my-tasks") rows = rows.filter((task) => identityMatches(task, "assigned_to", actor));
   if (scope === "personal") rows = rows.filter((task) => identityMatches(task, "created_by", actor) && identityMatches(task, "assigned_to", actor));
@@ -56,12 +57,14 @@ function visibleTodoTasks(state, userId, profile = {}, query = {}) {
   const status = String(query.status || "").trim();
   const priority = String(query.priority || "").trim();
   const assignedTo = String(query.assigned_to || query.assignedTo || "").trim();
+  const dueDate = String(query.due_date || query.dueDate || "").trim();
   const search = String(query.search || "").trim().toLowerCase();
-  if (status) rows = rows.filter((task) => task.status === status);
+  if (status) rows = rows.filter((task) => normalizeTodoStatus(task.status) === status);
   if (priority) rows = rows.filter((task) => task.priority === priority);
-  if (assignedTo && isTodoAdmin(profile)) rows = rows.filter((task) => task.assigned_to_id === assignedTo || task.assigned_to === assignedTo);
-  if (search) rows = rows.filter((task) => [task.title, task.description, task.remarks, task.waiting_remarks, task.assigned_to_name, task.assigned_by_name].some((value) => String(value || "").toLowerCase().includes(search)));
-  return rows.sort(todoSort);
+  if (assignedTo && canAssignTodo(profile)) rows = rows.filter((task) => task.assigned_to_id === assignedTo || task.assigned_to === assignedTo);
+  if (dueDate) rows = rows.filter((task) => task.due_date === dueDate);
+  if (search) rows = rows.filter((task) => [task.title, task.task_details_or_remarks, task.description, task.remarks, task.waiting_remarks, task.assigned_to_name, task.assigned_by_name].some((value) => String(value || "").toLowerCase().includes(search)));
+  return rows.sort(todoSort).map(publicReminderTask);
 }
 
 async function listTodos(userId, profile, query = {}) {
@@ -73,7 +76,7 @@ async function todoPageData(userId, profile, query = {}) {
   const tasks = visibleTodoTasks(state, userId, profile, query);
   const today = indiaDate();
   const dashboard = { summary: summarizeTodos(tasks, today), staff: [] };
-  if (isTodoAdmin(profile) && String(query.scope || "").toLowerCase() === "all-staff") dashboard.staff = staffTodoSummary(state.todoTasks || [], today);
+  if (isTodoAdmin(profile) && String(query.scope || "").toLowerCase() === "all-staff") dashboard.staff = staffTodoSummary((state.todoTasks || []).filter((task) => !task.deleted_at), today);
   return { tasks, dashboard };
 }
 
@@ -105,12 +108,16 @@ async function createTodo(payload, userId, profile) {
     createdTask = {
       id: crypto.randomUUID(),
       title: requiredText(payload.title, "Task title", 240),
-      description: cleanText(payload.description, 4000),
+      task_details_or_remarks: cleanText(payload.task_details_or_remarks ?? payload.description, 4000),
+      description: cleanText(payload.task_details_or_remarks ?? payload.description, 4000),
       priority: TODO_PRIORITIES.has(payload.priority) ? payload.priority : "Medium",
-      status: "Pending",
+      status: TODO_STATUSES.has(payload.status) ? normalizeTodoStatus(payload.status) : "Pending",
       due_date: cleanDate(payload.due_date || payload.dueDate),
       due_time: cleanTime(payload.due_time || payload.dueTime),
       reminder_at: cleanDateTime(payload.reminder_at || payload.reminderAt),
+      snoozed_until: null,
+      reminder_triggered_at: null,
+      reminder_acknowledged_at: null,
       remarks: "",
       waiting_remarks: "",
       ...identityFields("created_by", actor),
@@ -121,7 +128,15 @@ async function createTodo(payload, userId, profile) {
       completed_by: "",
       completed_by_name: "",
       completed_at: null,
+      deleted_at: null,
     };
+    if (createdTask.status === "Completed") {
+      createdTask.completed_by = actor.id;
+      createdTask.completed_by_name = actor.name;
+      createdTask.completed_at = now;
+      createdTask.reminder_acknowledged_at = now;
+    }
+    validateTodoSchedule(createdTask, assignee.id !== actor.id);
     current.todoTasks = [createdTask, ...(current.todoTasks || [])];
     appendActivity(current, createdTask, actor, "Task created", { assignedTo: assignee.name });
     if (assignee.id !== actor.id) notices = appendTodoNotification(current, assignmentNotice(createdTask, actor, assignee));
@@ -145,13 +160,16 @@ async function updateTodo(taskId, payload, userId, profile) {
     const assignee = identityMatches(before, "assigned_to", actor);
     const personalOwner = creator && assignee;
     const next = { ...before };
-    const attemptsContentChange = ["title", "description", "priority", "due_date", "dueDate", "due_time", "dueTime", "reminder_at", "reminderAt", "assigned_to_id", "assignedToId"]
+    const attemptsContentChange = ["title", "description", "task_details_or_remarks", "priority", "due_date", "dueDate", "due_time", "dueTime", "reminder_at", "reminderAt", "assigned_to_id", "assignedToId"]
       .some((key) => Object.prototype.hasOwnProperty.call(payload, key) && payload[key] !== undefined);
     if (before.status === "Completed" && !admin && attemptsContentChange) throw httpError("Completed tasks cannot be edited or reassigned. Admin can reopen the task first.", 409);
 
     if (admin || creator || personalOwner) {
       if (Object.prototype.hasOwnProperty.call(payload, "title")) next.title = requiredText(payload.title, "Task title", 240);
-      if (Object.prototype.hasOwnProperty.call(payload, "description")) next.description = cleanText(payload.description, 4000);
+      if (Object.prototype.hasOwnProperty.call(payload, "description") || Object.prototype.hasOwnProperty.call(payload, "task_details_or_remarks")) {
+        next.task_details_or_remarks = cleanText(payload.task_details_or_remarks ?? payload.description, 4000);
+        next.description = next.task_details_or_remarks;
+      }
       if (Object.prototype.hasOwnProperty.call(payload, "priority")) next.priority = TODO_PRIORITIES.has(payload.priority) ? payload.priority : next.priority;
       if (Object.prototype.hasOwnProperty.call(payload, "due_date") || Object.prototype.hasOwnProperty.call(payload, "dueDate")) next.due_date = cleanDate(payload.due_date || payload.dueDate);
       if (Object.prototype.hasOwnProperty.call(payload, "due_time") || Object.prototype.hasOwnProperty.call(payload, "dueTime")) next.due_time = cleanTime(payload.due_time || payload.dueTime);
@@ -169,16 +187,25 @@ async function updateTodo(taskId, payload, userId, profile) {
     if (Object.prototype.hasOwnProperty.call(payload, "status")) {
       if (!(admin || creator || assignee)) throw httpError("You cannot change this task status.", 403);
       if (!TODO_STATUSES.has(payload.status)) throw httpError("Invalid To-Do status.", 400);
-      next.status = payload.status;
+      next.status = normalizeTodoStatus(payload.status);
     }
-    if (Object.prototype.hasOwnProperty.call(payload, "remarks") && (admin || creator || assignee)) next.remarks = cleanText(payload.remarks, 4000);
-    if (Object.prototype.hasOwnProperty.call(payload, "waiting_remarks") && (admin || creator || assignee)) next.waiting_remarks = cleanText(payload.waiting_remarks, 4000);
+    if (Object.prototype.hasOwnProperty.call(payload, "status_remarks") && (admin || creator || assignee)) next.status_remarks = cleanText(payload.status_remarks, 4000);
+    if (Object.prototype.hasOwnProperty.call(payload, "remarks") && (admin || creator || assignee)) next.status_remarks = cleanText(payload.remarks, 4000);
+    if (next.status === "On Hold" && before.status !== "On Hold" && !cleanText(payload.status_remarks ?? payload.remarks, 4000)) throw httpError("Remarks are required when placing a task On Hold.", 400);
+    if (Object.prototype.hasOwnProperty.call(payload, "snoozed_until") && (admin || creator || assignee)) {
+      const until = cleanDateTime(payload.snoozed_until);
+      if (!until || Date.parse(until) <= Date.now()) throw httpError("Choose a future snooze time.", 400);
+      next.snoozed_until = until;
+      next.reminder_acknowledged_at = null;
+    }
 
     const justCompleted = before.status !== "Completed" && next.status === "Completed";
     if (justCompleted) {
       next.completed_by = actor.id;
       next.completed_by_name = actor.name;
       next.completed_at = new Date().toISOString();
+      next.reminder_acknowledged_at = next.completed_at;
+      next.snoozed_until = null;
       const assignedBy = todoIdentity(before, "assigned_by");
       if (assignedBy.id && assignedBy.id !== actor.id) notices.push(...appendTodoNotification(current, completionNotice(next, actor, assignedBy)));
     } else if (before.status === "Completed" && next.status !== "Completed") {
@@ -186,7 +213,9 @@ async function updateTodo(taskId, payload, userId, profile) {
       next.completed_by = "";
       next.completed_by_name = "";
       next.completed_at = null;
+      next.reminder_acknowledged_at = null;
     }
+    if (attemptsContentChange) validateTodoSchedule(next, next.assigned_to_id !== next.created_by_id);
     next.updated_at = new Date().toISOString();
     current.todoTasks[index] = next;
     savedTask = next;
@@ -203,9 +232,10 @@ async function deleteTodo(taskId, userId, profile) {
     if (index < 0) throw httpError("To-Do task not found.", 404);
     const task = state.todoTasks[index];
     const creator = identityMatches(task, "created_by", actor) || identityMatches(task, "assigned_by", actor);
-    if (!isTodoAdmin(profile) && !(creator && task.status !== "Completed")) throw httpError("You cannot delete this task.", 403);
-    state.todoTasks.splice(index, 1);
-    appendActivity(state, task, actor, "Task deleted", {});
+    if (!isTodoAdmin(profile) && !creator) throw httpError("You cannot delete this task.", 403);
+    const deletedAt = new Date().toISOString();
+    state.todoTasks[index] = { ...task, deleted_at: deletedAt, updated_at: deletedAt, reminder_acknowledged_at: deletedAt, snoozed_until: null };
+    appendActivity(state, state.todoTasks[index], actor, "Task deleted", { deleted_at: { from: task.deleted_at || "", to: deletedAt } });
     return state;
   }, userId);
 }
@@ -257,7 +287,7 @@ function summarizeTodos(tasks, today = indiaDate()) {
 }
 
 function todoBucket(task, today) {
-  if (task.status === "Completed") return "completed";
+  if (normalizeTodoStatus(task.status) === "Completed") return "completed";
   if (!task.due_date) return "pending";
   if (task.due_date < today) return "overdue";
   if (task.due_date === today) return "dueToday";
@@ -273,6 +303,80 @@ function appendTodoNotification(state, notice) {
   return [notice];
 }
 
+async function dueTodoReminders(userId, profile) {
+  const actor = actorIdentity(userId, profile);
+  const snapshot = await getAppState();
+  const snapshotCandidates = dueReminderCandidates(snapshot, actor);
+  if (!snapshotCandidates.some((item) => !item.event)) {
+    const active = snapshotCandidates.filter((item) => !item.event.dismissed_at && !item.event.acknowledged_at).map((item) => ({ ...item.event, task: publicReminderTask(item.task) }));
+    return { state: snapshot, reminders: active, notices: [] };
+  }
+  let reminders = [];
+  let notices = [];
+  const state = await patchAppStateAtomic((current) => {
+    const now = Date.now();
+    current.todoReminderEvents ||= [];
+    reminders = [];
+    notices = [];
+    for (const candidate of dueReminderCandidates(current, actor, now)) {
+      const { task, scheduledTime, occurrenceKey } = candidate;
+      let { event } = candidate;
+      if (!event) {
+        event = { id: crypto.randomUUID(), task_id: task.id, user_id: actor.id, scheduled_at: new Date(scheduledTime).toISOString(), triggered_at: new Date().toISOString(), viewed_at: null, snoozed_until: null, dismissed_at: null, acknowledged_at: null, notification_status: "triggered", occurrence_key: occurrenceKey };
+        current.todoReminderEvents.push(event);
+        task.reminder_triggered_at = event.triggered_at;
+        appendActivity(current, task, { id: "", name: "System" }, "Reminder triggered", { scheduled_at: event.scheduled_at });
+        const notice = reminderNotice(task, actor, event);
+        notices.push(...appendTodoNotification(current, notice));
+      }
+      if (!event.dismissed_at && !event.acknowledged_at) reminders.push({ ...event, task: publicReminderTask(task) });
+    }
+    current.todoReminderEvents = current.todoReminderEvents.slice(-5000);
+    return current;
+  }, userId);
+  return { state, reminders, notices };
+}
+
+function dueReminderCandidates(state, actor, now = Date.now()) {
+  const events = state.todoReminderEvents || [];
+  return (state.todoTasks || []).flatMap((task) => {
+    if (task.deleted_at || ["Completed", "Cancelled"].includes(normalizeTodoStatus(task.status)) || !identityMatches(task, "assigned_to", actor)) return [];
+    const scheduledTime = Date.parse(task.snoozed_until || task.reminder_at || todoDueTimestamp(task) || "");
+    if (!scheduledTime || scheduledTime > now) return [];
+    const occurrenceKey = `${task.id}:${new Date(scheduledTime).toISOString()}`;
+    return [{ task, scheduledTime, occurrenceKey, event: events.find((row) => row.occurrence_key === occurrenceKey && row.user_id === actor.id) }];
+  });
+}
+
+async function updateTodoReminder(taskId, payload, userId, profile) {
+  const actor = actorIdentity(userId, profile);
+  let savedEvent;
+  await patchAppStateAtomic((state) => {
+    const task = (state.todoTasks || []).find((row) => row.id === taskId && !row.deleted_at);
+    if (!task || !identityMatches(task, "assigned_to", actor)) throw httpError("You do not have permission to update this reminder.", 403);
+    const occurrenceKey = cleanText(payload.occurrence_key, 300);
+    const event = (state.todoReminderEvents || []).find((row) => row.task_id === taskId && row.user_id === actor.id && row.occurrence_key === occurrenceKey);
+    if (!event) throw httpError("Reminder occurrence not found.", 404);
+    const now = new Date().toISOString();
+    const action = String(payload.action || "").toLowerCase();
+    if (action === "snooze") {
+      const until = cleanDateTime(payload.snoozed_until);
+      if (!until || Date.parse(until) <= Date.now()) throw httpError("Choose a future snooze time.", 400);
+      event.snoozed_until = until; event.dismissed_at = now; event.notification_status = "snoozed";
+      task.snoozed_until = until; task.reminder_acknowledged_at = null; task.updated_at = now;
+      appendActivity(state, task, actor, "Reminder snoozed", { snoozed_until: until });
+    } else if (action === "dismiss" || action === "open") {
+      event.viewed_at = now; event.acknowledged_at = now; event.notification_status = action === "open" ? "viewed" : "dismissed";
+      if (action === "dismiss") event.dismissed_at = now;
+      task.reminder_acknowledged_at = now; task.snoozed_until = null; task.updated_at = now;
+      appendActivity(state, task, actor, action === "open" ? "Reminder popup viewed" : "Reminder dismissed", {});
+    } else throw httpError("Invalid reminder action.", 400);
+    savedEvent = event;
+    return state;
+  }, userId);
+  return savedEvent;
+}
+
 function assignmentNotice(task, actor, assignee) {
   const due = task.due_date ? ` - Due ${task.due_date.split("-").reverse().join("-")}` : "";
   return createNotificationEvent({ eventKey: `todo-assigned:${task.id}:${task.updated_at || task.created_at}:${assignee.id}`, eventType: "New Task Assigned", changeType: "New Task Assigned", fileId: task.id, sourceEventId: task.updated_at || task.created_at, fileName: task.title, changeText: `${actor.name} assigned you a task: ${task.title}${due}`, changedBy: actor.name, changedByRole: actor.role, recipient: { id: assignee.profileId, authUserId: assignee.id, email: assignee.email, name: assignee.name }, category: "todo", route: `/?page=todo&todo=${encodeURIComponent(task.id)}`, tone: "progress" });
@@ -280,6 +384,10 @@ function assignmentNotice(task, actor, assignee) {
 
 function completionNotice(task, actor, assignedBy) {
   return createNotificationEvent({ eventKey: `todo-completed:${task.id}:${task.completed_at}:${assignedBy.id}`, eventType: "Task Completed", changeType: "Task Completed", fileId: task.id, sourceEventId: task.completed_at, fileName: task.title, changeText: `${actor.name} completed: ${task.title}`, changedBy: actor.name, changedByRole: actor.role, recipient: { id: assignedBy.profileId, authUserId: assignedBy.id, email: assignedBy.email, name: assignedBy.name }, category: "todo", route: `/?page=todo&todo=${encodeURIComponent(task.id)}`, tone: "approval" });
+}
+
+function reminderNotice(task, assignee, event) {
+  return createNotificationEvent({ eventKey: `todo-reminder:${event.occurrence_key}:${assignee.id}`, eventType: "Task Due", changeType: "Task Due", fileId: task.id, sourceEventId: event.id, fileName: task.title, changeText: `${task.title} is due${task.due_date ? ` on ${task.due_date.split("-").reverse().join("-")}` : ""}.`, changedBy: "System", changedByRole: "System", recipient: { id: assignee.profileId, authUserId: assignee.id, email: assignee.email, name: assignee.name }, category: "todo", route: `/?page=todo&todo=${encodeURIComponent(task.id)}`, tone: "warning" });
 }
 
 async function resolveAssignee(requestedId, actor, profile) {
@@ -299,9 +407,14 @@ function cleanDate(value) { const text = String(value || "").trim(); if (!text) 
 function cleanTime(value) { const text = String(value || "").trim(); if (!text) return ""; if (!/^\d{2}:\d{2}$/.test(text)) throw httpError("Invalid due time.", 400); return text; }
 function cleanDateTime(value) { const text = String(value || "").trim(); if (!text) return ""; if (!Number.isFinite(Date.parse(text))) throw httpError("Invalid reminder date and time.", 400); return new Date(text).toISOString(); }
 function indiaDate(value = new Date()) { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value)); }
-function todoSort(a, b) { const done = Number(a.status === "Completed") - Number(b.status === "Completed"); if (done) return done; return String(a.due_date || "9999-12-31").localeCompare(String(b.due_date || "9999-12-31")) || Date.parse(b.updated_at || 0) - Date.parse(a.updated_at || 0); }
-function activityLabel(before, after) { if (before.status !== after.status) return after.status === "Completed" ? "Task completed" : `Status changed to ${after.status}`; if (before.assigned_to_id !== after.assigned_to_id) return "Task reassigned"; return "Task updated"; }
-function changedTodoFields(before, after) { return Object.fromEntries(["title", "description", "priority", "status", "due_date", "due_time", "reminder_at", "remarks", "waiting_remarks", "assigned_to_id", "assigned_to_name"].filter((key) => before[key] !== after[key]).map((key) => [key, { from: before[key] ?? "", to: after[key] ?? "" }])); }
+function todoSort(a, b) { return Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0) || Date.parse(b.updated_at || 0) - Date.parse(a.updated_at || 0) || String(b.id || "").localeCompare(String(a.id || "")); }
+function activityLabel(before, after) { if (before.status !== after.status) return after.status === "Completed" ? "Task completed" : `Status changed to ${after.status}`; if (before.assigned_to_id !== after.assigned_to_id) return "Task reassigned"; if (before.snoozed_until !== after.snoozed_until) return "Reminder snoozed"; return "Task updated"; }
+function changedTodoFields(before, after) { return Object.fromEntries(["title", "task_details_or_remarks", "description", "priority", "status", "due_date", "due_time", "reminder_at", "snoozed_until", "status_remarks", "assigned_to_id", "assigned_to_name"].filter((key) => before[key] !== after[key]).map((key) => [key, { from: before[key] ?? "", to: after[key] ?? "" }])); }
+function normalizeTodoStatus(value) { return value === "Waiting" ? "On Hold" : value; }
+function todoDueTimestamp(task) { if (!task.due_date) return ""; return new Date(`${task.due_date}T${task.due_time || "09:00"}:00+05:30`).toISOString(); }
+function validateTodoSchedule(task, official) { if (official && !task.due_date) throw httpError("Due date is required for assigned tasks.", 400); const due = task.due_date ? Date.parse(todoDueTimestamp(task)) : 0; const reminder = Date.parse(task.reminder_at || ""); if (due && reminder && reminder > due) throw httpError("Reminder date and time cannot be later than the task due date and time.", 400); }
+function legacyTodoDetails(task = {}) { return task.task_details_or_remarks || [task.description, task.remarks, task.waiting_remarks].filter(Boolean).join("\n") || ""; }
+function publicReminderTask(task) { return { ...task, task_details_or_remarks: legacyTodoDetails(task), status: normalizeTodoStatus(task.status) }; }
 function httpError(message, status) { const error = new Error(message); error.status = status; return error; }
 
-module.exports = { canAssignTodo, canViewTodo, createTodo, deleteTodo, listTodos, summarizeTodos, todoDashboard, todoHistory, todoMeta, todoPageData, updateTodo, visibleTodoTasks };
+module.exports = { canAssignTodo, canViewTodo, createTodo, deleteTodo, dueTodoReminders, listTodos, summarizeTodos, todoDashboard, todoHistory, todoMeta, todoPageData, updateTodo, updateTodoReminder, visibleTodoTasks };
