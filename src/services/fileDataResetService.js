@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { supabaseAdmin } = require("../config/supabase");
 const { getAppStateRecord, saveAppStateIfCurrent } = require("./appStateService");
 
 const RESET_CONFIRMATION = "DELETE ALL FILES";
@@ -28,6 +29,7 @@ async function resetAllFileData({ confirmation, userId, profile = {} }) {
 
   const record = await getAppStateRecord();
   const prepared = prepareFileDataReset(record.state, profile);
+  await archiveFileDataBackup(prepared.archive, record.updatedAt);
   const saved = await saveAppStateIfCurrent(prepared.state, userId, record.updatedAt);
   return {
     backup: prepared.backup,
@@ -103,16 +105,18 @@ function prepareFileDataReset(sourceState = {}, profile = {}) {
   state.bulkBillingReports = null;
   state.bulkFeeReceivedReports = null;
   resetSequenceFields(state);
-  state.fileDataBackups = [{
+  const archive = {
     id: archiveId,
     createdAt: now,
     createdBy: profile?.name || "Admin",
     backup,
-  }, ...(state.fileDataBackups || [])].slice(0, 2);
+  };
+  delete state.fileDataBackups;
 
   return {
     state,
     backup,
+    archive,
     summary: {
       filesRemoved: files.length,
       linkedCollectionsRemoved: linkedCollections.length,
@@ -120,6 +124,20 @@ function prepareFileDataReset(sourceState = {}, profile = {}) {
       usersRetained: (state.users || []).length,
     },
   };
+}
+
+async function archiveFileDataBackup(archive, sourceStateUpdatedAt = null) {
+  const payloadText = JSON.stringify(archive);
+  const { error } = await supabaseAdmin.from("app_state_archives").upsert({
+    id: archive.id,
+    archive_type: "file-data-reset",
+    payload: archive,
+    payload_md5: crypto.createHash("md5").update(payloadText).digest("hex"),
+    created_by: archive.createdBy || null,
+    created_at: archive.createdAt || new Date().toISOString(),
+    source_state_updated_at: sourceStateUpdatedAt,
+  }, { onConflict: "id" });
+  if (error) throw error;
 }
 
 function collectFileIds(state = {}) {
@@ -195,5 +213,6 @@ module.exports = {
   RESET_CONFIRMATION,
   resetAllFileData,
   prepareFileDataReset,
+  archiveFileDataBackup,
   isFileLinkedCollection,
 };

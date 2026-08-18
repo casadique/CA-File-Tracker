@@ -44,5 +44,6 @@ assert.deepStrictEqual(result.state.cashReconciliations, input.cashReconciliatio
 assert.strictEqual(result.backup.summary.files, 1);
 assert.strictEqual(result.backup.summary.linkedCollections, 1);
 assert.strictEqual(result.backup.summary.attachmentReferences, 1);
-assert.strictEqual(result.state.fileDataBackups[0].backup.backupId, result.backup.backupId);
+assert.strictEqual(result.archive.backup.backupId, result.backup.backupId);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(result.state, "fileDataBackups"), false);
 console.log("File-data reset tests passed.");

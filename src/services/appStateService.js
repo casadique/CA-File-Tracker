@@ -101,6 +101,77 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
   return { state: normalized, updatedAt: data.updated_at };
 }
 
+async function saveAppStateOperationsIfCurrent(previousState, nextState, updatedBy = null, expectedUpdatedAt = null) {
+  if (!expectedUpdatedAt) {
+    const error = new Error("Central data version is unavailable. Reload and try again.");
+    error.status = 409;
+    throw error;
+  }
+  const normalized = normalizeServerState(nextState || emptyState());
+  const operations = buildStateOperations(previousState || emptyState(), normalized);
+  if (!operations.length) return { state: normalized, updatedAt: expectedUpdatedAt };
+
+  // A bulk import may legitimately replace most of the document. In that case
+  // the regular compare-and-swap write is smaller than an operations envelope.
+  if (JSON.stringify(operations).length >= JSON.stringify(normalized).length * 0.8) {
+    return saveAppStateIfCurrent(normalized, updatedBy, expectedUpdatedAt);
+  }
+
+  const { data, error } = await supabaseAdmin.rpc("apply_app_state_operations", {
+    p_expected_updated_at: expectedUpdatedAt,
+    p_operations: operations,
+    p_updated_by: updatedBy,
+  });
+  if (error) {
+    // This fallback keeps rolling deploys safe if an application instance starts
+    // before PostgREST has refreshed the newly installed function schema.
+    if (["PGRST202", "42883"].includes(error.code)) {
+      return saveAppStateIfCurrent(normalized, updatedBy, expectedUpdatedAt);
+    }
+    throw error;
+  }
+  const updatedAt = Array.isArray(data) ? data[0]?.updated_at : data?.updated_at;
+  if (!updatedAt) {
+    invalidateAppStateCache();
+    const conflict = new Error("Central data changed while this save was being prepared. Reload and try again.");
+    conflict.status = 409;
+    throw conflict;
+  }
+  setAppStateCache({ state: normalized, updatedAt, updatedBy });
+  return { state: normalized, updatedAt };
+}
+
+function buildStateOperations(previousState = {}, nextState = {}) {
+  const operations = [];
+  const keys = new Set([...Object.keys(previousState || {}), ...Object.keys(nextState || {})]);
+  for (const key of keys) {
+    const previousValue = previousState?.[key];
+    const nextValue = nextState?.[key];
+    if (JSON.stringify(previousValue) === JSON.stringify(nextValue)) continue;
+    if (Array.isArray(previousValue) && Array.isArray(nextValue) && rowsHaveUniqueIds(previousValue) && rowsHaveUniqueIds(nextValue)) {
+      const previousById = new Map(previousValue.map((row) => [String(row.id), row]));
+      const nextById = new Map(nextValue.map((row) => [String(row.id), row]));
+      previousById.forEach((_row, id) => {
+        if (!nextById.has(id)) operations.push({ op: "remove", key, id });
+      });
+      nextValue.forEach((row, index) => {
+        const previous = previousById.get(String(row.id));
+        if (!previous || JSON.stringify(previous) !== JSON.stringify(row)) {
+          operations.push({ op: "upsert", key, value: row, position: index === 0 ? "prepend" : "append" });
+        }
+      });
+      continue;
+    }
+    operations.push({ op: "replace", key, value: nextValue === undefined ? null : nextValue });
+  }
+  return operations;
+}
+
+function rowsHaveUniqueIds(rows = []) {
+  const ids = rows.map((row) => row && typeof row === "object" && !Array.isArray(row) ? String(row.id || "") : "");
+  return ids.every(Boolean) && new Set(ids).size === ids.length;
+}
+
 function setAppStateCache(record) {
   appStateCache = {
     state: structuredClone(record.state || emptyState()),
@@ -171,7 +242,7 @@ async function patchAppStateAtomic(mutator, updatedBy = null, maxAttempts = 6) {
     const record = await getAppStateRecord();
     const next = await mutator(structuredClone(record.state), { attempt });
     try {
-      const saved = await saveAppStateIfCurrent(next || record.state, updatedBy, record.updatedAt);
+      const saved = await saveAppStateOperationsIfCurrent(record.state, next || record.state, updatedBy, record.updatedAt);
       perfLog("patchAppStateAtomic", startedAt, { attempts: attempt + 1 });
       return saved.state;
     } catch (error) {
@@ -667,6 +738,8 @@ module.exports = {
   getAppStateRecord,
   saveAppState,
   saveAppStateIfCurrent,
+  saveAppStateOperationsIfCurrent,
+  buildStateOperations,
   assertSafeStateReplacement,
   patchAppState,
   patchAppStateAtomic,

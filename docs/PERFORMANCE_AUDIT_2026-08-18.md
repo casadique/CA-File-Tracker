@@ -46,9 +46,8 @@ notifications (1.05 MB), receipts (461 KB), and audit history (445 KB).
 | Expense-save response | 76,410 bytes | 755 bytes | 99.0% smaller |
 | Collection-save response | 132,774 bytes | 3,627 bytes | 97.3% smaller |
 
-Cold reads remain about 1.25 seconds because the database still transfers a 7 MB
-document. The cache improves repeated actions but does not remove that structural
-limit.
+Cold reads remain constrained by a multi-megabyte document. The cache improves
+repeated actions but does not remove that longer-term structural limit.
 
 ## Data safety and verification
 
@@ -58,30 +57,51 @@ contains 1,009 files, 1,018 client rows, 26 users, 109 expenses, 288 transaction
 and the current audit/notification history. Ten optional relational tables were
 reported as unavailable because they do not exist in this Supabase schema; the
 client export fell back to the database client snapshot. For this reason the
-backup metadata correctly remains `complete: false`, and no database migration
-was attempted.
+baseline backup metadata correctly remains `complete: false`. The later archive
+migration was attempted only after the snapshot restored and reconciled in an
+isolated Supabase branch.
 
 The build and all performance, state-safety, finance, transaction, draft,
 notification, To-Do, and cache-policy regression tests passed. Two unrelated
 pre-existing correction workflow tests remain failing and are documented rather
 than changed as part of this performance phase.
 
-## Next staged phase
+## Longer-term normalization phase
 
-1. Create a separate Supabase staging project and restore the verified snapshot.
-2. Move reset backups to private object storage, then remove their embedded copies
-   only after restore verification.
-3. Normalize files, finance transactions, notifications, chat, and audit events
+1. Normalize files, finance transactions, notifications, chat, and audit events
    into paginated relational tables behind compatibility APIs.
-4. Add server-side pagination to remaining large file/notification/audit lists and
+2. Add server-side pagination to remaining large file/notification/audit lists and
    load them on demand.
-5. Split `app.js` and `styles.css` by feature, fingerprint immutable assets, and
+3. Split `app.js` and `styles.css` by feature, fingerprint immutable assets, and
    measure authenticated Web Vitals.
-6. Run concurrent save/idempotency/load tests in staging, reconcile counts and
-   totals, then deploy in independently reversible phases.
+
+## Stabilization phase completed
+
+A temporary Supabase preview branch (`perf-stabilization-20260818`) was created
+and loaded from the checksum-verified snapshot. Staging reconciled all tested
+collections and finance totals exactly: 1,009 files, 26 users, 109 expenses, 101
+collections, 800 notifications, and 784 audit events.
+
+Two embedded file-reset backups were copied byte-for-byte into a service-only
+`app_state_archives` table before being removed from the hot state document. The
+archive table has RLS enabled, no browser policies, verified payload checksums,
+and is included in future complete backups. The hot document was reduced from
+7,082,565 bytes to 4,801,437 bytes (32.2%). Future file resets write their safety
+copy directly to the protected archive instead of inflating the hot document.
+
+The staged granular compare-and-swap save path sends individual changed records
+instead of complete arrays. A representative file + notification + audit save
+used a 5 KB operation envelope and measured 599 ms p50 / 679 ms p95, compared
+with 2,059 ms p50 for the reduced full-state write. A two-writer concurrency test
+produced exactly one winner and one version conflict, with every reconciled count
+unchanged. Anonymous and authenticated database roles cannot execute the function;
+only the service role can.
 
 ## Rollback
 
-Phase 1 is code-only. Revert its commit and redeploy. It does not alter the
-database schema or delete production records. The timestamped baseline backup is
-retained locally for restore validation before any later data migration.
+Revert the performance commits and redeploy to restore the previous application
+path. The archive migration is reversible with
+`database/rollbacks/20260818_restore_embedded_file_backups.sql`; it reconstructs
+the embedded array from protected archive payloads and verifies the count before
+commit. The archive table is intentionally retained so rollback never deletes a
+recovery payload. The timestamped baseline backup is also retained locally.

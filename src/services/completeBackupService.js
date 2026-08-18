@@ -11,6 +11,7 @@ const PAGE_SIZE = 1000;
 // subscriptions are intentionally omitted because they contain private device
 // authentication material and must be registered again by each browser.
 const RELATIONAL_TABLES = [
+  "app_state_archives",
   "app_users",
   "audit_events",
   "clients",

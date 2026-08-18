@@ -4,8 +4,9 @@ const configPath = require.resolve("../src/config/supabase");
 const servicePath = require.resolve("../src/services/appStateService");
 
 let readCount = 0;
+let lastRpcArgs = null;
 let serverRecord = {
-  state: { files: [{ id: "file-1", name: "Original" }], fileNotifications: [] },
+  state: { files: [{ id: "file-1", name: "Original" }], fileNotifications: [], auditLog: [] },
   updated_at: "2026-08-18T00:00:00.000Z",
   updated_by: "user-1",
 };
@@ -38,11 +39,20 @@ require.cache[configPath] = {
   id: configPath,
   filename: configPath,
   loaded: true,
-  exports: { supabaseAdmin: { from: () => query() } },
+  exports: { supabaseAdmin: {
+    from: () => query(),
+    async rpc(name, args) {
+      assert.equal(name, "apply_app_state_operations");
+      lastRpcArgs = args;
+      const nextVersion = new Date(Date.parse(args.p_expected_updated_at) + 1).toISOString();
+      serverRecord.updated_at = nextVersion;
+      return { data: [{ updated_at: nextVersion }], error: null };
+    },
+  } },
 };
 delete require.cache[servicePath];
 
-const { getAppState, saveAppStateIfCurrent } = require(servicePath);
+const { getAppState, saveAppStateIfCurrent, saveAppStateOperationsIfCurrent, buildStateOperations } = require(servicePath);
 
 (async () => {
   const first = await getAppState();
@@ -61,7 +71,7 @@ const { getAppState, saveAppStateIfCurrent } = require(servicePath);
 
   serverRecord = {
     ...serverRecord,
-    state: { files: [{ id: "file-1", name: "Concurrent update" }], fileNotifications: [] },
+    state: { files: [{ id: "file-1", name: "Concurrent update" }], fileNotifications: [], auditLog: [] },
     updated_at: "2026-08-18T00:00:05.000Z",
   };
   await assert.rejects(
@@ -71,6 +81,20 @@ const { getAppState, saveAppStateIfCurrent } = require(servicePath);
   );
   assert.equal((await getAppState()).files[0].name, "Concurrent update", "A conflict must invalidate the cache and force a fresh read");
   assert.equal(readCount, 2);
+
+  const previous = await getAppState();
+  const next = structuredClone(previous);
+  next.files[0] = { ...next.files[0], name: "Granular save" };
+  next.auditLog = [{ id: "audit-1", action: "Changed" }];
+  const operations = buildStateOperations(previous, next);
+  assert.ok(operations.some((item) => item.op === "upsert" && item.key === "files" && item.value.id === "file-1"));
+  assert.ok(operations.some((item) => item.op === "upsert" && item.key === "auditLog" && item.value.id === "audit-1"));
+  assert.ok(!operations.some((item) => item.op === "replace" && item.key === "files"), "A single file edit must not replace the complete file array");
+
+  const granular = await saveAppStateOperationsIfCurrent(previous, next, "user-2", serverRecord.updated_at);
+  assert.equal(granular.state.files[0].name, "Granular save");
+  assert.ok(lastRpcArgs.p_operations.length < 5, "A small mutation should produce a small operation envelope");
+  assert.equal((await getAppState()).files[0].name, "Granular save", "Granular saves must refresh the isolated cache");
 
   console.log("State cache speed, isolation and conflict-invalidation checks passed.");
 })().catch((error) => {
