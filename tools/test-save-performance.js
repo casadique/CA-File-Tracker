@@ -49,6 +49,18 @@ const { saveAppStateIfCurrent } = require(servicePath);
   assert.doesNotMatch(routes, /const before = await getAppState\(\)/, "File mutations must not pre-download central state");
   assert.match(routes, /notificationsForFileSince\(/, "New-notification selection should use the mutation boundary");
 
+  const financeRoutes = fs.readFileSync(path.resolve(__dirname, "..", "src", "routes", "financeRoutes.js"), "utf8");
+  assert.match(financeRoutes, /res\.json\(\{ ok: true, expense \}\)/, "Expense saves should return only the changed record");
+  assert.match(financeRoutes, /deletedExpenseId/, "Expense deletes should return a compact deletion acknowledgement");
+  assert.match(financeRoutes, /collection: \(state\.otherCashCollections/, "Collection saves should return only the changed record");
+
+  const stateRoutes = fs.readFileSync(path.resolve(__dirname, "..", "src", "routes", "stateRoutes.js"), "utf8");
+  assert.match(stateRoutes, /delete visibleState\.fileDataBackups/, "Server-only embedded backups must not be sent to browsers");
+
+  const browserApp = fs.readFileSync(path.resolve(__dirname, "..", "app.js"), "utf8");
+  assert.match(browserApp, /Expense saved and synced"\);\s*renderExpensesPage\(\)/, "Expense saves should rerender only Transactions");
+  assert.match(browserApp, /Cash collection saved and synced"\);\s*renderExpensesPage\(\)/, "Collection saves should rerender only Transactions");
+
   console.log("Save performance regression checks passed.");
 })().catch((error) => {
   console.error(error);

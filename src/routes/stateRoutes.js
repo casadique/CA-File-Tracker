@@ -152,7 +152,10 @@ function stateForProfile(state, profile, userId) {
   const todoActorIds = new Set([userId, profile?.id].filter(Boolean).map(String));
   visibleState.todoReminderEvents = (state.todoReminderEvents || []).filter((row) => visibleTodoIds.has(row.task_id) && (profile?.role === "Admin" || todoActorIds.has(String(row.user_id || ""))));
   visibleState.fileNotifications = (state.fileNotifications || []).filter((notice) => notice.category !== "todo" || todoNotificationForUser(notice, profile, userId));
-  if (profile?.role !== "Admin") delete visibleState.fileDataBackups;
+  // Embedded reset backups are for server-side recovery only. The browser does
+  // not use them, and sending them added more than two megabytes to every Admin
+  // login/refresh response.
+  delete visibleState.fileDataBackups;
   return visibleState;
 }
 

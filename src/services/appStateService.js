@@ -12,38 +12,40 @@ const {
 } = require("./notificationRetentionService");
 
 const APP_STATE_ID = "default";
+const APP_STATE_CACHE_TTL_MS = Math.max(0, Number(process.env.APP_STATE_CACHE_TTL_MS || 1000));
 const STAFF_DATE_CORRECTION_VERSION = "staff-dob-doj-plus-one-day-2026-08-05";
 const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
 const DISPLAY_NAME_MIGRATIONS = new Map([
   ["Najmunnisa", "Najma"],
 ]);
 const PROTECTED_IDENTITY_KEYS = /(?:id|email|password|auth|token)$/i;
+let appStateCache = null;
 
 async function getAppState() {
   const startedAt = perfStart();
-  const { data, error } = await supabaseAdmin
-    .from("app_state")
-    .select("state, updated_at")
-    .eq("id", APP_STATE_ID)
-    .maybeSingle();
-  if (error) throw error;
-  const state = normalizeServerState(data?.state || emptyState());
+  const record = await getAppStateRecord();
+  const state = record.state;
   perfLog("getAppState", startedAt, { files: state.files?.length || 0 });
   return state;
 }
 
-async function getAppStateRecord() {
+async function getAppStateRecord(options = {}) {
+  if (!options.bypassCache && appStateCache && Date.now() - appStateCache.cachedAt <= APP_STATE_CACHE_TTL_MS) {
+    return cloneCachedRecord(appStateCache);
+  }
   const { data, error } = await supabaseAdmin
     .from("app_state")
     .select("state, updated_at, updated_by")
     .eq("id", APP_STATE_ID)
     .maybeSingle();
   if (error) throw error;
-  return {
+  const record = {
     state: normalizeServerState(data?.state || emptyState()),
     updatedAt: data?.updated_at || null,
     updatedBy: data?.updated_by || null,
   };
+  setAppStateCache(record);
+  return cloneCachedRecord(appStateCache);
 }
 
 async function saveAppState(state, updatedBy = null) {
@@ -57,11 +59,12 @@ async function saveAppState(state, updatedBy = null) {
       updated_by: updatedBy,
       updated_at: new Date().toISOString(),
     })
-    .select("state")
+    .select("updated_at, updated_by")
     .single();
   if (error) throw error;
+  setAppStateCache({ state: normalized, updatedAt: data.updated_at, updatedBy: data.updated_by || updatedBy });
   perfLog("saveAppState", startedAt, { files: normalized.files?.length || 0 });
-  return data.state;
+  return normalized;
 }
 
 async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt = null) {
@@ -89,11 +92,34 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     .maybeSingle();
   if (error) throw error;
   if (!data) {
+    invalidateAppStateCache();
     const conflict = new Error("Central data changed while this save was being prepared. Reload and try again.");
     conflict.status = 409;
     throw conflict;
   }
+  setAppStateCache({ state: normalized, updatedAt: data.updated_at, updatedBy });
   return { state: normalized, updatedAt: data.updated_at };
+}
+
+function setAppStateCache(record) {
+  appStateCache = {
+    state: structuredClone(record.state || emptyState()),
+    updatedAt: record.updatedAt || null,
+    updatedBy: record.updatedBy || null,
+    cachedAt: Date.now(),
+  };
+}
+
+function cloneCachedRecord(record) {
+  return {
+    state: structuredClone(record.state),
+    updatedAt: record.updatedAt,
+    updatedBy: record.updatedBy,
+  };
+}
+
+function invalidateAppStateCache() {
+  appStateCache = null;
 }
 
 function assertSafeStateReplacement(currentState = {}, incomingState = {}) {
@@ -150,6 +176,7 @@ async function patchAppStateAtomic(mutator, updatedBy = null, maxAttempts = 6) {
       return saved.state;
     } catch (error) {
       if (error.status !== 409 || attempt === maxAttempts - 1) throw error;
+      invalidateAppStateCache();
     }
   }
   const conflict = new Error("The central record changed repeatedly. Please retry.");
@@ -288,7 +315,12 @@ function emptyState() {
 }
 
 function normalizeServerState(state) {
-  const displayNormalizedState = normalizeServiceTypes(normalizeDisplayNames(state));
+  // Full historical label/display-name migrations run once during server
+  // startup. Repeating both recursive object walks for every request made a
+  // multi-megabyte state document substantially slower to read and save.
+  // Request-time normalization only needs to canonicalize the live service
+  // fields used by filters and forms.
+  const displayNormalizedState = normalizeServiceFields(state);
   const filesWithStatusTimestamps = (displayNormalizedState.files || []).map(ensureFileStatusTimestamp);
   return {
     ...displayNormalizedState,
@@ -314,6 +346,28 @@ function normalizeServerState(state) {
     careOfList: normalizeMasterList(displayNormalizedState.careOfList || []),
     staffMaster: normalizeMasterList(displayNormalizedState.staffMaster || []),
     modeList: normalizeMasterList(displayNormalizedState.modeList || []),
+  };
+}
+
+function normalizeServiceFields(state = {}) {
+  const files = (state.files || []).map((file) => {
+    const serviceType = canonicalServiceType(file.serviceType || file.service_type);
+    return {
+      ...file,
+      serviceType,
+      ...(Object.prototype.hasOwnProperty.call(file, "service_type") ? { service_type: serviceType } : {}),
+    };
+  });
+  const services = [
+    ...ACTIVE_SERVICE_TYPES,
+    ...(state.services || []).map(canonicalServiceType),
+    ...files.map((file) => file.serviceType),
+  ].filter((serviceType) => serviceType && !isRetiredServiceType(serviceType));
+  return {
+    ...state,
+    files,
+    services: [...new Map(services.map((serviceType) => [serviceType.toLowerCase(), serviceType])).values()]
+      .sort((left, right) => left.localeCompare(right)),
   };
 }
 

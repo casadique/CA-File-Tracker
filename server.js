@@ -11,6 +11,7 @@ const rateLimit = require("express-rate-limit");
 const { env } = require("./src/config/env");
 const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
+const { requestPerformance } = require("./src/middleware/requestPerformance");
 const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates } = require("./src/services/appStateService");
 const { dispatchDueReminders } = require("./src/services/pushNotificationService");
 const { migrateTodoAssignmentPermissions } = require("./src/services/userService");
@@ -55,7 +56,7 @@ app.get("/vendor/:asset", (req, res, next) => {
 });
 
 app.use("/api/auth/login", loginRateLimiter);
-app.use("/api", apiRateLimiter, apiRoutes);
+app.use("/api", requestPerformance, apiRateLimiter, apiRoutes);
 app.use(["/src", "/database", "/tools", "/Backups", "/data"], (_req, res) => {
   res.status(404).send("Not found");
 });

@@ -1639,6 +1639,12 @@ async function saveExpenseToApi(expense) {
     body: JSON.stringify({ expense }),
   });
   if (result?.expenses) state.expenses = result.expenses;
+  else if (result?.expense) {
+    const exists = (state.expenses || []).some((item) => item.id === result.expense.id);
+    state.expenses = exists
+      ? state.expenses.map((item) => item.id === result.expense.id ? result.expense : item)
+      : [result.expense, ...(state.expenses || [])];
+  }
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -1646,6 +1652,7 @@ async function saveExpenseToApi(expense) {
 async function deleteExpenseFromApi(id) {
   const result = await apiJson(`/api/finance/expenses/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (result?.expenses) state.expenses = result.expenses;
+  else if (result?.deletedExpenseId) state.expenses = (state.expenses || []).filter((item) => item.id !== result.deletedExpenseId);
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -1676,6 +1683,12 @@ async function saveCashCollectionToApi(collection) {
     body: JSON.stringify({ collection }),
   });
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  else if (result?.collection) {
+    const exists = (state.otherCashCollections || []).some((item) => item.id === result.collection.id);
+    state.otherCashCollections = exists
+      ? state.otherCashCollections.map((item) => item.id === result.collection.id ? result.collection : item)
+      : [result.collection, ...(state.otherCashCollections || [])];
+  }
   if (result?.otherCashCollectionSources) state.otherCashCollectionSources = result.otherCashCollectionSources;
   saveState({ skipMerge: true, skipRemote: true });
   return result;
@@ -19936,7 +19949,8 @@ async function saveExpenseEntry(event) {
       state.filters.expenseItemSelection = "";
       invalidateTransactionLedger("expenses");
       toast(existing ? "Expense updated and synced" : "Expense saved and synced");
-      renderAll();
+      renderExpensesPage();
+      enforceDateYearCap();
       return;
     } catch (error) {
       console.error("Expense save failed", { id: record.id, message: error.message });
@@ -20210,7 +20224,8 @@ async function saveCashCollectionEntry(event) {
       state.filters.editCashId = "";
       invalidateTransactionLedger("collections");
       toast(existing ? "Cash collection updated and synced" : selectedFileId ? "Collection and fee receipt saved together" : "Cash collection saved and synced");
-      renderAll();
+      renderExpensesPage();
+      enforceDateYearCap();
       return;
     } catch (error) {
       console.error("Collection save failed", { id: record.id, message: error.message });

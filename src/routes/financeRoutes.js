@@ -102,8 +102,10 @@ router.post("/reconciliations/:id/reject", requireAuth, requireRole("Admin"), as
 
 router.post("/expenses", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
-    const state = await saveExpense(req.body.expense || req.body, req.user.id, req.profile);
-    res.json({ ok: true, expenses: state.expenses || [] });
+    const incoming = req.body.expense || req.body;
+    const state = await saveExpense(incoming, req.user.id, req.profile);
+    const expense = (state.expenses || []).find((row) => row.id === incoming.id) || null;
+    res.json({ ok: true, expense });
   } catch (error) {
     next(error);
   }
@@ -125,8 +127,8 @@ router.delete("/expense-items", requireAuth, requireRole(...financeRoles), async
 
 router.delete("/expenses/:id", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
-    const state = await deleteExpense(req.params.id, req.user.id, req.profile);
-    res.json({ ok: true, expenses: state.expenses || [] });
+    await deleteExpense(req.params.id, req.user.id, req.profile);
+    res.json({ ok: true, deletedExpenseId: req.params.id });
   } catch (error) {
     next(error);
   }
@@ -134,10 +136,11 @@ router.delete("/expenses/:id", requireAuth, requireRole(...financeRoles), async 
 
 router.post("/collections", requireAuth, requireRole(...financeRoles), async (req, res, next) => {
   try {
-    const state = await saveCollection(req.body.collection || req.body, req.user.id, req.profile);
+    const incoming = req.body.collection || req.body;
+    const state = await saveCollection(incoming, req.user.id, req.profile);
     res.json({
       ok: true,
-      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+      collection: (state.otherCashCollections || []).find((item) => item.id === incoming.id) || null,
       otherCashCollectionSources: state.otherCashCollectionSources || [],
     });
   } catch (error) {
