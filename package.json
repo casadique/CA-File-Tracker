@@ -46,6 +46,7 @@
     "test:state-cache": "node tools/test-state-cache-performance.js",
     "test:todo-permissions": "node tools/test-todo-permissions.js",
     "test:todo-redesign": "node tools/test-todo-redesign.js",
+    "test:todo-stability": "node tools/test-todo-stability.js",
     "test:service-types": "node tools/test-service-type-updates.js",
     "test:fee-pending-pdf": "node tools/test-fee-pending-pdf.js",
     "test:filters": "node tools/test-financial-file-filters.js",

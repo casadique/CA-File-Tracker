@@ -2,21 +2,30 @@ const todoUi = {
   meta: null, tasks: [], dashboard: { summary: {}, staff: [] }, scope: "all", view: "list", request: 0, routeConsumed: false,
   search: "", dueDate: "", status: "", priority: "", assignedTo: "", sort: "created_at", direction: "desc",
   page: 1, pageSize: 20, modal: null, dirty: false, returnFocus: null, focusTask: "",
+  loaded: false, lastLoadedAt: 0, queryKey: "", dataSignature: "", metaPromise: null, refreshPromise: null, refreshKey: "",
 };
 const todoReminderUi = { tabId: `${Date.now()}-${Math.random()}`, queue: [], index: 0, channel: null, audio: null, unlocked: false, polling: false };
+const TODO_BACKGROUND_REFRESH_MS = 20000;
 
 async function renderTodoPage() {
   const target = document.querySelector("#todo");
   if (!target) return;
   if (!isSupabaseMode()) return void (target.innerHTML = `<div class="permission-note">The secure To-Do module requires the central Supabase login.</div>`);
   if (!todoUi.meta) {
-    target.innerHTML = todoLoading();
-    try { todoUi.meta = await apiJson("/api/todos/meta"); }
+    if (!target.querySelector(".todo-loading")) target.innerHTML = todoLoading();
+    todoUi.metaPromise ||= apiJson("/api/todos/meta");
+    try { todoUi.meta = await todoUi.metaPromise; }
     catch (error) { target.innerHTML = `<div class="permission-note">${escapeHtml(error.message || "Unable to load To-Do permissions.")}</div>`; return; }
+    finally { todoUi.metaPromise = null; }
     todoUi.scope = todoUi.meta.isAdmin ? "mine" : "all";
   }
   if (!todoUi.routeConsumed) { todoUi.focusTask = new URLSearchParams(location.search).get("todo") || todoUi.focusTask; todoUi.routeConsumed = true; }
-  await todoRefresh();
+  if (todoUi.loaded) {
+    if (!target.querySelector(".todo-workspace")) todoPaint();
+    void todoRefresh({ background: true, maxAgeMs: TODO_BACKGROUND_REFRESH_MS });
+    return;
+  }
+  await todoRefresh({ showLoading: true });
 }
 
 function todoScopes() {
@@ -25,19 +34,49 @@ function todoScopes() {
   return [["all", "All My Tasks"], ["personal", "Personal"], ["assigned-to-me", "Assigned to Me"], ["completed", "Completed"]];
 }
 
-async function todoRefresh() {
+async function todoRefresh(options = {}) {
   const target = document.querySelector("#todo");
   if (!target) return;
+  const query = todoQuery();
+  const queryKey = query || "__default__";
+  if (options.maxAgeMs && todoUi.loaded && todoUi.queryKey === queryKey && Date.now() - todoUi.lastLoadedAt < options.maxAgeMs) return false;
+  if (todoUi.refreshPromise && todoUi.refreshKey === queryKey) return todoUi.refreshPromise;
   const request = ++todoUi.request;
-  target.innerHTML = todoLoading();
-  try {
-    const result = await apiJson(`/api/todos?${todoQuery()}`);
-    if (request !== todoUi.request || activePage !== "todo") return;
-    todoUi.tasks = result.tasks || [];
-    todoUi.dashboard = result.dashboard || { summary: {}, staff: [] };
-    todoPaint();
-    if (todoUi.focusTask) { const task = todoUi.tasks.find((row) => row.id === todoUi.focusTask); todoUi.focusTask = ""; if (task) openTodoDetails(task); }
-  } catch (error) { target.innerHTML = `<div class="permission-note">${escapeHtml(error.message || "Unable to load To-Do tasks.")}</div>`; }
+  const hasStableContent = todoUi.loaded && Boolean(target.querySelector(".todo-workspace"));
+  if (!hasStableContent && options.showLoading !== false) target.innerHTML = todoLoading();
+  if (hasStableContent) target.querySelector(".todo-workspace")?.setAttribute("aria-busy", "true");
+  const refresh = (async () => {
+    try {
+      const result = await apiJson(`/api/todos?${query}`);
+      if (request !== todoUi.request) return false;
+      const tasks = result.tasks || [];
+      const dashboard = result.dashboard || { summary: {}, staff: [] };
+      const signature = JSON.stringify([tasks, dashboard]);
+      const changed = !todoUi.loaded || todoUi.queryKey !== queryKey || todoUi.dataSignature !== signature;
+      todoUi.tasks = tasks;
+      todoUi.dashboard = dashboard;
+      todoUi.loaded = true;
+      todoUi.lastLoadedAt = Date.now();
+      todoUi.queryKey = queryKey;
+      todoUi.dataSignature = signature;
+      if (activePage === "todo" && (changed || !target.querySelector(".todo-workspace"))) todoPaint();
+      if (activePage === "todo" && todoUi.focusTask) { const task = todoUi.tasks.find((row) => row.id === todoUi.focusTask); todoUi.focusTask = ""; if (task) openTodoDetails(task); }
+      return changed;
+    } catch (error) {
+      if (request !== todoUi.request) return false;
+      if (!todoUi.loaded) target.innerHTML = `<div class="permission-note">${escapeHtml(error.message || "Unable to load To-Do tasks.")}</div>`;
+      else if (!options.background) toast(error.message || "Unable to refresh To-Do tasks.");
+      return false;
+    } finally {
+      if (request === todoUi.request) target.querySelector(".todo-workspace")?.removeAttribute("aria-busy");
+    }
+  })();
+  todoUi.refreshPromise = refresh;
+  todoUi.refreshKey = queryKey;
+  try { return await refresh; }
+  finally {
+    if (todoUi.refreshPromise === refresh) { todoUi.refreshPromise = null; todoUi.refreshKey = ""; }
+  }
 }
 
 function todoQuery(overrides = {}) {
