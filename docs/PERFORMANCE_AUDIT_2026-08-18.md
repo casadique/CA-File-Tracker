@@ -97,6 +97,12 @@ produced exactly one winner and one version conflict, with every reconciled coun
 unchanged. Anonymous and authenticated database roles cannot execute the function;
 only the service role can.
 
+Live logs exposed a 1.18-second reminder read after the short cache expired. The
+final cache path now checks only `updated_at` first and reuses the isolated cached
+document when that version is unchanged. Direct production version checks measured
+189 ms p50, avoiding a repeated 4.80 MB download while still forcing a full refresh
+whenever another writer changes the central version.
+
 ## Rollback
 
 Revert the performance commits and redeploy to restore the previous application

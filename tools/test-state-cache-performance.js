@@ -2,8 +2,10 @@ const assert = require("node:assert/strict");
 
 const configPath = require.resolve("../src/config/supabase");
 const servicePath = require.resolve("../src/services/appStateService");
+process.env.APP_STATE_CACHE_TTL_MS = "5";
 
 let readCount = 0;
+let versionReadCount = 0;
 let lastRpcArgs = null;
 let serverRecord = {
   state: { files: [{ id: "file-1", name: "Original" }], fileNotifications: [], auditLog: [] },
@@ -13,15 +15,17 @@ let serverRecord = {
 
 function query() {
   let operation = "read";
+  let selectedColumns = "";
   let updatePayload = null;
   let expectedVersion = null;
   return {
-    select() { return this; },
+    select(columns) { selectedColumns = columns; return this; },
     update(payload) { operation = "update"; updatePayload = payload; return this; },
     eq(column, value) { if (column === "updated_at") expectedVersion = value; return this; },
     async maybeSingle() {
       if (operation === "read") {
-        readCount += 1;
+        if (selectedColumns.includes("state")) readCount += 1;
+        else versionReadCount += 1;
         return { data: structuredClone(serverRecord), error: null };
       }
       if (expectedVersion !== serverRecord.updated_at) return { data: null, error: null };
@@ -60,6 +64,11 @@ const { getAppState, saveAppStateIfCurrent, saveAppStateOperationsIfCurrent, bui
   const second = await getAppState();
   assert.equal(readCount, 1, "Repeated reads inside the cache window should use one database request");
   assert.equal(second.files[0].name, "Original", "Cached state must be returned as an isolated clone");
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal((await getAppState()).files[0].name, "Original");
+  assert.equal(versionReadCount, 1, "An expired cache should check only the lightweight database version");
+  assert.equal(readCount, 1, "An unchanged version must not redownload the state document");
 
   const saved = await saveAppStateIfCurrent(
     { files: [{ id: "file-1", name: "Saved" }], fileNotifications: [] },

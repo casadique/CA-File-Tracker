@@ -12,7 +12,7 @@ const {
 } = require("./notificationRetentionService");
 
 const APP_STATE_ID = "default";
-const APP_STATE_CACHE_TTL_MS = Math.max(0, Number(process.env.APP_STATE_CACHE_TTL_MS || 1000));
+const APP_STATE_CACHE_TTL_MS = Math.max(0, Number(process.env.APP_STATE_CACHE_TTL_MS || 5000));
 const STAFF_DATE_CORRECTION_VERSION = "staff-dob-doj-plus-one-day-2026-08-05";
 const PERF_LOG_ENABLED = process.env.PERF_LOG === "1";
 const DISPLAY_NAME_MIGRATIONS = new Map([
@@ -33,6 +33,14 @@ async function getAppStateRecord(options = {}) {
   if (!options.bypassCache && appStateCache && Date.now() - appStateCache.cachedAt <= APP_STATE_CACHE_TTL_MS) {
     return cloneCachedRecord(appStateCache);
   }
+  if (!options.bypassCache && appStateCache) {
+    const version = await getAppStateVersion();
+    if (version.updatedAt === appStateCache.updatedAt) {
+      appStateCache.cachedAt = Date.now();
+      appStateCache.updatedBy = version.updatedBy;
+      return cloneCachedRecord(appStateCache);
+    }
+  }
   const { data, error } = await supabaseAdmin
     .from("app_state")
     .select("state, updated_at, updated_by")
@@ -46,6 +54,16 @@ async function getAppStateRecord(options = {}) {
   };
   setAppStateCache(record);
   return cloneCachedRecord(appStateCache);
+}
+
+async function getAppStateVersion() {
+  const { data, error } = await supabaseAdmin
+    .from("app_state")
+    .select("updated_at, updated_by")
+    .eq("id", APP_STATE_ID)
+    .maybeSingle();
+  if (error) throw error;
+  return { updatedAt: data?.updated_at || null, updatedBy: data?.updated_by || null };
 }
 
 async function saveAppState(state, updatedBy = null) {
