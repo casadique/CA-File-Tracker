@@ -33,7 +33,7 @@ router.post("/site-data", requireAuth, requireRole("Admin"), async (req, res, ne
 
 router.post("/backup", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const payload = await createCompleteBackup(req.profile.name);
+    const payload = await createCompleteBackup(req.profile.name, { mode: req.body.mode });
     let archive = null;
     let archiveWarning = "";
     try {
@@ -59,7 +59,7 @@ router.post("/backup", requireAuth, requireRole("Admin", "Manager"), async (req,
 
 router.post("/backup/download", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const payload = await createCompleteBackup(req.profile.name);
+    const payload = await createCompleteBackup(req.profile.name, { mode: req.body.mode });
     let archiveWarning = "";
     try {
       await archiveCompleteBackup(payload, req.body.reason || "manual");

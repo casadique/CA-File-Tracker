@@ -8,6 +8,7 @@ const { restoreClients } = require("../services/clientService");
 const { visibleTodoTasks } = require("../services/todoService");
 const { mergeStaffDetailsImport } = require("../services/staffDetailsService");
 const { createCompleteBackup } = require("../services/completeBackupService");
+const { restoreCompleteBackup, mergeState } = require("../services/completeRestoreService");
 
 const router = express.Router();
 
@@ -82,7 +83,7 @@ router.post("/staff-details/import", requireAuth, requireRole("Admin"), async (r
 
 router.get("/backup", requireAuth, requireRole("Admin", "Manager"), async (req, res, next) => {
   try {
-    const payload = await createCompleteBackup(req.profile.name);
+    const payload = await createCompleteBackup(req.profile.name, { mode: req.query.mode });
     res.json(payload);
   } catch (error) {
     next(error);
@@ -115,8 +116,15 @@ router.get("/diagnostics", requireAuth, requireRole("Admin", "Manager"), async (
 
 router.post("/restore", requireAuth, requireRole("Admin"), async (req, res, next) => {
   try {
+    if (req.body.backup?.version === "ca-file-tracker-complete-v3") {
+      const result = await restoreCompleteBackup(req.body.backup, req.user.id);
+      return res.json({ ok: true, ...result });
+    }
     const incoming = req.body.state || req.body;
-    const state = await saveAppState(incoming, req.user.id);
+    const current = await getAppStateRecord({ bypassCache: true });
+    const merged = mergeState(current.state, incoming);
+    const saved = await saveAppStateIfCurrent(merged, req.user.id, current.updatedAt);
+    const state = saved.state;
     const clientMaster = req.body.clientMaster || req.body.client_master || [];
     const clients = await restoreClients(clientMaster, req.user.id);
     res.json({ ok: true, state, clients });

@@ -15,7 +15,7 @@ function identity(prefix, profile) {
   return { [prefix]: profile.auth_user_id, [`${prefix}_id`]: profile.auth_user_id, [`${prefix}_profile_id`]: profile.id, [`${prefix}_email`]: profile.email, [`${prefix}_name`]: profile.name };
 }
 function task(id, creator, assignee, title, status = "Pending") {
-  return { id, title, status, priority: "Medium", due_date: "2026-08-20", created_at: "2026-08-18T00:00:00Z", updated_at: "2026-08-18T00:00:00Z", ...identity("created_by", creator), ...identity("assigned_by", creator), ...identity("assigned_to", assignee) };
+  return { id, title, status, priority: "Medium", due_date: "2099-08-20", created_at: "2026-08-18T00:00:00Z", updated_at: "2026-08-18T00:00:00Z", ...identity("created_by", creator), ...identity("assigned_by", creator), ...identity("assigned_to", assignee) };
 }
 
 let centralState = {

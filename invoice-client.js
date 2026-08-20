@@ -118,7 +118,8 @@
   }
 
   function field(label, name, inputValue = "", type = "text", attributes = "") {
-    return `<label class="invoice-field"><span>${e(label)}</span><input type="${e(type)}" name="${e(name)}" value="${e(inputValue)}" ${attributes}></label>`;
+    const monetary = type === "number" && !["numberPadding", "paymentTermsDays"].includes(name);
+    return `<label class="invoice-field"><span>${e(label)}</span><input type="${monetary ? "text" : e(type)}" ${monetary ? 'inputmode="decimal" data-decimal-input' : ""} name="${e(name)}" value="${e(inputValue)}" ${attributes}></label>`;
   }
 
   function selectField(label, name, inputValue, options) {

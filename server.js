@@ -12,7 +12,7 @@ const { env } = require("./src/config/env");
 const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
 const { requestPerformance } = require("./src/middleware/requestPerformance");
-const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates } = require("./src/services/appStateService");
+const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates, migrateAssignmentStatuses } = require("./src/services/appStateService");
 const { dispatchDueReminders } = require("./src/services/pushNotificationService");
 const { migrateTodoAssignmentPermissions } = require("./src/services/userService");
 
@@ -41,8 +41,8 @@ const loginRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use(express.json({ limit: "30mb" }));
-app.use(express.urlencoded({ extended: true, limit: "30mb" }));
+app.use(express.json({ limit: "150mb" }));
+app.use(express.urlencoded({ extended: true, limit: "150mb" }));
 
 const vendorAssets = {
   "chart.umd.min.js": path.join(__dirname, "node_modules", "chart.js", "dist", "chart.umd.min.js"),
@@ -96,6 +96,8 @@ async function startServer() {
     if (migration.changed) console.log("Staff display-name migration applied.");
     const serviceMigration = await migrateServiceTypes();
     if (serviceMigration.changed) console.log("Service-type migration applied.");
+    const assignmentMigration = await migrateAssignmentStatuses();
+    if (assignmentMigration.changed) console.log(`Assignment status migration applied to ${assignmentMigration.recordsUpdated} file(s).`);
     const staffDateMigration = await migrateStaffDates();
     if (staffDateMigration.changed) console.log(`Staff date correction applied to ${staffDateMigration.recordsUpdated} record(s).`);
     const notificationMigration = await migrateNotificationRetention();

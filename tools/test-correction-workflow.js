@@ -33,6 +33,7 @@ const manager = { id: "manager-1", name: "Manager", email: "manager@example.com"
 const staff = { id: "staff-1", name: "Test Staff", email: "staff@example.com", role: "Staff" };
 
 async function main() {
+  const futureCorrectionDate = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
   await assert.rejects(
     () => service.upsertFile({
       ...centralState.files[0],
@@ -48,11 +49,11 @@ async function main() {
   );
   await service.returnFileForCorrection("file-1", {
     correctionReason: "Correct the computation",
-    expectedCorrectionDate: "2026-08-08",
+    expectedCorrectionDate: futureCorrectionDate,
   }, manager.id, manager);
   let returned = centralState.files[0];
-  assert.equal(returned.expectedCorrectionDate, "2026-08-08");
-  assert.equal(returned.correctionHistory[0].expectedCorrectionDate, "2026-08-08");
+  assert.equal(returned.expectedCorrectionDate, futureCorrectionDate);
+  assert.equal(returned.correctionHistory[0].expectedCorrectionDate, futureCorrectionDate);
 
   await assert.rejects(
     () => service.upsertFile({ ...returned, filed: true, stages: { ...returned.stages, Completed: true, "Correction Required": false, "Corrected & Completed": false } }, staff.id, staff),

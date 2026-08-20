@@ -4,7 +4,7 @@ const { env } = require("../config/env");
 const { getAppState } = require("./appStateService");
 const { backupClientsSecure } = require("./clientService");
 
-const BACKUP_VERSION = "ca-file-tracker-complete-v2";
+const BACKUP_VERSION = "ca-file-tracker-complete-v3";
 const PAGE_SIZE = 1000;
 
 // Only durable business and audit tables belong in a portable backup. Push
@@ -115,11 +115,55 @@ function checksumFor(payload) {
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+const TRANSACTION_STATE_KEYS = ["expenses", "otherCashCollections", "feeReceipts", "openingBalances", "accountTransfers", "cashReconciliations", "expenseItems", "transactionCategories", "receiptSequences", "receiptEvents"];
+
+function stateForMode(state, mode) {
+  if (mode !== "transactions") return state;
+  return Object.fromEntries(TRANSACTION_STATE_KEYS.filter((key) => Object.hasOwn(state, key)).map((key) => [key, state[key]]));
+}
+
+function collectionManifest(state = {}) {
+  return Object.fromEntries(Object.entries(state).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [key, {
+    type: Array.isArray(value) ? "collection" : typeof value,
+    count: Array.isArray(value) ? value.length : (value && typeof value === "object" ? Object.keys(value).length : (value == null ? 0 : 1)),
+  }]));
+}
+
+async function listStorageFiles(prefix = "") {
+  const files = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabaseAdmin.storage.from(env.storageBucket).list(prefix, { limit: PAGE_SIZE, offset, sortBy: { column: "name", order: "asc" } });
+    if (error) throw error;
+    const entries = data || [];
+    for (const entry of entries) {
+      const objectPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (objectPath === "system-backups" || objectPath.startsWith("system-backups/")) continue;
+      if (entry.id) files.push({ path: objectPath, size: Number(entry.metadata?.size || 0), mimeType: entry.metadata?.mimetype || entry.metadata?.contentType || "application/octet-stream" });
+      else files.push(...await listStorageFiles(objectPath));
+    }
+    if (entries.length < PAGE_SIZE) break;
+  }
+  return files;
+}
+
+async function storageSnapshot() {
+  const files = await listStorageFiles();
+  const snapshot = [];
+  for (const file of files) {
+    const { data, error } = await supabaseAdmin.storage.from(env.storageBucket).download(file.path);
+    if (error) throw error;
+    const buffer = Buffer.from(await data.arrayBuffer());
+    snapshot.push({ ...file, size: buffer.length, sha256: crypto.createHash("sha256").update(buffer).digest("hex"), contentBase64: buffer.toString("base64") });
+  }
+  return snapshot;
+}
+
 async function createCompleteBackup(exportedBy = "", options = {}) {
   const exportedAt = new Date().toISOString();
-  const state = redactSecrets(options.state || await getAppState());
+  const mode = options.mode === "transactions" ? "transactions" : "full";
+  const state = stateForMode(redactSecrets(options.state || await getAppState()), mode);
   let clientMaster = options.clientMaster || [];
-  const relationalData = {};
+  const relationalData = options.relationalData ? structuredClone(options.relationalData) : {};
   const warnings = [];
   const unavailableTables = [];
 
@@ -147,22 +191,35 @@ async function createCompleteBackup(exportedBy = "", options = {}) {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(4, RELATIONAL_TABLES.length) }, readTable));
+  if (!options.relationalData) await Promise.all(Array.from({ length: Math.min(4, RELATIONAL_TABLES.length) }, readTable));
+  else RELATIONAL_TABLES.forEach((table) => { if (!Array.isArray(relationalData[table])) relationalData[table] = []; });
   if (!clientMaster.length && relationalData.clients?.length) {
     clientMaster = relationalData.clients;
     warnings.push("clientMaster: used the database client snapshot after the secure client export was unavailable.");
   }
 
-  let authenticationUsers = [];
-  try {
-    authenticationUsers = await authUserManifest();
-  } catch (error) {
-    warnings.push(`authenticationUsers: ${error.message || "authentication users could not be read"}`);
+  let authenticationUsers = options.authenticationUsers || [];
+  if (!options.authenticationUsers) {
+    try { authenticationUsers = await authUserManifest(); }
+    catch (error) { warnings.push(`authenticationUsers: ${error.message || "authentication users could not be read"}`); }
   }
+
+  let storageFiles = options.storageFiles || [];
+  if (mode === "full" && !options.storageFiles) {
+    try { storageFiles = await storageSnapshot(); }
+    catch (error) { warnings.push(`storageFiles: ${error.message || "uploaded documents could not be read"}`); }
+  }
+
+  const tableManifest = Object.fromEntries(RELATIONAL_TABLES.map((table) => [table, {
+    count: relationalData[table]?.length || 0,
+    status: unavailableTables.includes(table) ? "unavailable" : "included",
+  }]));
+  tableManifest.app_state = { count: 1, status: "included-as-state-document" };
 
   const core = {
     app: "CA File Tracker",
     version: BACKUP_VERSION,
+    mode,
     exportedAt,
     exportedBy,
     complete: warnings.length === 0,
@@ -175,12 +232,27 @@ async function createCompleteBackup(exportedBy = "", options = {}) {
       note: "Users and roles are included. Passwords, sessions and private device keys are never exported.",
     },
     includedKeys: Object.keys(state).sort(),
+    manifest: {
+      applicationVersion: require("../../package.json").version,
+      schemaVersion: BACKUP_VERSION,
+      exportedAt,
+      exportedBy,
+      mode,
+      stateCollections: collectionManifest(state),
+      databaseTables: tableManifest,
+      storage: { bucket: env.storageBucket, fileCount: storageFiles.length, totalBytes: storageFiles.reduce((sum, file) => sum + file.size, 0) },
+      excluded: { push_subscriptions: "Private per-device authentication keys must be re-registered." },
+    },
     state,
     clientMaster,
     relationalData,
     authenticationUsers,
+    storageFiles,
   };
   core.backupSummary = stateSummary(state, clientMaster, relationalData, authenticationUsers);
+  core.backupSummary.attachments = storageFiles.length;
+  core.backupSummary.totalRecords = Object.values(core.manifest.stateCollections).reduce((sum, item) => sum + item.count, 0)
+    + Object.values(tableManifest).reduce((sum, item) => sum + item.count, 0);
   core.integrity = { algorithm: "sha256", checksum: checksumFor(core) };
   return core;
 }
@@ -205,4 +277,7 @@ module.exports = {
   checksumFor,
   createCompleteBackup,
   archiveCompleteBackup,
+  collectionManifest,
+  stateForMode,
+  listStorageFiles,
 };

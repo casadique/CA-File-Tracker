@@ -10,6 +10,7 @@ const {
   applyInitialNotificationCleanup,
   applyVerifiedDuplicateCleanup,
 } = require("./notificationRetentionService");
+const { normalizeFileAssignment } = require("../constants/assignmentStatus");
 
 const APP_STATE_ID = "default";
 const APP_STATE_CACHE_TTL_MS = Math.max(0, Number(process.env.APP_STATE_CACHE_TTL_MS || 5000));
@@ -410,7 +411,9 @@ function normalizeServerState(state) {
   // Request-time normalization only needs to canonicalize the live service
   // fields used by filters and forms.
   const displayNormalizedState = normalizeServiceFields(state);
-  const filesWithStatusTimestamps = (displayNormalizedState.files || []).map(ensureFileStatusTimestamp);
+  const filesWithStatusTimestamps = (displayNormalizedState.files || [])
+    .map(normalizeFileAssignment)
+    .map(ensureFileStatusTimestamp);
   return {
     ...displayNormalizedState,
     files: sortFilesNewestFirst(filesWithStatusTimestamps),
@@ -564,6 +567,31 @@ async function migrateServiceTypes() {
     .eq("id", APP_STATE_ID);
   if (updateError) throw updateError;
   return { changed: true };
+}
+
+async function migrateAssignmentStatuses() {
+  const { data, error } = await supabaseAdmin
+    .from("app_state")
+    .select("state")
+    .eq("id", APP_STATE_ID)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.state) return { changed: false, recordsUpdated: 0 };
+  let recordsUpdated = 0;
+  const files = (data.state.files || []).map((file) => {
+    const normalized = normalizeFileAssignment(file);
+    if (JSON.stringify(normalized) !== JSON.stringify(file)) recordsUpdated += 1;
+    return normalized;
+  });
+  if (!recordsUpdated) return { changed: false, recordsUpdated: 0 };
+  const nextState = { ...data.state, files };
+  const { error: updateError } = await supabaseAdmin
+    .from("app_state")
+    .update({ state: nextState, updated_at: new Date().toISOString() })
+    .eq("id", APP_STATE_ID);
+  if (updateError) throw updateError;
+  invalidateAppStateCache();
+  return { changed: true, recordsUpdated };
 }
 
 function normalizeFileNotifications(rows = []) {
@@ -771,4 +799,5 @@ module.exports = {
   migrateNotificationRetention,
   migrateNotificationDuplicates,
   migrateStaffDates,
+  migrateAssignmentStatuses,
 };

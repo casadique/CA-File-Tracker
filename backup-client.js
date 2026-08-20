@@ -14,7 +14,9 @@ async function downloadFullBackup() {
     const response = await fetchCompleteBackupDownload();
     const filename = response.headers.get("Content-Disposition")?.match(/filename="?([^";]+)"?/i)?.[1]
       || `ca-file-tracker-complete-backup-${todayDate()}.json`;
-    const blob = await response.blob();
+    const text = await response.text();
+    const payload = JSON.parse(text);
+    const blob = new Blob([text], { type: "application/json" });
     const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = downloadUrl;
@@ -24,7 +26,8 @@ async function downloadFullBackup() {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
     const archiveWarning = decodeURIComponent(response.headers.get("X-Backup-Archive-Warning") || "");
-    toast("Complete backup downloaded, including Client Master, users, invoices, bills and transactions.");
+    const summary = payload.backupSummary || {};
+    toast(`Backup downloaded: ${summary.files || 0} files, ${summary.clientMaster || 0} clients, ${summary.transactions || 0} transactions and ${summary.attachments || 0} attachments.`);
     if (archiveWarning) toast("Backup downloaded, but the server archive could not be retained.");
   } catch (error) {
     toast(error.message || "Complete backup could not be generated.");
@@ -32,10 +35,11 @@ async function downloadFullBackup() {
 }
 
 async function fetchCompleteBackupDownload() {
+  const mode = document.querySelector("#backupMode")?.value || "full";
   const request = () => fetch("/api/backup/download", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(apiToken() ? { Authorization: `Bearer ${apiToken()}` } : {}) },
-    body: JSON.stringify({ reason: "manual" }),
+    body: JSON.stringify({ reason: "manual", mode }),
   });
   let response = await request();
   if (response.status === 401 && await refreshApiSession()) response = await request();
@@ -51,7 +55,7 @@ function handleBackupRestore(event) {
   event.target.value = "";
   if (!file) return;
   if (state.currentRole !== "Admin") return toast("Only Admin can restore backups.");
-  if (!confirm("Restore this complete backup? Current central app data and Client Master records will be replaced or updated.")) return;
+  if (!confirm("Restore this backup by merging it with current data? Existing records will not be deleted. Matching record IDs will be updated, new records will be added, and the same backup cannot be restored twice.")) return;
   const reader = new FileReader();
   reader.onload = async () => {
     try {
@@ -60,14 +64,9 @@ function handleBackupRestore(event) {
       if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
         const result = await apiJson("/api/state/restore", {
           method: "POST",
-          body: JSON.stringify({
-            state: incomingState,
-            clientMaster: payload.clientMaster || payload.client_master || [],
-            backupVersion: payload.version || "legacy",
-            integrity: payload.integrity || null,
-          }),
+          body: JSON.stringify(payload.version === "ca-file-tracker-complete-v3" ? { backup: payload } : { state: incomingState, clientMaster: payload.clientMaster || payload.client_master || [], backupVersion: payload.version || "legacy", integrity: payload.integrity || null }),
         });
-        restoreSharedData(result.state || incomingState, `Central backup restored; ${result.clients?.restored || 0} Client Master record(s) restored`, { targetPage: "dashboard", skipRemote: true });
+        restoreSharedData(result.state || incomingState, result.merged ? `Backup merged safely; ${result.storage?.restored || 0} attachment(s) restored and ${result.storage?.skipped || 0} existing attachment(s) kept.` : `Central backup restored; ${result.clients?.restored || 0} Client Master record(s) restored`, { targetPage: "dashboard", skipRemote: true });
         return;
       }
       restoreSharedData(incomingState, "Backup restored", { targetPage: "dashboard", fullRemote: true });

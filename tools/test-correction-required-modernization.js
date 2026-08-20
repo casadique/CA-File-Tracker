@@ -23,7 +23,7 @@ for (const requirement of [
 ]) assert.match(config, requirement);
 assert.match(source, /const correctionRequiredSort = \[[\s\S]*?"Returned Date - Newest First"/);
 
-const matcher = source.match(/if \(listView === "correctionRequired"\)[\s\S]*?return hasOpenCorrection\(file\);\n\s*}/)?.[0] || "";
+const matcher = source.match(/if \(listView === "correctionRequired"\)[\s\S]*?return hasOpenCorrection\(file\);\r?\n\s*}/)?.[0] || "";
 for (const requirement of [
   /filters\.priority/,
   /correctionReturnedFrom/,

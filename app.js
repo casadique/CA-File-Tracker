@@ -22,6 +22,45 @@ const EXPENSE_DRAFT_VERSION = 1;
 const EXPENSE_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const EXPENSE_DRAFT_DEBOUNCE_MS = 400;
 
+const DECIMAL_PATTERN = /^\d*(?:\.\d{0,2})?$/;
+const UNASSIGNED_STATUS = "UNASSIGNED";
+const UNASSIGNED_LABEL = "Not Allotted";
+
+function strictDecimalValue(value, { required = false } = {}) {
+  const text = String(value ?? "").trim();
+  if (!text) return required ? null : 0;
+  if (!DECIMAL_PATTERN.test(text)) return null;
+  const amount = Number(text);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+document.addEventListener("beforeinput", (event) => {
+  const input = event.target.closest?.("[data-decimal-input]");
+  const inputType = String(event.inputType || "");
+  if (!input || inputType.startsWith("delete") || inputType.startsWith("history")) return;
+  if (event.data === null) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const next = input.value.slice(0, start) + event.data + input.value.slice(end);
+  if (!DECIMAL_PATTERN.test(next)) event.preventDefault();
+});
+document.addEventListener("input", (event) => {
+  const input = event.target.closest?.("[data-decimal-input]");
+  if (!input) return;
+  const valid = DECIMAL_PATTERN.test(input.value) && strictDecimalValue(input.value) !== null;
+  input.setCustomValidity(valid ? "" : "Enter a valid amount with up to two decimal places.");
+});
+document.addEventListener("wheel", (event) => {
+  const input = event.target.closest?.("[data-decimal-input]");
+  if (input === document.activeElement) input.blur();
+}, { passive: true });
+document.addEventListener("focusout", (event) => {
+  const input = event.target.closest?.("[data-decimal-input]");
+  if (!input || !input.value.trim()) return;
+  const amount = strictDecimalValue(input.value);
+  if (amount !== null) input.value = amount.toFixed(2);
+});
+
 const defaultDailyQuotes = [
   { text: "Success comes from consistent small efforts.", author: "Robert Collier" },
   { text: "Small progress each day adds up to big results.", author: "Satya Nani" },
@@ -683,6 +722,8 @@ function normalizeState(appState) {
   appState.files = (appState.files || []).map((file) => ({
     ...file,
     serviceType: canonicalServiceType(file.serviceType),
+    assignmentStatus: hasAssignedStaffValue(file.reAssignedStaff || file.assignedStaff || file.assigned_staff) || file.reAssignedStaffId || file.assignedStaffId || file.reAssignedStaffEmail || file.assignedStaffEmail ? "ALLOTTED" : UNASSIGNED_STATUS,
+    assignedStaff: hasAssignedStaffValue(file.assignedStaff || file.assigned_staff) ? (file.assignedStaff || file.assigned_staff) : UNASSIGNED_LABEL,
   }));
   appState.services = sortList([...(appState.services || []).map(canonicalServiceType), ...defaultServices].filter((serviceType) => !isRetiredServiceType(serviceType)));
   appState.careOfList = sortList([...(appState.careOfList || []), ...defaultCareOfList]);
@@ -3172,7 +3213,11 @@ function staffAliasMap() {
 
 function hasAssignedStaffValue(value) {
   const clean = String(value || "").trim().toLowerCase();
-  return Boolean(clean && clean !== "not assigned");
+  return Boolean(clean && !["not assigned", "not allotted", "unassigned", "none", "null", "unassigned"].includes(clean));
+}
+
+function assignmentDisplayLabel(value) {
+  return hasAssignedStaffValue(value) ? String(value || "").trim() : UNASSIGNED_LABEL;
 }
 
 function sameUserIdentity(user, ...values) {
@@ -3235,11 +3280,43 @@ function currentFileAssignee(file = {}) {
     };
   }
   return {
-    name: file.assignedStaff || "",
+    name: assignmentDisplayLabel(file.assignedStaff),
     id: file.assignedStaffId || "",
     email: file.assignedStaffEmail || "",
     date: file.workAllotmentDate || file.assigned_at || "",
   };
+}
+
+function normalizeSpecialStatus(value = "") {
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase().replace(/[\s_-]+/g, " ");
+  if (["", "not assigned", "not allotted", "unassigned", UNASSIGNED_STATUS.toLowerCase()].includes(key)) return UNASSIGNED_LABEL;
+  if (["wip", "work in progress"].includes(key)) return "Work-in-Progress";
+  return raw;
+}
+
+function selectedSpecialStatuses() {
+  const value = state.filters.specialStatuses;
+  const values = Array.isArray(value) ? value : String(value || "").split("|");
+  return [...new Set(values.map(normalizeSpecialStatus).filter(Boolean))];
+}
+
+function fileSpecialStatuses(file = {}) {
+  const values = new Set();
+  values.add(hasAssignedStaffValue(currentFileAssignee(file).name) ? "Allotted" : UNASSIGNED_LABEL);
+  values.add(normalizeSpecialStatus(statusOf(file).label));
+  Object.entries(file.stages || {}).forEach(([key, active]) => { if (active) values.add(normalizeSpecialStatus(key)); });
+  if (file.workDone) values.add("Work Done");
+  if (hasOpenCorrection(file)) values.add("Correction Required");
+  if (isCheckedCompleted(file)) values.add("Completed");
+  return values;
+}
+
+function fileMatchesSpecialStatuses(file) {
+  const selected = selectedSpecialStatuses();
+  if (!selected.length) return true;
+  const statuses = fileSpecialStatuses(file);
+  return selected.some((status) => statuses.has(status));
 }
 
 function exactDueDateAssigneeIds(file = {}) {
@@ -3459,6 +3536,7 @@ function filteredFiles() {
   const f = state.filters;
   const authorisedAllNotCheckedView = isStaffLogin() && f.listView === "notChecked" && isAuthorisedCheckingStaff();
   return filteredFileSource(f.listView).filter((file) => {
+    if (["", "active"].includes(f.listView || "") && !fileMatchesSpecialStatuses(file)) return false;
     const configuredBillingView = ["", "active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "feePending", "feeReceived"].includes(f.listView || "");
     const registrationSearchValue = f.listView === "billed" ? fileRegistrationNumber(file) : file.pan;
     const haystack = configuredBillingView && f.search
@@ -4025,6 +4103,39 @@ function dedupeNotificationItems(items = []) {
     if (semanticKey && item.fileId && timestamp) latestBySemanticKey.set(semanticKey, { index, item, timestamp });
   });
   return output;
+}
+
+function specialStatusOptions() {
+  const preferred = [UNASSIGNED_LABEL, "Allotted", "Work-in-Progress", "Work Done", "Client Pending", "Approval Pending", "On Hold", "Completed", "Correction Required"];
+  const discovered = (state.files || []).flatMap((file) => [...fileSpecialStatuses(file)]).filter(Boolean);
+  return [...new Set([...preferred, ...discovered])];
+}
+
+function renderSpecialStatusFilter() {
+  if (!["", "active"].includes(state.filters.listView || "")) return "";
+  const selected = new Set(selectedSpecialStatuses());
+  return `<div class="special-status-filter-row"><details class="special-status-filter" id="specialStatusFilter">
+    <summary>Special Status Filter${selected.size ? ` (${selected.size})` : ""}</summary>
+    <div class="special-status-popover" role="group" aria-label="Special Status Filter">
+      <div class="special-status-links"><button type="button" data-special-select-all>Select All</button><button type="button" data-special-clear-all>Clear All</button></div>
+      <div class="special-status-options">${specialStatusOptions().map((status) => `<label><input type="checkbox" value="${escapeHtml(status)}" ${selected.has(status) ? "checked" : ""}> <span>${escapeHtml(status)}</span></label>`).join("")}</div>
+      <div class="special-status-actions"><button type="button" class="secondary-button" data-special-cancel>Cancel</button><button type="button" class="primary-button" data-special-apply>Apply</button></div>
+    </div>
+  </details></div>`;
+}
+
+function bindSpecialStatusFilter() {
+  const root = document.querySelector("#specialStatusFilter");
+  if (!root) return;
+  const boxes = () => [...root.querySelectorAll("input[type='checkbox']")];
+  root.querySelector("[data-special-select-all]")?.addEventListener("click", () => boxes().forEach((box) => { box.checked = true; }));
+  root.querySelector("[data-special-clear-all]")?.addEventListener("click", () => boxes().forEach((box) => { box.checked = false; }));
+  root.querySelector("[data-special-cancel]")?.addEventListener("click", () => { root.open = false; });
+  root.querySelector("[data-special-apply]")?.addEventListener("click", () => {
+    state.filters.specialStatuses = boxes().filter((box) => box.checked).map((box) => box.value);
+    saveState();
+    renderAll();
+  });
 }
 
 function notificationDisplayGroupKey(item = {}) {
@@ -4803,6 +4914,7 @@ function renderAll() {
     };
   }
   renderActivePage();
+  upgradeRenderedMonetaryInputs();
   enforceDateYearCap();
   dispatchLocalDesktopNotifications();
 }
@@ -6033,7 +6145,7 @@ function configuredFinancialFilterConfigs() {
       ],
       advanced: [common.pan, common.fy,
         { key: "fileListWorkflow", label: "Workflow Stage", type: "select", emptyLabel: "All workflow stages", options: stages },
-        { key: "fileListAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Assigned", "Reassigned"] },
+        { key: "fileListAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Allotted", "Reassigned"] },
         { key: "fileListOverdue", label: "Overdue", type: "select", emptyLabel: "All due states", options: ["Yes", "No"] },
         { key: "fileListApproval", label: "Approval", type: "select", emptyLabel: "All approval states", options: ["Pending", "Approved", "Not Submitted"] },
         common.hasRemarks,
@@ -6061,7 +6173,7 @@ function configuredFinancialFilterConfigs() {
         { key: "activeSort", label: "Sort By", type: "select", options: activeSort, defaultValue: activeSort[0] },
       ],
       advanced: [common.pan, common.fy,
-        { key: "activeAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Assigned", "Reassigned"] },
+        { key: "activeAssignment", label: "Assignment", type: "select", emptyLabel: "All assignment states", options: ["Assigned", "Not Allotted", "Reassigned"] },
         { key: "activeApproval", label: "Approval", type: "select", emptyLabel: "All approval states", options: ["Pending", "Approved", "Not Submitted"] },
         common.hasRemarks,
       ],
@@ -6476,7 +6588,7 @@ function configuredFinancialFileMatches(file, listView, filters) {
     const assignee = currentFileAssignee(file);
     const assigned = hasAssignedStaffValue(assignee.name) || Boolean(assignee.id || assignee.email);
     if (filters.fileListAssignment === "Assigned" && !assigned) return false;
-    if (filters.fileListAssignment === "Not Assigned" && assigned) return false;
+    if (["Not Assigned", "Not Allotted", "Unassigned"].includes(filters.fileListAssignment) && assigned) return false;
     if (filters.fileListAssignment === "Reassigned" && !isReassignedFile(file)) return false;
     if (filters.fileListApproval === "Pending" && !pendingApproval(file)) return false;
     if (filters.fileListApproval === "Approved" && !file.approved) return false;
@@ -6494,7 +6606,7 @@ function configuredFinancialFileMatches(file, listView, filters) {
     const assignee = currentFileAssignee(file);
     const assigned = hasAssignedStaffValue(assignee.name) || Boolean(assignee.id || assignee.email);
     if (filters.activeAssignment === "Assigned" && !assigned) return false;
-    if (filters.activeAssignment === "Not Assigned" && assigned) return false;
+    if (["Not Assigned", "Not Allotted", "Unassigned"].includes(filters.activeAssignment) && assigned) return false;
     if (filters.activeAssignment === "Reassigned" && !isReassignedFile(file)) return false;
     if (filters.activeApproval === "Pending" && !pendingApproval(file)) return false;
     if (filters.activeApproval === "Approved" && !file.approved) return false;
@@ -6673,6 +6785,7 @@ function renderFilesPage() {
         ${isStaffLogin() ? inputFilter("fileFrom", "From", "", "date") : ""}
         ${isStaffLogin() ? inputFilter("fileTo", "To", "", "date") : ""}
       </div>`}
+      ${renderSpecialStatusFilter()}
       ${isBilledView || isConfiguredFilterView ? billedFilesActionToolbar() : `<div class="action-row" style="margin-bottom:14px">
         <button class="secondary-button file-action-button file-action-clear" id="clearFilters">${navIcon("filterOff")}Clear Filters</button>
         ${isStaffLogin() ? `<button class="secondary-button" id="clearStaffDates">Clear Dates</button>` : ""}
@@ -6685,6 +6798,7 @@ function renderFilesPage() {
   if (isBilledView) bindBilledFilesFilters();
   else if (isConfiguredFilterView) bindConfiguredFinancialFilters(configuredFilterConfig);
   else bindFilters();
+  bindSpecialStatusFilter();
   document.querySelector("[data-generate-historical-receipts]")?.addEventListener("click", generateHistoricalReceiptsBulk);
   if (!isBilledView && !isConfiguredFilterView) {
     document.querySelector("#clearFilters").onclick = () => {
@@ -7775,6 +7889,7 @@ function resetConfiguredFinancialFilters(config) {
     state.filters[field.key] = field.defaultValue || "";
     document.querySelectorAll(`[data-configured-filter='${field.key}']`).forEach((control) => { control.value = field.defaultValue || ""; });
   });
+  state.filters.specialStatuses = [];
   saveViewState();
   refreshConfiguredFinancialResults(config);
 }
@@ -8841,7 +8956,16 @@ function feeReceiptAccountSelect(name, label, selectedValue = "cash", includeUnc
 }
 
 function feeReceiptField(name, label, value, type = "text", attrs = "") {
-  return `<div class="field"><label>${escapeHtml(label)}</label><input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value || "")}" ${attrs}></div>`;
+  const monetary = type === "number";
+  return `<div class="field"><label>${escapeHtml(label)}</label><input name="${escapeHtml(name)}" type="${monetary ? "text" : escapeHtml(type)}" ${monetary ? 'inputmode="decimal" data-decimal-input' : ""} value="${escapeHtml(value || "")}" ${attrs}></div>`;
+}
+
+function upgradeRenderedMonetaryInputs(root = document) {
+  root.querySelectorAll('input[type="number"][step="0.01"], .opening-amount-input, #physicalCashCount').forEach((input) => {
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.dataset.decimalInput = "";
+  });
 }
 
 function feeReceiptSelect(name, label, options, selectedValue = "") {
@@ -9750,7 +9874,8 @@ function feeCollectionEditorLocalData(receiptId) {
 }
 
 function feeCollectionEditorField(name, label, value = "", type = "text", attrs = "") {
-  const input = `<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? "")}" ${attrs}>`;
+  const monetary = type === "number";
+  const input = `<input name="${escapeHtml(name)}" type="${monetary ? "text" : escapeHtml(type)}" ${monetary ? 'inputmode="decimal" data-decimal-input' : ""} value="${escapeHtml(value ?? "")}" ${attrs}>`;
   const control = ["grossBillAmount", "discountAmount", "receivedAmount"].includes(name) ? `<div class="fee-collection-money-input"><span>₹</span>${input}</div>` : input;
   return `<div class="field fee-collection-field" data-fee-field="${escapeHtml(name)}"><label>${escapeHtml(label)}</label>${control}<small class="fee-collection-field-error" data-fee-error="${escapeHtml(name)}"></small></div>`;
 }
@@ -12540,7 +12665,8 @@ function formField(name, label, value, type = "text", required = true) {
   if (type === "password") {
     return `<div class="field"><label>${label}</label><div class="password-wrap"><input name="${name}" id="${name}" type="password" value="${escapeHtml(value || "")}" ${required ? "required" : ""}><button type="button" data-toggle-password="${name}">View</button></div></div>`;
   }
-  return `<div class="field"><label>${label}</label><input name="${name}" type="${type}" value="${escapeHtml(value || "")}" ${required ? "required" : ""}></div>`;
+  const monetary = type === "number";
+  return `<div class="field"><label>${label}</label><input name="${name}" type="${monetary ? "text" : type}" ${monetary ? 'inputmode="decimal" data-decimal-input' : ""} value="${escapeHtml(value || "")}" ${required ? "required" : ""}></div>`;
 }
 
 function checkingDetailField(label, value) {
@@ -15190,13 +15316,14 @@ function renderBackupPage() {
     <div class="panel">
       <h3>Backup</h3>
       <div class="admin-data-actions">
+        <label class="field backup-mode-field"><span>Backup Type</span><select id="backupMode"><option value="full" selected>Full Backup</option><option value="transactions">Transactions Only</option></select></label>
         <button class="secondary-button" id="downloadBackup" ${canBackup ? "" : "disabled"}>Download Backup</button>
         <button class="secondary-button" id="restoreBackup" ${adminOnly ? "" : "disabled"}>Restore Backup</button>
         <input class="hidden" type="file" id="restoreBackupInput" accept=".json,application/json">
         <button class="primary-button" id="syncSiteData" ${adminOnly ? "" : "disabled"}>Sync Data to Site</button>
         <button class="secondary-button" id="pullSiteData" ${adminOnly ? "" : "disabled"}>Pull Data from Site</button>
       </div>
-      <p class="small-muted">Backup saves all files, users, statuses, visitors, expenses, collections, chats, audit log and settings. Managers can download backups. Restore and site sync remain Admin-only.</p>
+      <p class="small-muted">Full Backup includes central application data, relational records and uploaded attachments with a checksum and itemised manifest. Transactions Only is optional. Managers can download; restore remains Admin-only and merges without deleting current data.</p>
     </div>
     <div class="grid metrics dashboard-main-metrics" style="margin-top:16px">
       ${metric("Current Files", (state.files || []).length, "Included in backup", "grad-blue")}
@@ -18337,12 +18464,13 @@ function renderExpensesPage() {
 
 function renderTransactionDashboardHeader(tab) {
   const accountOptions = [{ value: "", label: "All Accounts" }, ...financeAccounts];
+  const invalidRange = Boolean(state.filters.transactionFrom && state.filters.transactionTo && state.filters.transactionFrom > state.filters.transactionTo);
   return `<section class="transaction-dashboard-header">
     <div class="transaction-dashboard-title"><span>Finance Workspace</span><h2>Account Overview</h2><p>Review account movements, balances and cash verification.</p></div>
     <div class="transaction-dashboard-controls">
       <div class="field transaction-date-range"><label>Date Range</label><div><input id="transactionFrom" type="date" value="${escapeHtml(state.filters.transactionFrom || "")}" aria-label="Transaction from date"><span>to</span><input id="transactionTo" type="date" value="${escapeHtml(state.filters.transactionTo || "")}" aria-label="Transaction to date"></div></div>
       <div class="field"><label>Account</label><select id="transactionAccountFilter" ${tab === "balance" ? "disabled title=\"Cash reconciliation is fixed to Cash in Hand\"" : ""}>${accountOptions.map((item) => `<option value="${item.value}" ${String(state.filters.transactionAccount || "") === item.value ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></div>
-      <div class="transaction-header-actions"><button type="button" class="secondary-button" id="transactionRefresh">Refresh</button><button type="button" class="secondary-button" id="transactionExport">Export</button>${state.currentRole === "Admin" ? `<button type="button" class="primary-button" id="openOpeningBalances">Set Opening Balances</button>` : ""}</div>
+      <div class="transaction-header-actions"><button type="button" class="secondary-button" id="transactionRefresh">Refresh</button><button type="button" class="secondary-button" id="transactionExport" ${invalidRange ? 'disabled title="From Date cannot be after To Date"' : ""}>Export Account Overview</button>${state.currentRole === "Admin" ? `<button type="button" class="primary-button" id="openOpeningBalances">Set Opening Balances</button>` : ""}</div>
     </div>
   </section>`;
 }
@@ -18582,7 +18710,7 @@ function renderOpeningBalancePanel() {
             <tbody>${entryRows.map((item) => `<tr>
               <td><input type="date" data-opening-date="${item.value}" value="${escapeHtml(item.date)}" max="9999-12-31" aria-label="${escapeHtml(item.label)} opening balance date"></td>
               <td><span class="opening-account-label account-${item.value}">${escapeHtml(item.label === "Cash in Hand" ? "Cash" : item.label)}</span></td>
-              <td><input class="opening-amount-input" type="number" step="0.01" data-opening-amount="${item.value}" value="${escapeHtml(item.amount)}" placeholder="0.00" aria-label="${escapeHtml(item.label)} opening amount"></td>
+              <td><input class="opening-amount-input" type="text" inputmode="decimal" data-decimal-input step="0.01" data-opening-amount="${item.value}" value="${escapeHtml(item.amount)}" placeholder="0.00" aria-label="${escapeHtml(item.label)} opening amount"></td>
             </tr>`).join("")}</tbody>
             <tfoot><tr><th colspan="2">Total</th><th id="openingBalancesTotal">${money(entryTotal)}</th></tr></tfoot>
           </table>
@@ -19046,7 +19174,8 @@ function renderTransactionFilters(kind, data, fields) {
 
 function expenseInput(id, label, value = "", type = "text", step = "", className = "") {
   const amountClass = type === "number" ? " amount-input" : "";
-  return `<div class="field ${escapeHtml(className)}"><label>${label}</label><input id="${id}" class="${amountClass}" type="${type}" ${type === "date" ? `max="9999-12-31"` : ""} ${step ? `step="${step}"` : ""} value="${escapeHtml(value)}"></div>`;
+  const inputType = type === "number" ? "text" : type;
+  return `<div class="field ${escapeHtml(className)}"><label>${label}</label><input id="${id}" class="${amountClass}" type="${inputType}" ${type === "number" ? 'inputmode="decimal" data-decimal-input' : ""} ${type === "date" ? `max="9999-12-31"` : ""} ${step ? `step="${step}"` : ""} value="${escapeHtml(value)}"></div>`;
 }
 
 function expenseTextarea(id, label, value = "") {
@@ -19181,7 +19310,8 @@ function collectionParticularsSelect(value = "Fee Collection") {
 }
 
 function expenseFilterInput(key, label, type = "text") {
-  return `<div class="field"><label>${label}</label><input data-expense-filter="${key}" type="${type}" ${type === "date" ? `max="9999-12-31"` : ""} value="${escapeHtml(state.filters[key] || "")}"></div>`;
+  const monetary = type === "number";
+  return `<div class="field"><label>${label}</label><input data-expense-filter="${key}" type="${monetary ? "text" : type}" ${monetary ? 'inputmode="decimal" data-decimal-input' : ""} ${type === "date" ? `max="9999-12-31"` : ""} value="${escapeHtml(state.filters[key] || "")}"></div>`;
 }
 
 function expenseFilterSelect(key, label, options) {
@@ -19742,11 +19872,7 @@ function bindExpensePage() {
     renderAll();
   });
   document.querySelector("#transactionExport")?.addEventListener("click", () => {
-    const tab = state.filters.expenseTab || "collections";
-    if (tab === "expenses") return exportExpenseExcel();
-    if (tab === "transfers") return exportAccountTransfersExcel();
-    if (tab === "balance") return exportReconciliationExcel();
-    return exportCashExcel();
+    return exportAccountOverviewExcel();
   });
   document.querySelector("#openOpeningBalances")?.addEventListener("click", () => openOpeningBalanceModal());
   document.querySelector("#reviewUnclassifiedBank")?.addEventListener("click", () => {
@@ -20702,6 +20828,42 @@ function resetBalanceFilters() {
 
 function cashBalanceForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
   return financeBalancesForRange(from, to).cash;
+}
+
+function accountOverviewData() {
+  const from = state.filters.transactionFrom || "";
+  const to = state.filters.transactionTo || "";
+  if (from && to && from > to) throw new Error("From Date cannot be after To Date.");
+  const selectedAccount = state.filters.transactionAccount || "";
+  const accounts = selectedAccount ? financeAccounts.filter((item) => item.value === selectedAccount) : financeAccounts;
+  const inRange = (date) => (!from || String(date || "") >= from) && (!to || String(date || "") <= to);
+  const rows = [];
+  accounts.forEach((account) => {
+    const opening = Number(applicableOpeningBalance(from, to || from || todayDate(), account.value)?.amount || (account.value === "cash" ? state.openingCashBalance : 0) || 0);
+    activeCashCollections().filter((item) => transactionAccountKey(item) === account.value && inRange(item.date)).forEach((item) => rows.push({ accountKey: account.value, account: account.label, opening, date: item.date, reference: item.voucherNo || item.referenceNumber || item.transactionReference || "", type: "Collection", particulars: item.particulars || item.receivedFrom || "", category: collectionTypeLabel(item.collectionType || item.collection_type), income: Number(item.amount || 0), expense: 0, debit: 0, credit: Number(item.amount || 0), createdAt: item.createdAt || item.created_at || "" }));
+    activeExpenses().filter((item) => transactionAccountKey(item) === account.value && inRange(item.date)).forEach((item) => rows.push({ accountKey: account.value, account: account.label, opening, date: item.date, reference: item.voucherNo || item.referenceNumber || "", type: "Expense", particulars: item.particulars || item.paidTo || "", category: item.category || item.expenseCategory || item.particulars || "", income: 0, expense: Number(item.amount || 0), debit: Number(item.amount || 0), credit: 0, createdAt: item.createdAt || item.created_at || "" }));
+    (state.accountTransfers || []).filter((item) => item.isDeleted !== true && inRange(item.date) && [item.fromAccountKey, item.toAccountKey].includes(account.value)).forEach((item) => {
+      const incoming = item.toAccountKey === account.value;
+      const amount = Number(item.amount || 0);
+      rows.push({ accountKey: account.value, account: account.label, opening, date: item.date, reference: item.referenceNumber || item.voucherNo || "", type: incoming ? "Transfer In" : "Transfer Out", particulars: item.remarks || `${financeAccountLabel(item.fromAccountKey)} to ${financeAccountLabel(item.toAccountKey)}`, category: "Account Transfer", income: 0, expense: 0, debit: incoming ? 0 : amount, credit: incoming ? amount : 0, createdAt: item.createdAt || item.created_at || "" });
+    });
+  });
+  rows.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.createdAt).localeCompare(String(b.createdAt)) || a.account.localeCompare(b.account));
+  const running = new Map(accounts.map((account) => [account.value, Number(applicableOpeningBalance(from, to || from || todayDate(), account.value)?.amount || (account.value === "cash" ? state.openingCashBalance : 0) || 0)]));
+  rows.forEach((row) => { const next = Number(running.get(row.accountKey) || 0) + row.credit - row.debit; running.set(row.accountKey, next); row.runningBalance = next; });
+  const totals = rows.reduce((sum, row) => ({ income: sum.income + row.income, expenses: sum.expenses + row.expense, debit: sum.debit + row.debit, credit: sum.credit + row.credit }), { income: 0, expenses: 0, debit: 0, credit: 0 });
+  return { from, to, accounts, rows, totals, closing: Object.fromEntries(running) };
+}
+
+function exportAccountOverviewExcel() {
+  try {
+    const report = accountOverviewData();
+    if (!report.rows.length) return toast("No transactions found for the selected period.");
+    const rows = report.rows.map((row) => ({ Date: displayDate(row.date), Account: row.account, "Transaction Reference": row.reference, "Transaction Type": row.type, Particulars: row.particulars, Category: row.category, "Income / Receipt": row.income || "", "Expense / Payment": row.expense || "", Debit: row.debit || "", Credit: row.credit || "", "Running Balance": row.runningBalance }));
+    const openingText = report.accounts.map((account) => `${account.label}: ${money(report.rows.find((row) => row.accountKey === account.value)?.opening || 0)}`).join(" | ");
+    const closingText = report.accounts.map((account) => `${account.label}: ${money(report.closing[account.value] || 0)}`).join(" | ");
+    return downloadExcelTable("account-overview", rows, ["Muhammad & Associates,", "Chartered Accountants,", "Account Overview", `Period: ${report.from ? displayDate(report.from) : "Beginning"} to ${report.to ? displayDate(report.to) : "Current"}`, `Account: ${report.accounts.map((item) => item.label).join(", ")}`, `Opening Balance: ${openingText}`, `Total Income / Collections: ${money(report.totals.income)}`, `Total Expenses / Payments: ${money(report.totals.expenses)}`, `Net Movement: ${money(report.totals.credit - report.totals.debit)}`, `Closing Balance: ${closingText}`, `Generated: ${formatDateTime(new Date().toISOString())}`]);
+  } catch (error) { return toast(error.message || "Account Overview could not be exported."); }
 }
 
 function financeBalancesForRange(from = state.filters.balanceFrom || "", to = state.filters.balanceTo || "") {
@@ -22028,6 +22190,8 @@ function fileExportFilterSummary() {
       return `${label}: ${displayValue}`;
     })
     .filter(Boolean);
+  const special = selectedSpecialStatuses();
+  if (special.length) parts.push(`Special Status: ${special.join(", ")}`);
   return parts.length ? parts.join(" | ") : "No filters applied";
 }
 
@@ -23396,7 +23560,7 @@ function activeReportDueOffset(dueDate, reportDate = indiaTodayDate()) {
 
 function activeReportRecord(file = {}, index = 0, reportDate = indiaTodayDate()) {
   const dueOffset = activeReportDueOffset(file.dueDate, reportDate);
-  const assignedStaff = filePdfText(currentFileAssignee(file).name || file.assignedStaff, "Not Assigned");
+  const assignedStaff = filePdfText(currentFileAssignee(file).name || file.assignedStaff, UNASSIGNED_LABEL);
   return {
     index: index + 1,
     file,
@@ -23425,9 +23589,9 @@ function activeReportSummary(records = []) {
     if (record.dueOffset !== null && record.dueOffset < 0) totals.overdue += 1;
     if (record.dueOffset !== null && record.dueOffset >= 0 && record.dueOffset <= 7) totals.dueSoon += 1;
     if (["high", "urgent"].includes(record.priority.toLowerCase())) totals.highPriority += 1;
-    if (record.assignedStaff === "Not Assigned") totals.unassigned += 1;
+    if (!hasAssignedStaffValue(record.assignedStaff)) totals.unassigned += 1;
     else totals.assigned += 1;
-    const staffName = record.assignedStaff || "Not Assigned";
+    const staffName = assignmentDisplayLabel(record.assignedStaff);
     const row = staff.get(staffName) || { staff: staffName, files: 0, overdue: 0, dueSoon: 0 };
     row.files += 1;
     if (record.dueOffset !== null && record.dueOffset < 0) row.overdue += 1;
@@ -23445,6 +23609,8 @@ function activeReportFilterSummary() {
   const parts = configuredFinancialActiveFilters(config)
     .filter(({ key }) => key !== "activeSort")
     .map((field) => `${field.label}: ${configuredFinancialFilterValueLabel(field, field.value)}`);
+  const special = selectedSpecialStatuses();
+  if (special.length) parts.push(`Special Status: ${special.join(", ")}`);
   return parts.length ? parts.join(" | ") : "No Additional Filters Applied";
 }
 
@@ -23459,7 +23625,7 @@ function activeReportCardItems(summary = {}) {
     ["Due in Next 7 Days", String(summary.dueSoon || 0), BILLED_PDF_COLORS.amber, BILLED_PDF_COLORS.lightAmber],
     ["High / Urgent", String(summary.highPriority || 0), BILLED_PDF_COLORS.violet, BILLED_PDF_COLORS.lightViolet],
     ["Assigned", String(summary.assigned || 0), BILLED_PDF_COLORS.green, BILLED_PDF_COLORS.lightGreen],
-    ["Not Assigned", String(summary.unassigned || 0), BILLED_PDF_COLORS.muted, BILLED_PDF_COLORS.alternate],
+    [UNASSIGNED_LABEL, String(summary.unassigned || 0), BILLED_PDF_COLORS.muted, BILLED_PDF_COLORS.alternate],
   ];
 }
 
@@ -23633,7 +23799,7 @@ async function exportActiveFilesModernExcel(sourceFiles = []) {
     [],
     ["TOTAL ACTIVE FILES", "", "", "", "OVERDUE", "", "", "", "DUE IN NEXT 7 DAYS", "", ""],
     ["", "", "", "", "", "", "", "", "", "", ""],
-    ["HIGH / URGENT PRIORITY", "", "", "", "ASSIGNED", "", "", "", "NOT ASSIGNED", "", ""],
+    ["HIGH / URGENT PRIORITY", "", "", "", "ASSIGNED", "", "", "", "NOT ALLOTTED", "", ""],
     ["", "", "", "", "", "", "", "", "", "", ""],
     [], headers, ...dataRows,
   ];
@@ -23646,8 +23812,8 @@ async function exportActiveFilesModernExcel(sourceFiles = []) {
   worksheet.E7 = { t: "n", f: `COUNTIFS(G${dataStartRow}:G${lastDataRow},"<"&TODAY(),G${dataStartRow}:G${lastDataRow},"<>")` };
   worksheet.I7 = { t: "n", f: `COUNTIFS(G${dataStartRow}:G${lastDataRow},">="&TODAY(),G${dataStartRow}:G${lastDataRow},"<="&TODAY()+7)` };
   worksheet.A9 = { t: "n", f: `COUNTIF(J${dataStartRow}:J${lastDataRow},"High")+COUNTIF(J${dataStartRow}:J${lastDataRow},"Urgent")` };
-  worksheet.E9 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"<>Not Assigned")` };
-  worksheet.I9 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"Not Assigned")` };
+  worksheet.E9 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"<>Not Allotted")` };
+  worksheet.I9 = { t: "n", f: `COUNTIF(H${dataStartRow}:H${lastDataRow},"Not Allotted")` };
   const border = { style: "thin", color: { rgb: "CBD5E1" } };
   const applyStyle = (rangeAddress, style) => {
     const range = XLSX.utils.decode_range(rangeAddress);
