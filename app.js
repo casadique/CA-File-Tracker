@@ -20836,6 +20836,8 @@ function accountOverviewData() {
   if (from && to && from > to) throw new Error("From Date cannot be after To Date.");
   const selectedAccount = state.filters.transactionAccount || "";
   const accounts = selectedAccount ? financeAccounts.filter((item) => item.value === selectedAccount) : financeAccounts;
+  const accountLabel = selectedAccount ? (accounts[0]?.label || financeAccountLabel(selectedAccount)) : "All Accounts";
+  const periodLabel = `${from ? displayDate(from) : "Beginning"} to ${to ? displayDate(to) : "Current"}`;
   const inRange = (date) => (!from || String(date || "") >= from) && (!to || String(date || "") <= to);
   const rows = [];
   accounts.forEach((account) => {
@@ -20852,17 +20854,39 @@ function accountOverviewData() {
   const running = new Map(accounts.map((account) => [account.value, Number(applicableOpeningBalance(from, to || from || todayDate(), account.value)?.amount || (account.value === "cash" ? state.openingCashBalance : 0) || 0)]));
   rows.forEach((row) => { const next = Number(running.get(row.accountKey) || 0) + row.credit - row.debit; running.set(row.accountKey, next); row.runningBalance = next; });
   const totals = rows.reduce((sum, row) => ({ income: sum.income + row.income, expenses: sum.expenses + row.expense, debit: sum.debit + row.debit, credit: sum.credit + row.credit }), { income: 0, expenses: 0, debit: 0, credit: 0 });
-  return { from, to, accounts, rows, totals, closing: Object.fromEntries(running) };
+  return { from, to, accountLabel, periodLabel, accounts, rows, totals, closing: Object.fromEntries(running) };
 }
 
-function exportAccountOverviewExcel() {
+async function exportAccountOverviewExcel() {
   try {
     const report = accountOverviewData();
     if (!report.rows.length) return toast("No transactions found for the selected period.");
-    const rows = report.rows.map((row) => ({ Date: displayDate(row.date), Account: row.account, "Transaction Reference": row.reference, "Transaction Type": row.type, Particulars: row.particulars, Category: row.category, "Income / Receipt": row.income || "", "Expense / Payment": row.expense || "", Debit: row.debit || "", Credit: row.credit || "", "Running Balance": row.runningBalance }));
+    await loadSheetJs();
+    const headers = ["Date", "Account", "Transaction Reference", "Transaction Type", "Particulars", "Category", "Income / Receipt", "Expense / Payment", "Debit", "Credit", "Running Balance"];
+    const dataRows = report.rows.map((row) => [displayDate(row.date), row.account, row.reference, row.type, row.particulars, row.category, Number(row.income || 0), Number(row.expense || 0), Number(row.debit || 0), Number(row.credit || 0), Number(row.runningBalance || 0)]);
     const openingText = report.accounts.map((account) => `${account.label}: ${money(report.rows.find((row) => row.accountKey === account.value)?.opening || 0)}`).join(" | ");
     const closingText = report.accounts.map((account) => `${account.label}: ${money(report.closing[account.value] || 0)}`).join(" | ");
-    return downloadExcelTable("account-overview", rows, ["Muhammad & Associates,", "Chartered Accountants,", "Account Overview", `Period: ${report.from ? displayDate(report.from) : "Beginning"} to ${report.to ? displayDate(report.to) : "Current"}`, `Account: ${report.accounts.map((item) => item.label).join(", ")}`, `Opening Balance: ${openingText}`, `Total Income / Collections: ${money(report.totals.income)}`, `Total Expenses / Payments: ${money(report.totals.expenses)}`, `Net Movement: ${money(report.totals.credit - report.totals.debit)}`, `Closing Balance: ${closingText}`, `Generated: ${formatDateTime(new Date().toISOString())}`]);
+    const headingLines = ["Muhammad & Associates,", "Chartered Accountants,", "Account Overview", `Account: ${report.accountLabel}`, `Period: ${report.periodLabel}`, `Opening Balance: ${openingText}`, `Total Income / Collections: ${money(report.totals.income)}`, `Total Expenses / Payments: ${money(report.totals.expenses)}`, `Net Movement: ${money(report.totals.credit - report.totals.debit)}`, `Closing Balance: ${closingText}`, `Generated: ${formatDateTime(new Date().toISOString())}`];
+    const headerRow = headingLines.length + 2;
+    const dataStartRow = headerRow + 1;
+    const worksheet = XLSX.utils.aoa_to_sheet([...headingLines.map((line) => [line]), [], headers, ...dataRows]);
+    worksheet["!merges"] = headingLines.map((_line, index) => ({ s: { r: index, c: 0 }, e: { r: index, c: headers.length - 1 } }));
+    worksheet["!cols"] = [{ wch: 13 }, { wch: 20 }, { wch: 22 }, { wch: 18 }, { wch: 34 }, { wch: 24 }, ...Array.from({ length: 5 }, () => ({ wch: 18 }))];
+    worksheet["!autofilter"] = { ref: `A${headerRow}:K${headerRow + dataRows.length}` };
+    worksheet["!freeze"] = { xSplit: 0, ySplit: headerRow, topLeftCell: `A${dataStartRow}`, activePane: "bottomLeft", state: "frozen" };
+    for (let row = dataStartRow; row < dataStartRow + dataRows.length; row += 1) {
+      for (let column = 6; column <= 10; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row - 1, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "n", v: 0 };
+        worksheet[address].t = "n";
+        worksheet[address].v = Number(worksheet[address].v || 0);
+        worksheet[address].z = "#,##0.00";
+      }
+    }
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Account Overview");
+    XLSX.writeFile(workbook, `account-overview-${todayDate()}.xlsx`, { bookType: "xlsx", compression: true, cellStyles: true });
+    toast("Account Overview Excel (.xlsx) downloaded.");
   } catch (error) { return toast(error.message || "Account Overview could not be exported."); }
 }
 

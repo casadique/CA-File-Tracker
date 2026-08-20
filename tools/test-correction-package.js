@@ -26,6 +26,13 @@ const app = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 assert.match(app, /data-decimal-input/);
 assert.match(app, /No transactions found for the selected period/);
 assert.match(app, /function accountOverviewData\(/);
+assert.match(app, /account-overview-\$\{todayDate\(\)\}\.xlsx/);
+assert.match(app, /bookType:\s*"xlsx"/);
+assert.match(app, /worksheet\[address\]\.t = "n"/);
+assert.match(app, /worksheet\[address\]\.z = "#,##0\.00"/);
+assert.match(app, /\["Muhammad & Associates,", "Chartered Accountants,", "Account Overview", `Account: \$\{report\.accountLabel\}`, `Period: \$\{report\.periodLabel\}`/);
+assert.match(app, /const accountLabel = selectedAccount \? \(accounts\[0\]\?\.label \|\| financeAccountLabel\(selectedAccount\)\) : "All Accounts"/);
+assert.match(app, /const periodLabel = `\$\{from \? displayDate\(from\) : "Beginning"\} to \$\{to \? displayDate\(to\) : "Current"\}`/);
 assert.match(app, /function renderSpecialStatusFilter\(/);
 assert.match(app, /selected\.some\(\(status\) => statuses\.has\(status\)\)/);
 
