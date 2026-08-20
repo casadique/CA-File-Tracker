@@ -20872,15 +20872,46 @@ async function exportAccountOverviewExcel() {
     const worksheet = XLSX.utils.aoa_to_sheet([...headingLines.map((line) => [line]), [], headers, ...dataRows]);
     worksheet["!merges"] = headingLines.map((_line, index) => ({ s: { r: index, c: 0 }, e: { r: index, c: headers.length - 1 } }));
     worksheet["!cols"] = [{ wch: 13 }, { wch: 20 }, { wch: 22 }, { wch: 18 }, { wch: 34 }, { wch: 24 }, ...Array.from({ length: 5 }, () => ({ wch: 18 }))];
+    worksheet["!rows"] = headingLines.map((_line, index) => ({ hpt: index === 0 ? 24 : index === 2 ? 22 : 18 })).concat([{ hpt: 8 }, { hpt: 28 }], dataRows.map(() => ({ hpt: 21 })));
     worksheet["!autofilter"] = { ref: `A${headerRow}:K${headerRow + dataRows.length}` };
     worksheet["!freeze"] = { xSplit: 0, ySplit: headerRow, topLeftCell: `A${dataStartRow}`, activePane: "bottomLeft", state: "frozen" };
+    const borderSide = { style: "thin", color: { rgb: "AAB7C4" } };
+    const fullBorder = { top: borderSide, right: borderSide, bottom: borderSide, left: borderSide };
+    headingLines.forEach((_line, index) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: index, c: 0 })];
+      if (!cell) return;
+      cell.s = {
+        font: { name: "Calibri", bold: true, sz: index === 0 ? 16 : index === 2 ? 14 : index < 5 ? 11 : 10, color: { rgb: index === 2 ? "1D4ED8" : "17365D" } },
+        alignment: { horizontal: index < 3 ? "center" : "left", vertical: "center" },
+      };
+    });
+    for (let column = 0; column < headers.length; column += 1) {
+      const address = XLSX.utils.encode_cell({ r: headerRow - 1, c: column });
+      worksheet[address].s = {
+        font: { name: "Calibri", bold: true, color: { rgb: "FFFFFF" } },
+        fill: { patternType: "solid", fgColor: { rgb: "1F4E78" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+        border: fullBorder,
+      };
+    }
     for (let row = dataStartRow; row < dataStartRow + dataRows.length; row += 1) {
+      for (let column = 0; column < headers.length; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row - 1, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = {
+          font: { name: "Calibri", sz: 10, color: { rgb: "1F2937" } },
+          fill: { patternType: "solid", fgColor: { rgb: row % 2 === 0 ? "F7FAFC" : "FFFFFF" } },
+          alignment: { horizontal: column === 0 ? "center" : column >= 6 ? "right" : "left", vertical: "center", wrapText: column >= 2 && column <= 5 },
+          border: fullBorder,
+        };
+      }
       for (let column = 6; column <= 10; column += 1) {
         const address = XLSX.utils.encode_cell({ r: row - 1, c: column });
         if (!worksheet[address]) worksheet[address] = { t: "n", v: 0 };
         worksheet[address].t = "n";
         worksheet[address].v = Number(worksheet[address].v || 0);
         worksheet[address].z = "#,##0.00";
+        worksheet[address].s.numFmt = "#,##0.00";
       }
     }
     const workbook = XLSX.utils.book_new();
