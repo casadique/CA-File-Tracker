@@ -18173,11 +18173,11 @@ textarea,
   .collection-source-option { min-height:62px; }
 }
 /* Compact, persistent multi-select used by File List and Active Files. */
-.special-status-filter-row { display:flex; justify-content:flex-end; margin:10px 0 12px; position:relative; z-index:8; }
+.special-status-filter-row { display:flex; justify-content:flex-end; margin:10px 0 12px; position:relative; z-index:1400; }
 .special-status-filter { position:relative; }
 .special-status-filter > summary { list-style:none; cursor:pointer; border:1px solid #bfd3ed; border-radius:10px; background:#fff; color:#17365d; font-weight:700; padding:10px 14px; user-select:none; }
 .special-status-filter > summary::-webkit-details-marker { display:none; }
-.special-status-popover { position:absolute; right:0; top:calc(100% + 7px); width:min(340px, calc(100vw - 32px)); padding:12px; background:#fff; border:1px solid #c9d9ee; border-radius:12px; box-shadow:0 14px 35px rgba(22,54,93,.18); }
+.special-status-popover { position:absolute; z-index:1; right:0; top:calc(100% + 7px); width:min(340px, calc(100vw - 32px)); padding:12px; background:#fff; border:1px solid #c9d9ee; border-radius:12px; box-shadow:0 14px 35px rgba(22,54,93,.18); }
 .special-status-links,.special-status-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .special-status-links button { border:0; background:transparent; color:#1768c4; font-weight:700; cursor:pointer; padding:4px; }
 .special-status-options { display:grid; grid-template-columns:1fr 1fr; gap:7px 10px; max-height:260px; overflow:auto; margin:9px 0 12px; }

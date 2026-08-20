@@ -23,6 +23,7 @@ assert.equal(collectionManifest({ files: [{ id: 1 }], settings: { a: 1 } }).file
 assert.deepEqual(Object.keys(stateForMode({ files: [], expenses: [1], openingBalances: [2] }, "transactions")).sort(), ["expenses", "openingBalances"]);
 
 const app = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
+const styles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
 assert.match(app, /data-decimal-input/);
 assert.match(app, /No transactions found for the selected period/);
 assert.match(app, /function accountOverviewData\(/);
@@ -39,6 +40,8 @@ assert.match(app, /const accountLabel = selectedAccount \? \(accounts\[0\]\?\.la
 assert.match(app, /const periodLabel = `\$\{from \? displayDate\(from\) : "Beginning"\} to \$\{to \? displayDate\(to\) : "Current"\}`/);
 assert.match(app, /function renderSpecialStatusFilter\(/);
 assert.match(app, /selected\.some\(\(status\) => statuses\.has\(status\)\)/);
+assert.match(styles, /\.special-status-filter-row\s*\{[^}]*z-index:\s*1400/s);
+assert.match(styles, /\.special-status-popover\s*\{[^}]*z-index:\s*1/s);
 
 (async () => {
   const sampleState = { files: [{ id: "file-1", assignedStaff: "Not Assigned" }], expenses: [{ id: "expense-1", amount: 20.5 }], otherCashCollections: [{ id: "income-1", amount: 100.75 }], feeReceipts: [{ id: "receipt-1", amount: 50 }], openingBalances: [{ id: "opening-1", amount: 500 }], accountTransfers: [], settings: { theme: "professional" } };
