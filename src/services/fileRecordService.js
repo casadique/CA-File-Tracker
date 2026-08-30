@@ -90,27 +90,43 @@ async function syncFileChanges(changeSet, options = {}) {
   return { ok: true, upserted: rows.length, tombstoned: changeSet.deletedIds.length };
 }
 
+async function reconcileFileShadow(centralFiles = [], options = {}) {
+  if (!relationalShadowWriteEnabled()) return { skipped: true };
+  const expectedFiles = validFiles(centralFiles);
+  const expectedIds = new Set(expectedFiles.map((file) => String(file.id)));
+  const activeIds = await relationalFileIds();
+  const extraIds = [...activeIds].filter((id) => !expectedIds.has(id));
+  const result = await syncFileChanges({ upserts: expectedFiles, deletedIds: extraIds }, options);
+  const parity = await fileRelationalParity(expectedFiles);
+  const { error } = await supabaseAdmin.from("file_migration_runs").insert({
+    source_state_updated_at: timestamp(options.sourceStateUpdatedAt),
+    central_file_count: expectedIds.size,
+    relational_file_count: parity.relationalCount || 0,
+    status: parity.parity ? "startup-parity-ok" : "startup-parity-mismatch",
+    details: {
+      phase: 1,
+      trigger: options.trigger || "application-startup",
+      missingCount: parity.missingCount || 0,
+      extraCount: parity.extraCount || 0,
+      readCutover: false,
+    },
+  });
+  if (error) throw error;
+  return { ...result, ...parity };
+}
+
 async function fileRelationalParity(centralFiles = []) {
   const expectedIds = new Set(validFiles(centralFiles).map((file) => String(file.id)));
-  const actualIds = new Set();
-  let relationalCount = 0;
-  const pageSize = 1000;
-  for (let from = 0; ; from += pageSize) {
-    const { data, error, count } = await supabaseAdmin
-      .from(TABLE)
-      .select("id", { count: from === 0 ? "exact" : undefined })
-      .is("deleted_at", null)
-      .range(from, from + pageSize - 1);
-    if (error) {
-      if (["42P01", "PGRST205"].includes(error.code)) {
-        return { available: false, shadowWriteEnabled: relationalShadowWriteEnabled() };
-      }
-      throw error;
+  let actualIds;
+  try {
+    actualIds = await relationalFileIds();
+  } catch (error) {
+    if (["42P01", "PGRST205"].includes(error.code)) {
+      return { available: false, shadowWriteEnabled: relationalShadowWriteEnabled() };
     }
-    if (from === 0) relationalCount = count ?? (data || []).length;
-    (data || []).forEach((row) => actualIds.add(String(row.id)));
-    if ((data || []).length < pageSize) break;
+    throw error;
   }
+  const relationalCount = actualIds.size;
   const missingIds = [...expectedIds].filter((id) => !actualIds.has(id));
   const extraIds = [...actualIds].filter((id) => !expectedIds.has(id));
   return {
@@ -122,6 +138,24 @@ async function fileRelationalParity(centralFiles = []) {
     extraCount: extraIds.length,
     parity: missingIds.length === 0 && extraIds.length === 0 && relationalCount === expectedIds.size,
   };
+}
+
+async function relationalFileIds() {
+  const ids = new Set();
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseAdmin
+      .from(TABLE)
+      .select("id")
+      .is("deleted_at", null)
+      .range(from, from + pageSize - 1);
+    if (error) {
+      throw error;
+    }
+    (data || []).forEach((row) => ids.add(String(row.id)));
+    if ((data || []).length < pageSize) break;
+  }
+  return ids;
 }
 
 function validFiles(files) {
@@ -157,6 +191,7 @@ module.exports = {
   fileChanges,
   queueFileShadowSync,
   syncFileChanges,
+  reconcileFileShadow,
   fileRelationalParity,
   relationalShadowWriteEnabled,
 };

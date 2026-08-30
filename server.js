@@ -12,9 +12,10 @@ const { env } = require("./src/config/env");
 const apiRoutes = require("./src/routes");
 const { errorHandler, notFoundHandler } = require("./src/middleware/error");
 const { requestPerformance } = require("./src/middleware/requestPerformance");
-const { migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates, migrateAssignmentStatuses } = require("./src/services/appStateService");
+const { getAppStateRecord, migrateDisplayNames, migrateServiceTypes, migrateNotificationRetention, migrateNotificationDuplicates, migrateStaffDates, migrateAssignmentStatuses } = require("./src/services/appStateService");
 const { dispatchDueReminders } = require("./src/services/pushNotificationService");
 const { migrateTodoAssignmentPermissions } = require("./src/services/userService");
+const { reconcileFileShadow, relationalShadowWriteEnabled } = require("./src/services/fileRecordService");
 
 const app = express();
 const publicRoot = __dirname;
@@ -112,6 +113,20 @@ async function startServer() {
   app.listen(env.port, () => {
     console.log(`CA File Tracker running on port ${env.port}`);
   });
+  const reconcileFiles = async () => {
+    if (!relationalShadowWriteEnabled()) return;
+    try {
+      const record = await getAppStateRecord({ bypassCache: true });
+      const result = await reconcileFileShadow(record.state.files || [], {
+        sourceStateUpdatedAt: record.updatedAt,
+        trigger: "application-startup",
+      });
+      console.log(`Relational file shadow parity: ${result.relationalCount}/${result.centralCount}; missing=${result.missingCount}; extra=${result.extraCount}.`);
+    } catch (error) {
+      console.error("Relational file startup reconciliation failed:", error.message);
+    }
+  };
+  setTimeout(reconcileFiles, 5000).unref();
   const runDueReminders = () => dispatchDueReminders().catch((error) => console.error("Due reminder dispatch failed:", error.message));
   setTimeout(runDueReminders, 15000).unref();
   // Minute-level polling is required for the exact allotted-at + 3 hour reminder.

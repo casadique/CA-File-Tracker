@@ -10,6 +10,8 @@ search and sort columns.
 - `FILES_RELATIONAL_READ=0` keeps all production reads on the existing path.
 - Shadow-write failures are logged and do not roll back a successful central
   save. Re-running the idempotent migration repairs parity from the source.
+- Every server deployment performs a delayed full shadow reconciliation and
+  records its parity result in `file_migration_runs`.
 - Browser roles have no direct table access. RLS is enabled and access is
   limited to the server service role.
 - The original file payload is stored unchanged in `payload`, so uncommon and

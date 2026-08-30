@@ -54,4 +54,8 @@ const appStateService = fs.readFileSync(path.join(root, "src", "services", "appS
 assert.match(appStateService, /queueFileShadowSync\(previousState\.files/);
 assert.match(appStateService, /queueFileShadowSync\(previousFiles/);
 
+const serverSource = fs.readFileSync(path.join(root, "server.js"), "utf8");
+assert.match(serverSource, /reconcileFileShadow\(record\.state\.files/);
+assert.match(serverSource, /setTimeout\(reconcileFiles, 5000\)\.unref\(\)/);
+
 console.log("Relational file Phase 1 safeguards passed.");
