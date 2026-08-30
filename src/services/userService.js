@@ -10,6 +10,7 @@ const USER_PERMISSIONS = new Set([
 ]);
 const TODO_ASSIGNER_MIGRATION_VERSION = "todo-assigners-v1-2026-08-18";
 const INITIAL_TODO_ASSIGNERS = new Set(["nisha", "althaf", "rizwana", "najma", "chindu"]);
+const PROFILE_COLUMNS = "id,auth_user_id,email,name,role,permissions,is_active,created_at,updated_at";
 
 function normalizePermissions(value) {
   const raw = Array.isArray(value) ? value : (value && typeof value === "object" ? Object.keys(value).filter((key) => value[key]) : []);
@@ -116,7 +117,7 @@ async function setUserActive(userId, isActive) {
     .from("app_users")
     .update({ is_active: Boolean(isActive), updated_at: new Date().toISOString() })
     .eq("auth_user_id", userId)
-    .select("*")
+    .select(PROFILE_COLUMNS)
     .single();
   if (error) throw error;
   await patchLegacyUserList(data);
@@ -188,7 +189,7 @@ async function recoverAdminUser({ email, password, name = "CA Sadique" }) {
   const { data: profile, error: profileError } = await supabaseAdmin
     .from("app_users")
     .insert(profilePayload)
-    .select("*")
+    .select(PROFILE_COLUMNS)
     .single();
   if (profileError) throw profileError;
 
@@ -207,7 +208,7 @@ async function profileForAuthUser(authUser) {
 
   const { data: byAuthId, error: byAuthError } = await supabaseAdmin
     .from("app_users")
-    .select("*")
+    .select(PROFILE_COLUMNS)
     .eq("auth_user_id", authUser.id)
     .maybeSingle();
   if (byAuthError) throw byAuthError;
@@ -215,7 +216,7 @@ async function profileForAuthUser(authUser) {
 
   const { data: byEmail, error: byEmailError } = await supabaseAdmin
     .from("app_users")
-    .select("*")
+    .select(PROFILE_COLUMNS)
     .eq("email", email)
     .maybeSingle();
   if (byEmailError) throw byEmailError;

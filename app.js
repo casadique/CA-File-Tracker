@@ -418,6 +418,7 @@ let lastCentralVersionCheckAt = 0;
 let dashboardCountsSnapshot = null;
 let lastDashboardScrollAt = 0;
 let dashboardRefreshRenderTimer = null;
+let centralStateLoading = false;
 let chatSendInFlight = false;
 let chatFastSyncInFlight = false;
 let lastChatFastSyncAt = 0;
@@ -499,7 +500,7 @@ window.addEventListener("storage", (event) => {
 
 window.addEventListener("focus", () => {
   persistTransactionEntryDrafts();
-  if (isSupabaseMode()) refreshCentralState({ force: true });
+  if (isSupabaseMode()) checkCentralStateVersion({ force: true });
   else syncSharedState(localStorage.getItem(STORAGE_KEY), true);
 });
 
@@ -1741,8 +1742,11 @@ async function saveLinkedFeeReceiptToApi(fileId, receipt, collection) {
     body: JSON.stringify({ receipt, collection }),
   });
   if (result?.files) state.files = result.files;
+  else if (result?.file) state.files = mergeById(state.files || [], [result.file]);
   if (result?.feeReceipts) state.feeReceipts = result.feeReceipts;
+  else if (result?.receipt) state.feeReceipts = mergeById(state.feeReceipts || [], [result.receipt]);
   if (result?.otherCashCollections) state.otherCashCollections = result.otherCashCollections;
+  else if (result?.collection) state.otherCashCollections = mergeById(state.otherCashCollections || [], [result.collection]);
   saveState({ skipMerge: true, skipRemote: true });
   return result;
 }
@@ -1909,10 +1913,12 @@ async function loadStateFromApi() {
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
     dashboardCountsSnapshot = payload.dashboardCounts || null;
+    centralStateLoading = false;
     applyCentralState(payload.state, { targetPage: activePage || "dashboard", rerender: true });
     sessionStorage.setItem(API_MODE_KEY, "supabase");
     return true;
   } catch (error) {
+    centralStateLoading = false;
     console.warn("Central database load failed", error);
     return false;
   }
@@ -2012,12 +2018,12 @@ function scheduleDashboardRefreshRender() {
   }, 700);
 }
 
-async function checkCentralStateVersion() {
+async function checkCentralStateVersion(options = {}) {
   if (!state.session?.loggedIn || !isSupabaseMode()) return false;
   if (centralImportInFlight) return false;
   if (document.hidden) return false;
   if (document.querySelector("#fileDrawer")?.classList.contains("open")) return false;
-  if (Date.now() - lastCentralVersionCheckAt < 15000) return false;
+  if (!options.force && Date.now() - lastCentralVersionCheckAt < 15000) return false;
   lastCentralVersionCheckAt = Date.now();
   try {
     const payload = await apiJson("/api/state/version");
@@ -4651,6 +4657,8 @@ async function handleLogin() {
     state.fileNotifications = [];
   }
   saveState({ skipMerge: true, skipRemote: true });
+  centralStateLoading = user.source === "supabase-auth";
+  mount();
   if (!(await loadStateFromApi())) {
     mount();
     autoRecoverAdminDataIfEmpty();
@@ -4967,6 +4975,7 @@ function renderDashboard() {
     const myFiles = visibleFiles().filter((file) => currentFileBelongsToUser(file, loggedInUser()));
     const s = stats(myFiles);
     document.querySelector("#dashboard").innerHTML = `
+      ${centralStateLoading ? `<div class="permission-note">Loading your current files and dashboard…</div>` : ""}
       ${renderModernStaffDashboardShell(s, myFiles)}
       <div class="dashboard-layout dashboard-single staff-modern-performance-wrap">
         ${renderStaffDashboardPerformance(myFiles)}
@@ -4988,7 +4997,9 @@ function renderDashboard() {
     overdue: counts.overdueFiles,
     notChecked: counts.notCheckedFiles,
   };
-  const dataNotice = !s.total ? `
+  const dataNotice = centralStateLoading ? `
+    <div class="permission-note">Loading the latest dashboard and file summary…</div>
+  ` : !s.total ? `
     <div class="permission-note">
       No file data is loaded in this browser. Use Admin login > User Management > Restore Backup, or Pull Data from Site if site sync was previously saved.
     </div>

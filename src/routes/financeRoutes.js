@@ -159,12 +159,17 @@ router.post("/fee-receipts/:fileId", requireAuth, requireRole(...financeRoles), 
     );
     const requestedReceiptId = req.body.receipt?.feeReceiptId || req.body.receipt?.id || "";
     const issuedReceipt = (state.feeReceipts || []).find((receipt) => receipt.id === requestedReceiptId) || null;
+    const linkedCollection = issuedReceipt ? (state.otherCashCollections || []).find((item) =>
+      item.id === issuedReceipt.transactionId
+      || item.id === issuedReceipt.transaction_id
+      || item.feeReceiptId === issuedReceipt.id
+      || item.fee_receipt_id === issuedReceipt.id
+    ) || null : null;
     res.json({
       ok: true,
       receipt: issuedReceipt,
-      files: state.files || [],
-      feeReceipts: state.feeReceipts || [],
-      otherCashCollections: (state.otherCashCollections || []).filter((item) => item.isDeleted !== true && item.is_deleted !== true),
+      file: (state.files || []).find((file) => file.id === req.params.fileId) || null,
+      collection: linkedCollection,
     });
   } catch (error) {
     next(error);

@@ -2,7 +2,7 @@ const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { getAppState } = require("../services/appStateService");
 const {
-  listFiles,
+  queryFiles,
   upsertFile,
   markFileChecked,
   returnFileForCorrection,
@@ -19,9 +19,9 @@ function sendDesktopUpdates(state, notices) {
   dispatchFileNotifications(state, notices).catch((error) => console.error("Desktop file notification failed:", error.message));
 }
 
-router.get("/", requireAuth, async (_req, res, next) => {
+router.get("/", requireAuth, async (req, res, next) => {
   try {
-    res.json({ files: await listFiles(await getAppState(), _req.query || {}) });
+    res.json(await queryFiles(await getAppState(), req.query || {}));
   } catch (error) {
     next(error);
   }

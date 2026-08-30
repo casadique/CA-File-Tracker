@@ -151,11 +151,72 @@ function enforceDueDateMutationPermission(input = {}, before = null, userId = ""
 }
 
 async function listFiles(state, options = {}) {
-  const sorted = sortFilesForRequest(state.files || [], options);
+  const sorted = filterFilesForRequest(sortFilesForRequest(state.files || [], options), options);
   const pageSize = Math.max(0, Number.parseInt(options.pageSize || options.limit || "0", 10) || 0);
   if (!pageSize) return sorted;
   const page = Math.max(1, Number.parseInt(options.page || "1", 10) || 1);
   return sorted.slice((page - 1) * pageSize, page * pageSize);
+}
+
+function queryFiles(state, options = {}) {
+  const rows = filterFilesForRequest(sortFilesForRequest(state.files || [], options), options);
+  const requestedSize = Number.parseInt(options.pageSize || options.limit || "50", 10) || 50;
+  const pageSize = Math.min(100, Math.max(25, requestedSize));
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(pageCount, Math.max(1, Number.parseInt(options.page || "1", 10) || 1));
+  return {
+    files: rows.slice((page - 1) * pageSize, page * pageSize),
+    total: rows.length,
+    page,
+    pageSize,
+    pageCount,
+  };
+}
+
+function filterFilesForRequest(files, options = {}) {
+  const search = requestText(options.search || options.q);
+  const client = requestText(options.client || options.clientName);
+  const pan = requestText(options.pan || options.registration || options.registrationNo);
+  const staff = requestText(options.staff || options.assignedStaff);
+  const service = requestText(options.service || options.serviceType);
+  const status = requestText(options.status || options.workflow);
+  const priority = requestText(options.priority);
+  const billing = requestText(options.billing || options.billingStatus);
+  const from = requestDate(options.from || options.receivedFrom || options.dateFrom);
+  const to = requestDate(options.to || options.receivedTo || options.dateTo);
+  if (![search, client, pan, staff, service, status, priority, billing, from, to].some(Boolean)) return files;
+  return files.filter((file) => {
+    const received = requestDate(file.fileReceivedDate || file.file_received_date || file.receivedDate || file.received_on);
+    const workflow = requestText(workflowStatusLabel(file));
+    const billed = Boolean(file.billed || file.stages?.Billed);
+    const searchable = [
+      file.name, file.clientName, file.client_name, file.pan, file.panRegNo, file.pan_reg_no,
+      file.registrationNo, file.registration_no, file.gstin, file.gstNo, file.gst_no,
+      file.serviceType, file.service_type, file.assignedStaff, file.assigned_staff,
+      file.assignedStaffEmail, file.contactNo, file.contact_no, file.remarks, file.id,
+    ].map(requestText).join(" ");
+    if (search && !searchable.includes(search)) return false;
+    if (client && !requestText(file.name || file.clientName || file.client_name).includes(client)) return false;
+    if (pan && ![file.pan, file.panRegNo, file.pan_reg_no, file.registrationNo, file.registration_no, file.gstin, file.gstNo, file.gst_no].map(requestText).join(" ").includes(pan)) return false;
+    if (staff && ![file.assignedStaff, file.assigned_staff, file.assignedStaffEmail, file.reAssignedStaff, file.re_assigned_staff].map(requestText).join(" ").includes(staff)) return false;
+    if (service && requestText(file.serviceType || file.service_type) !== service) return false;
+    if (status && workflow !== status) return false;
+    if (priority && requestText(file.priority) !== priority) return false;
+    if (billing && ((billing === "billed") !== billed)) return false;
+    if (from && (!received || received < from)) return false;
+    if (to && (!received || received > to)) return false;
+    return true;
+  });
+}
+
+function requestText(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function requestDate(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
 }
 
 function sortFilesForRequest(files, options = {}) {
@@ -1545,6 +1606,8 @@ async function deleteFile(fileId, userId, profile = {}) {
 
 module.exports = {
   listFiles,
+  queryFiles,
+  filterFilesForRequest,
   upsertFile,
   markFileChecked,
   returnFileForCorrection,

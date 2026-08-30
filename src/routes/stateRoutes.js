@@ -7,6 +7,7 @@ const { calculateDashboardCounts } = require("../services/fileViewRules");
 const { restoreClients } = require("../services/clientService");
 const { visibleTodoTasks } = require("../services/todoService");
 const { mergeStaffDetailsImport } = require("../services/staffDetailsService");
+const { activeNotificationRows } = require("../services/notificationRetentionService");
 const { createCompleteBackup } = require("../services/completeBackupService");
 const { restoreCompleteBackup, mergeState } = require("../services/completeRestoreService");
 
@@ -155,11 +156,12 @@ function stateForProfile(state, profile, userId) {
     correctionHistory: visibleCorrectionHistory(state, profile, userId),
     todoTasks: visibleTodoTasks(state, userId, profile),
   };
+  visibleState.fileNotifications = activeNotificationRows(visibleState.fileNotifications || [], state);
   const visibleTodoIds = new Set((visibleState.todoTasks || []).map((task) => task.id));
   visibleState.todoActivity = (state.todoActivity || []).filter((row) => visibleTodoIds.has(row.task_id));
   const todoActorIds = new Set([userId, profile?.id].filter(Boolean).map(String));
   visibleState.todoReminderEvents = (state.todoReminderEvents || []).filter((row) => visibleTodoIds.has(row.task_id) && (profile?.role === "Admin" || todoActorIds.has(String(row.user_id || ""))));
-  visibleState.fileNotifications = (state.fileNotifications || []).filter((notice) => notice.category !== "todo" || todoNotificationForUser(notice, profile, userId));
+  visibleState.fileNotifications = visibleState.fileNotifications.filter((notice) => notice.category !== "todo" || todoNotificationForUser(notice, profile, userId));
   // Embedded reset backups are for server-side recovery only. The browser does
   // not use them, and sending them added more than two megabytes to every Admin
   // login/refresh response.
