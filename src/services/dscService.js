@@ -1,4 +1,6 @@
+const crypto = require("crypto");
 const { supabaseAdmin } = require("../config/supabase");
+const { env } = require("../config/env");
 const { notifyRegisterUser } = require("./registerNotificationService");
 
 const MANAGE_PERMISSION = "manage_dsc";
@@ -19,6 +21,37 @@ function assertManage(profile) { if (!canManage(profile)) throw fail("Authorized
 function assertApprove(profile) { if (!canApprove(profile)) throw fail("DSC handover approval permission is required.", 403); }
 function actor(req) { return { authUserId: req.user.id, name: req.profile?.name, email: req.profile?.email }; }
 
+function credentialKey() {
+  const secret = String(env.clientCredentialsEncryptionKey || "");
+  if (secret.length < 32) throw fail("DSC password encryption is not configured.", 503);
+  return crypto.createHash("sha256").update(secret, "utf8").digest();
+}
+function encryptPassword(value) {
+  const plain = String(value || "");
+  if (!plain) return null;
+  const iv = crypto.randomBytes(12); const cipher = crypto.createCipheriv("aes-256-gcm", credentialKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  return `v1.${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${encrypted.toString("base64")}`;
+}
+function addYears(dateText, years) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateText || ""))) return null;
+  const date = new Date(`${dateText}T00:00:00Z`); date.setUTCFullYear(date.getUTCFullYear() + years); return date.toISOString().slice(0, 10);
+}
+function withoutPassword(record) {
+  if (!record || typeof record !== "object") return record;
+  const hasPasswordField = Object.prototype.hasOwnProperty.call(record, "password_encrypted");
+  const { password_encrypted: _password, ...safe } = record;
+  return hasPasswordField ? { ...safe, password_saved: Boolean(_password) } : safe;
+}
+
+function sanitizeActivity(activity) {
+  return {
+    ...activity,
+    old_value: withoutPassword(activity?.old_value),
+    new_value: withoutPassword(activity?.new_value),
+  };
+}
+
 function applyVisibility(query, profile, userId) {
   if (canViewAll(profile)) return query;
   return query.or(`assigned_user_id.eq.${profile.id},created_by.eq.${userId}`);
@@ -38,11 +71,11 @@ async function listDsc(filters, profile, userId) {
   if (filters.view === "issued-out") query = query.eq("status", "Issued Out");
   if (filters.view === "expired") query = query.lt("expiry_date", new Date().toISOString().slice(0, 10));
   const search = text(filters.q, 120).replace(/[,%()]/g, " ");
-  if (search) query = query.or(`dsc_id.ilike.%${search}%,client_name.ilike.%${search}%,pan.ilike.%${search}%,holder_name.ilike.%${search}%,token_serial.ilike.%${search}%,certificate_serial.ilike.%${search}%,slot_position.ilike.%${search}%`);
+  if (search) query = query.or(`dsc_id.ilike.%${search}%,client_name.ilike.%${search}%,pan.ilike.%${search}%,holder_name.ilike.%${search}%,token_name.ilike.%${search}%,token_serial.ilike.%${search}%,certificate_serial.ilike.%${search}%,slot_position.ilike.%${search}%`);
   const from = (page - 1) * pageSize;
   const { data, error, count } = await query.order("expiry_date", { ascending: true, nullsFirst: false }).range(from, from + pageSize - 1);
   if (error) throw error;
-  return { records: data || [], total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
+  return { records: (data || []).map(withoutPassword), total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
 }
 
 async function getDsc(id, profile, userId) {
@@ -55,7 +88,7 @@ async function getDsc(id, profile, userId) {
     selectMany("dsc_activity", "dsc_id", id, "created_at"), selectMany("dsc_movements", "dsc_id", id, "movement_at"),
     selectMany("dsc_handover_requests", "dsc_id", id, "created_at"), selectMany("dsc_renewals", "existing_dsc_id", id, "created_at"),
   ]);
-  return { record: data, activities, movements, requests, renewals };
+  return { record: withoutPassword(data), activities: activities.map(sanitizeActivity), movements, requests, renewals };
 }
 
 async function selectMany(table, column, id, order) {
@@ -64,27 +97,31 @@ async function selectMany(table, column, id, order) {
 }
 
 function dscPayload(input, req, existing = {}) {
-  const clientName = text(input.clientName ?? input.client_name, 240);
+  const entityName = text(input.entityName ?? input.entity_name ?? existing.entity_name, 240);
+  const clientName = text(input.clientName ?? input.client_name ?? existing.client_name, 240) || entityName;
   const holderName = text(input.holderName ?? input.holder_name, 240);
-  const tokenSerial = text(input.tokenSerial ?? input.token_serial, 240);
-  if (!clientName || !holderName || !tokenSerial) throw fail("Client, DSC Holder and Token Serial are required.");
+  const tokenName = text(input.tokenName ?? input.token_name ?? existing.token_name, 240);
+  if (!entityName || !holderName || !tokenName) throw fail("DSC Holder Name, Entity Name and Token Name are required.");
   const remarks = text(input.remarks, 5000);
   if (/(pin|password|passwd|pwd)\s*[:=]/i.test(remarks)) throw fail("Do not store a DSC PIN or password in Remarks.");
-  const status = DSC_STATUSES.includes(input.status) ? input.status : (existing.status || "Fresh Issue Pending");
+  const status = DSC_STATUSES.includes(input.status) ? input.status : (existing.status || "In Office");
+  const issuedDate = input.issuedDate || input.issued_date || existing.issued_date || null;
+  const validFrom = input.validFrom || input.valid_from || existing.valid_from || issuedDate;
+  const expiryDate = input.expiryDate || input.expiry_date || existing.expiry_date || addYears(validFrom, 2);
   return {
     client_id: input.clientId || input.client_id || existing.client_id || null, client_name: clientName,
-    pan: text(input.pan, 40) || null, entity_name: text(input.entityName ?? input.entity_name, 240) || null,
+    pan: text(input.pan, 40) || null, entity_name: entityName,
     holder_name: holderName, holder_designation: text(input.holderDesignation ?? input.holder_designation, 160) || null,
-    din: text(input.din, 40) || null, mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null,
+    care_of: text(input.careOf ?? input.care_of, 160) || null,
+    mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null,
     dsc_type: text(input.dscType ?? input.dsc_type, 120) || null, certificate_class: text(input.certificateClass ?? input.certificate_class, 120) || null,
     holder_type: ["Individual","Organisation"].includes(input.holderType || input.holder_type) ? (input.holderType || input.holder_type) : null,
-    token_make: text(input.tokenMake ?? input.token_make, 120) || null, token_serial: tokenSerial,
-    certificate_serial: text(input.certificateSerial ?? input.certificate_serial, 240) || null,
-    issued_date: input.issuedDate || input.issued_date || null, valid_from: input.validFrom || input.valid_from || null,
-    expiry_date: input.expiryDate || input.expiry_date || null, status,
+    token_name: tokenName, token_make: tokenName, token_serial: text(input.tokenSerial ?? input.token_serial ?? existing.token_serial, 240) || null,
+    issued_date: issuedDate, valid_from: validFrom, expiry_date: expiryDate, status,
     current_custody: text(input.currentCustody ?? input.current_custody, 160) || existing.current_custody || "Office",
     current_location: text(input.currentLocation ?? input.current_location, 240) || null,
-    box_id: input.boxId || input.box_id || null, slot_position: text(input.slotPosition ?? input.slot_position, 80) || null,
+    box_id: input.boxId || input.box_id || null, box_type: ["Blue","Black"].includes(input.boxType || input.box_type) ? (input.boxType || input.box_type) : null,
+    slot_position: text(input.slotPosition ?? input.slot_position, 80) || null,
     assigned_user_id: input.assignedUserId || input.assigned_user_id || null, remarks: remarks || null,
     updated_by: req.user.id, updated_at: new Date().toISOString(),
   };
@@ -98,6 +135,7 @@ async function audit(dscId, action, req, oldValue = null, newValue = null, remar
 async function createDsc(input, req) {
   assertManage(req.profile);
   const payload = { ...dscPayload(input, req), created_by: req.user.id };
+  if (Object.prototype.hasOwnProperty.call(input, "password")) payload.password_encrypted = encryptPassword(input.password);
   const { data, error } = await supabaseAdmin.from("dsc_master").insert(payload).select("*").single();
   if (error?.code === "23505") throw fail("A DSC with this Token or Certificate Serial already exists.", 409);
   if (error) throw error;
@@ -109,12 +147,33 @@ async function updateDsc(id, input, req) {
   assertManage(req.profile);
   const { record: before } = await getDsc(id, req.profile, req.user.id);
   const payload = dscPayload(input, req, before);
+  if (Object.prototype.hasOwnProperty.call(input, "password") && String(input.password || "")) payload.password_encrypted = encryptPassword(input.password);
   const { data, error } = await supabaseAdmin.from("dsc_master").update(payload).eq("id", id).select("*").single();
   if (error?.code === "23505") throw fail("A DSC with this Token or Certificate Serial already exists.", 409);
   if (error) throw error;
   const action = before.box_id !== data.box_id || before.slot_position !== data.slot_position ? "Box changed" : "DSC updated";
   await audit(id, action, req, before, data);
   return getDsc(id, req.profile, req.user.id);
+}
+
+async function importDscRows(rows, req) {
+  assertManage(req.profile);
+  if (!Array.isArray(rows) || !rows.length) throw fail("The Excel file has no DSC rows.");
+  if (rows.length > 2000) throw fail("Import a maximum of 2,000 DSC rows at a time.");
+  const results = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] || {};
+    try {
+      const entityName = text(row.entityName, 240) || text(row.holderName, 240) || `Entity Not Provided - Row ${index + 2}`;
+      const holderName = text(row.holderName, 240) || entityName;
+      const tokenName = text(row.tokenName, 240) || `Not Provided - Row ${index + 2}`;
+      const result = await createDsc({ ...row, entityName, clientName: entityName, holderName, tokenName, status: "In Office" }, req);
+      results.push({ row: index + 2, created: true, id: result.record.id });
+    } catch (error) {
+      results.push({ row: index + 2, created: false, error: error.message });
+    }
+  }
+  return { total: rows.length, created: results.filter((item) => item.created).length, failed: results.filter((item) => !item.created).length, results };
 }
 
 async function boxes(includeInactive = false) {
@@ -139,7 +198,7 @@ async function saveBox(input, req) {
 async function boxContents(id, profile) {
   if (!canViewAll(profile)) throw fail("You do not have permission to view box contents.", 403);
   const { data: box, error } = await supabaseAdmin.from("dsc_boxes").select("*").eq("id", id).single(); if (error) throw error;
-  const { data: records, error: recordError } = await supabaseAdmin.from("dsc_master").select("id,dsc_id,client_name,holder_name,token_serial,expiry_date,status,slot_position").eq("box_id", id).order("slot_position"); if (recordError) throw recordError;
+  const { data: records, error: recordError } = await supabaseAdmin.from("dsc_master").select("id,dsc_id,client_name,holder_name,token_name,token_serial,expiry_date,status,slot_position").eq("box_id", id).order("slot_position"); if (recordError) throw recordError;
   return { box: { ...box, occupied: records.length, available: Math.max(0, box.capacity - records.length) }, records };
 }
 
@@ -152,14 +211,14 @@ async function createHandover(input, req) {
   await audit(record.id, "Permission requested", req, null, data, purpose);
   const config = await settings();
   for (const recipientProfileId of config.approver_user_ids || []) {
-    await notifyRegisterUser({ recipientProfileId, eventKey: `dsc:handover-request:${data.id}:${recipientProfileId}`, eventType: "DSC Handover Request", title: data.request_no, message: `Approval requested for ${record.holder_name} / ${record.client_name}, Token ${record.token_serial}, for ${purpose}.`, route: `/?page=dsc&request=${data.id}`, category: "dsc", actor: actor(req) });
+    await notifyRegisterUser({ recipientProfileId, eventKey: `dsc:handover-request:${data.id}:${recipientProfileId}`, eventType: "DSC Handover Request", title: data.request_no, message: `Approval requested for ${record.holder_name} / ${record.client_name}, Token ${record.token_name || record.token_serial || "Not specified"}, for ${purpose}.`, route: `/?page=dsc&request=${data.id}`, category: "dsc", actor: actor(req) });
   }
   return { request: data };
 }
 
 async function listHandovers(filters, req) {
   const page = Math.max(1, Number(filters.page) || 1); const pageSize = Math.min(100, Math.max(10, Number(filters.pageSize) || 25));
-  let query = supabaseAdmin.from("dsc_handover_requests").select("*,dsc:dsc_master(id,dsc_id,client_name,holder_name,token_serial,status,expiry_date)", { count: "exact" });
+  let query = supabaseAdmin.from("dsc_handover_requests").select("*,dsc:dsc_master(id,dsc_id,client_name,entity_name,holder_name,token_name,token_serial,status,expiry_date)", { count: "exact" });
   if (!canViewAll(req.profile) && !canApprove(req.profile)) query = query.eq("requested_by", req.user.id);
   if (filters.status) query = query.eq("status", filters.status);
   const from = (page - 1) * pageSize; const { data, error, count } = await query.order("created_at", { ascending: false }).range(from, from + pageSize - 1); if (error) throw error;
@@ -249,4 +308,4 @@ async function dashboard(profile, userId) {
   return { totalActive: rows.filter((r) => !["Expired","Revoked","Closed"].includes(r.status)).length, inOffice: rows.filter((r) => r.current_custody === "Office").length, issuedOut: rows.filter((r) => r.status === "Issued Out").length, returnOverdue: activeHandovers.requests.filter((r) => r.expected_return_date && r.expected_return_date < todayText).length, expiring30: rows.filter((r) => r.expiry_date >= todayText && r.expiry_date <= in30).length, expired: rows.filter((r) => r.expiry_date && r.expiry_date < todayText).length, renewalPending: rows.filter((r) => ["Renewal Initiated","Renewal in Progress"].includes(r.status)).length, freshPending: freshIssues.records.filter((r) => !["Completed","Rejected","Cancelled"].includes(r.status)).length, approvalPending: pendingHandovers.total, missingDamaged: rows.filter((r) => ["Lost / Missing","Damaged"].includes(r.status)).length, upcoming: rows.filter((r) => r.expiry_date >= todayText).slice(0,8) };
 }
 
-module.exports = { APPROVE_PERMISSION, EXPORT_PERMISSION, MANAGE_PERMISSION, addFreshToMaster, boxContents, boxes, canApprove, canExport, canManage, createDsc, createFresh, createHandover, dashboard, decideHandover, getDsc, listDsc, listGeneric, listHandovers, markMissing, recordOut, recordReturn, saveBox, saveSettings, settings, startRenewal, updateDsc };
+module.exports = { APPROVE_PERMISSION, EXPORT_PERMISSION, MANAGE_PERMISSION, addFreshToMaster, boxContents, boxes, canApprove, canExport, canManage, createDsc, createFresh, createHandover, dashboard, decideHandover, getDsc, importDscRows, listDsc, listGeneric, listHandovers, markMissing, recordOut, recordReturn, saveBox, saveSettings, settings, startRenewal, updateDsc };

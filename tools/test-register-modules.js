@@ -35,7 +35,9 @@ assert.match(reminderService, /dsc:return-overdue:/, "DSC overdue return alerts 
 assert.match(complaintRoutes, /requireAuth/, "complaint routes must require authentication");
 assert.match(dscRoutes, /requireAuth/, "DSC routes must require authentication");
 assert.match(client, /server-side|pageSize: 25|pageSize", 25/i, "register pages must use pagination");
-assert.match(client, /never enter PIN\/password|PINs and passwords are intentionally not stored/i, "DSC UI must warn against credential storage");
+assert.match(client, /PW is encrypted and masked.*never included/is, "DSC UI must explain protected credential handling");
+assert.match(dscService, /aes-256-gcm/, "DSC PW must use authenticated encryption");
+assert.match(dscService, /withoutPassword/, "DSC PW must be removed from browser responses");
 assert.match(app, /complaints: \(\) => window\.renderComplaintRegisterPage/, "Complaint Register must be integrated in navigation");
 assert.match(app, /dsc: \(\) => window\.renderDscRegisterPage/, "DSC Register must be integrated in navigation");
 assert.match(index, /register-client\.js/, "register client must load independently");
