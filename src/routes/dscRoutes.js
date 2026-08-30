@@ -43,7 +43,7 @@ async function exportDsc(req, res) {
     "C/O": row.care_of || "", PAN: row.pan || "", "Mobile No": row.mobile || "", Email: row.email || "",
     "DSC Type": row.dsc_type || "", "DSC Class": row.certificate_class || "", "Token Name": row.token_name || row.token_make || "",
     "Box Type": row.box_type || "", "Slot Position": row.slot_position || "", "Issue Date": row.issued_date || "",
-    "Valid From": row.valid_from || "", "Valid To": row.expiry_date || "", Remarks: row.remarks || "",
+    "Valid From": row.valid_from || "", "Valid To": row.expiry_date || "", Status: row.status || "", Remarks: row.remarks || "",
   }));
   if (req.params.format === "xlsx") {
     const worksheet = XLSX.utils.json_to_sheet(exportRows); worksheet["!cols"] = Object.keys(exportRows[0] || { Message: "" }).map((key) => ({ wch: Math.min(35, Math.max(12, key.length + 2)) }));

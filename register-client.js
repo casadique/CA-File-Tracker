@@ -267,7 +267,7 @@
   async function downloadDscSample() {
     await window.loadSheetJs?.();
     if (!window.XLSX) throw new Error("Excel support is unavailable. Please reload and try again.");
-    const sample = [{ "DSC HOLDER NAME":"","ENTITY NAME":"","DESIGNATION":"Director","C/O":"","PAN":"","PW":"","MOBILE NO":"","EMAIL":"","DSC TYPE":"","DSC CLASS":"Class III","TOKEN NAME":"Extratrust","BOX TYPE":"Blue","SLOT POSITION":"","ISSUE DATE":"","VALID FROM":"","VALID TO":"","REMARKS":"" }];
+    const sample = [{ "DSC HOLDER NAME":"","ENTITY NAME":"","DESIGNATION":"Director","C/O":"","PAN":"","PW":"","MOBILE NO":"","EMAIL":"","DSC TYPE":"","DSC CLASS":"Class III","TOKEN NAME":"Extratrust","BOX TYPE":"Blue","SLOT POSITION":"","ISSUE DATE":"","VALID FROM":"","VALID TO":"","STATUS":"","REMARKS":"" }];
     const sheet = XLSX.utils.json_to_sheet(sample); sheet["!cols"] = Object.keys(sample[0]).map((name) => ({ wch: Math.max(14,name.length+2) }));
     const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book,sheet,"DSC Import"); XLSX.writeFile(book,"DSC-Register-Import-Sample.xlsx");
   }
@@ -278,7 +278,7 @@
       await window.loadSheetJs?.(); if(!window.XLSX)throw new Error("Excel support is unavailable. Please reload and try again.");
       const book=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true}); const source=XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]],{defval:""});
       if(!source.length)throw new Error("The Excel file has no DSC rows.");
-      const rows=source.map((row,index)=>{let issue=dscExcelDate(row["ISSUE DATE"]),validFrom=dscExcelDate(row["VALID FROM"]),validTo=dscExcelDate(row["VALID TO"]);if(!validFrom&&issue)validFrom=issue;if(!validTo&&validFrom)validTo=dscAddYears(validFrom,2);return{holderName:row["DSC HOLDER NAME"],entityName:row["ENTITY NAME"],holderDesignation:row.DESIGNATION,careOf:row["C/O"],pan:row.PAN,password:row.PW,mobile:row["MOBILE NO"],email:row.EMAIL,dscType:row["DSC TYPE"],certificateClass:row["DSC CLASS"],tokenName:row["TOKEN NAME"],boxType:row["BOX TYPE"],slotPosition:row["SLOT POSITION"],issuedDate:issue,validFrom,expiryDate:validTo,remarks:row.REMARKS,importRow:index+2};});
+      const rows=source.map((row,index)=>{let issue=dscExcelDate(row["ISSUE DATE"]),validFrom=dscExcelDate(row["VALID FROM"]),validTo=dscExcelDate(row["VALID TO"]);if(!validFrom&&issue)validFrom=issue;if(!validTo&&validFrom)validTo=dscAddYears(validFrom,2);return{holderName:row["DSC HOLDER NAME"],entityName:row["ENTITY NAME"],holderDesignation:row.DESIGNATION,careOf:row["C/O"],pan:row.PAN,password:row.PW,mobile:row["MOBILE NO"],email:row.EMAIL,dscType:row["DSC TYPE"],certificateClass:row["DSC CLASS"],tokenName:row["TOKEN NAME"],boxType:row["BOX TYPE"],slotPosition:row["SLOT POSITION"],issuedDate:issue,validFrom,expiryDate:validTo,status:row.STATUS,remarks:row.REMARKS,importRow:index+2};});
       const result=await submitJson("/api/dsc/import","POST",{rows}); const errors=(result.results||[]).filter((item)=>!item.created);
       showModal("DSC Import Result",`<div class="register-kpi-grid">${kpi("Rows",result.total,"blue")}${kpi("Created",result.created,"green")}${kpi("Not Created",result.failed,"red")}</div>${errors.length?`<div class="register-card"><h4>Row-level Errors</h4>${errors.map((item)=>`<p>Row ${item.row}: ${esc(item.error)}</p>`).join("")}</div>`:`<p>All DSC records were imported successfully.</p>`}`);
     } catch(error) { toast(error.message); } finally { event.target.value=""; }

@@ -37,6 +37,13 @@ function addYears(dateText, years) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateText || ""))) return null;
   const date = new Date(`${dateText}T00:00:00Z`); date.setUTCFullYear(date.getUTCFullYear() + years); return date.toISOString().slice(0, 10);
 }
+function validityStatus(expiryDate) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(expiryDate || ""))) return "Active";
+  if (expiryDate < today) return "Expired";
+  const warningDate = new Date(`${today}T00:00:00Z`); warningDate.setUTCDate(warningDate.getUTCDate() + 30);
+  return expiryDate <= warningDate.toISOString().slice(0, 10) ? "Expiring Soon" : "Active";
+}
 function withoutPassword(record) {
   if (!record || typeof record !== "object") return record;
   const hasPasswordField = Object.prototype.hasOwnProperty.call(record, "password_encrypted");
@@ -104,10 +111,10 @@ function dscPayload(input, req, existing = {}) {
   if (!entityName || !holderName || !tokenName) throw fail("DSC Holder Name, Entity Name and Token Name are required.");
   const remarks = text(input.remarks, 5000);
   if (/(pin|password|passwd|pwd)\s*[:=]/i.test(remarks)) throw fail("Do not store a DSC PIN or password in Remarks.");
-  const status = DSC_STATUSES.includes(input.status) ? input.status : (existing.status || "In Office");
   const issuedDate = input.issuedDate || input.issued_date || existing.issued_date || null;
   const validFrom = input.validFrom || input.valid_from || existing.valid_from || issuedDate;
   const expiryDate = input.expiryDate || input.expiry_date || existing.expiry_date || addYears(validFrom, 2);
+  const status = DSC_STATUSES.includes(input.status) ? input.status : (existing.status || validityStatus(expiryDate));
   return {
     client_id: input.clientId || input.client_id || existing.client_id || null, client_name: clientName,
     pan: text(input.pan, 40) || null, entity_name: entityName,
@@ -167,7 +174,7 @@ async function importDscRows(rows, req) {
       const entityName = text(row.entityName, 240) || text(row.holderName, 240) || `Entity Not Provided - Row ${index + 2}`;
       const holderName = text(row.holderName, 240) || entityName;
       const tokenName = text(row.tokenName, 240) || `Not Provided - Row ${index + 2}`;
-      const result = await createDsc({ ...row, entityName, clientName: entityName, holderName, tokenName, status: "In Office" }, req);
+      const result = await createDsc({ ...row, entityName, clientName: entityName, holderName, tokenName }, req);
       results.push({ row: index + 2, created: true, id: result.record.id });
     } catch (error) {
       results.push({ row: index + 2, created: false, error: error.message });
