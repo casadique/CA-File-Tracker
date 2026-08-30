@@ -7,12 +7,12 @@ const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const standalone = fs.readFileSync(path.join(root, "CA File Tracker.html"), "utf8");
 
-assert.match(server, /req\.path === "\/app\.js" \|\| req\.path === "\/styles\.css"[\s\S]*?"no-cache, must-revalidate"/,
-  "First-party app assets must revalidate instead of remaining immutable for a year");
+assert.match(server, /req\.path === "\/app\.js" \|\| req\.path === "\/styles\.css"[\s\S]*?req\.query\.v \? "public, max-age=31536000, immutable" : "no-cache, must-revalidate"/,
+  "Versioned first-party assets must be immutable while unversioned source assets revalidate");
 
 function assetVersions(html, label) {
   const css = html.match(/styles\.css\?v=([^"']+)/)?.[1];
-  const js = html.match(/app\.js\?v=([^"']+)/)?.[1];
+  const js = html.match(/app\.min\.js\?v=([^"']+)/)?.[1];
   assert.ok(css && js, `${label} must version both main assets`);
   assert.equal(css, js, `${label} must use the same app and stylesheet version`);
   assert.notEqual(js, "20260805-status-sort-v55", `${label} must not reuse the stale v55 bundle`);
