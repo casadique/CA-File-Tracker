@@ -7,6 +7,9 @@ const USER_PERMISSIONS = new Set([
   "edit_client_credentials",
   "manage_client_masters",
   "can_assign_todo",
+  "manage_dsc",
+  "approve_dsc_handover",
+  "export_dsc",
 ]);
 const TODO_ASSIGNER_MIGRATION_VERSION = "todo-assigners-v1-2026-08-18";
 const INITIAL_TODO_ASSIGNERS = new Set(["nisha", "althaf", "rizwana", "najma", "chindu"]);

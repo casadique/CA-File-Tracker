@@ -15,6 +15,8 @@ const clientRoutes = require("./clientRoutes");
 const notificationRoutes = require("./notificationRoutes");
 const invoiceRoutes = require("./invoiceRoutes");
 const todoRoutes = require("./todoRoutes");
+const complaintRoutes = require("./complaintRoutes");
+const dscRoutes = require("./dscRoutes");
 const { env } = require("../config/env");
 
 const router = express.Router();
@@ -42,5 +44,7 @@ router.use("/storage", storageRoutes);
 router.use("/exports", exportRoutes);
 router.use("/invoices", invoiceRoutes);
 router.use("/todos", todoRoutes);
+router.use("/complaints", complaintRoutes);
+router.use("/dsc", dscRoutes);
 
 module.exports = router;

@@ -1379,7 +1379,7 @@ function openDesktopNotificationTarget(notification = {}) {
     resetFilters();
     state.filters.listView = fileViews[page];
   } else {
-    activePage = ["dashboard", "todo", "files", "expenses", "visitors", "dailyReport"].includes(page) ? page : "dashboard";
+    activePage = ["dashboard", "todo", "files", "expenses", "visitors", "dailyReport", "complaints", "dsc"].includes(page) ? page : "dashboard";
   }
   if (page === "todo" && typeof todoUi !== "undefined") todoUi.focusTask = route.searchParams.get("todo") || "";
   const notificationId = String(notification.id || "");
@@ -3319,6 +3319,17 @@ function loggedInUser() {
     || sessionUserFallback();
 }
 
+window.getRegisterContext = function getRegisterContext() {
+  const user = loggedInUser() || {};
+  return {
+    role: state.currentRole || user.role || "Staff",
+    user,
+    permissions: Array.isArray(user.permissions)
+      ? user.permissions
+      : Object.keys(user.permissions || {}).filter((key) => user.permissions[key]),
+  };
+};
+
 function sessionUserFallback() {
   const name = String(state.currentUser || "").trim();
   const email = String(state.session?.userEmail || "").trim();
@@ -4606,6 +4617,8 @@ function mount() {
         <section class="page" id="staff"></section>
         <section class="page" id="staffDetails"></section>
         <section class="page" id="clientMaster"></section>
+        <section class="page" id="complaints"></section>
+        <section class="page" id="dsc"></section>
         <section class="page" id="users"></section>
         <section class="page" id="invites"></section>
         <section class="page" id="visitors"></section>
@@ -5012,7 +5025,15 @@ function renderNav() {
         persistAddCollectionDraft();
         if (!confirm("Leave Add Collection? Your unfinished draft will be kept for this session.")) return;
       }
-      if (fileViews[page]) {
+      if (page.startsWith("complaints-")) {
+        activePage = "complaints";
+        window.openComplaintTab?.(page.slice("complaints-".length));
+        saveTabSession();
+      } else if (page.startsWith("dsc-")) {
+        activePage = "dsc";
+        window.openDscTab?.(page.slice("dsc-".length));
+        saveTabSession();
+      } else if (fileViews[page]) {
         persistConfiguredFinancialFilterValues(state.filters.listView);
         activePage = "files";
         resetFilters();
@@ -5053,7 +5074,7 @@ function renderAll() {
   if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
   if (activePage === "staffDetails" && !canUseStaffDetails()) activePage = "dashboard";
   if (activePage === "clientMaster" && !["Admin", "Manager"].includes(normalizeRole(state.currentRole))) activePage = "dashboard";
-  if (isStaffLogin() && !["dashboard", "todo", "files", "staffDetails"].includes(activePage)) activePage = "dashboard";
+  if (isStaffLogin() && !["dashboard", "todo", "files", "staffDetails", "complaints", "dsc"].includes(activePage)) activePage = "dashboard";
   if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "billed", "feePending", "feeReceived"].includes(state.filters.listView) && !state.filters.fromDashboard) {
     state.filters.listView = "active";
   }
@@ -5075,6 +5096,8 @@ function renderAll() {
     staff: ["Staff Performance", ""],
     staffDetails: ["Staff Details", "Manage employee information, birthdays and work anniversaries"],
     clientMaster: ["Client Master", "Central client identity, contact and file history"],
+    complaints: ["Complaints & Service Issues", "Assignment, SLA, follow-up, resolution and root cause management"],
+    dsc: ["DSC Register & Custody", "Storage, handover permission, custody, expiry and renewal tracking"],
     users: ["User Management", ""],
     invites: ["Team Invitation", ""],
     visitors: ["Visitors", "Visitor register and office meeting log"],
@@ -5134,6 +5157,8 @@ function renderActivePage() {
     staff: renderStaffPage,
     staffDetails: renderStaffDetailsPage,
     clientMaster: renderClientMasterPage,
+    complaints: () => window.renderComplaintRegisterPage?.(),
+    dsc: () => window.renderDscRegisterPage?.(),
     users: renderUsersPage,
     visitors: renderVisitorsPage,
     dailyReport: renderDailyReportPage,
@@ -5355,6 +5380,19 @@ function navGroupDefinitions() {
         navItem("fee-received", "rupee", "Fee Received", "feeReceived"),
         navItem("non-billed-files", "receipt", "Non Billed Files", "nonBilled"),
       ] },
+      { key: "complaints", label: "Complaints & Service Issues", collapsible: true, items: [
+        navItem("complaints-dashboard", "dashboard", "Dashboard"),
+        navItem("complaints-all", "chat", "All Complaints"),
+        navItem("complaints-open", "pending", "Open Complaints"),
+        navItem("complaints-assigned", "users", "Assigned to Me"),
+        navItem("complaints-pending-client", "pending", "Pending Client Response"),
+      ] },
+      { key: "dsc", label: "DSC Register & Custody", collapsible: true, items: [
+        navItem("dsc-dashboard", "dashboard", "DSC Dashboard"),
+        navItem("dsc-master", "lock", "DSC Master"),
+        navItem("dsc-handover", "users", "Handover Requests"),
+        navItem("dsc-expiry", "pending", "Expiry Register"),
+      ] },
     ];
   }
   return [
@@ -5377,6 +5415,30 @@ function navGroupDefinitions() {
       navItem("billed-files", "invoice", "Billed Files", "billed"),
       navItem("fee-pending", "rupee", "Fee Pending", "feePending"),
       navItem("fee-received", "rupee", "Fee Received", "feeReceived"),
+    ] },
+    { key: "complaints", label: "Complaints & Service Issues", collapsible: true, items: [
+      navItem("complaints-dashboard", "dashboard", "Dashboard"),
+      navItem("complaints-all", "chat", "All Complaints"),
+      navItem("complaints-open", "pending", "Open Complaints"),
+      navItem("complaints-assigned", "users", "Assigned to Me"),
+      navItem("complaints-pending-client", "pending", "Pending Client Response"),
+      navItem("complaints-escalated", "pending", "Escalated"),
+      navItem("complaints-resolved", "check", "Resolved"),
+      navItem("complaints-closed", "check", "Closed"),
+      navItem("complaints-reports", "report", "Complaint Reports"),
+      navItem("complaints-settings", "lock", "Complaint Settings"),
+    ] },
+    { key: "dsc", label: "DSC Register & Custody", collapsible: true, items: [
+      navItem("dsc-dashboard", "dashboard", "DSC Dashboard"),
+      navItem("dsc-master", "lock", "DSC Master"),
+      navItem("dsc-movements", "report", "DSC In & Out"),
+      navItem("dsc-fresh", "file", "Fresh Issue Tracker"),
+      navItem("dsc-renewal", "task", "Renewal Tracker"),
+      navItem("dsc-expiry", "pending", "Expiry Register"),
+      navItem("dsc-handover", "users", "Handover Requests"),
+      navItem("dsc-boxes", "database", "Box / Storage Register"),
+      navItem("dsc-reports", "report", "DSC Reports"),
+      navItem("dsc-settings", "lock", "DSC Settings"),
     ] },
     { key: "reports", label: "Reports & Operations", collapsible: true, items: [
       navItem("dailyReport", "report", "Daily Report M&A"),
@@ -5406,10 +5468,12 @@ function navItemButton(item, fileViews, counts) {
 }
 
 function navItemActive(id, fileViews) {
+  const complaintActive = id.startsWith("complaints-") && activePage === "complaints" && window.getCurrentRegisterTab?.("complaint") === id.slice("complaints-".length);
+  const dscActive = id.startsWith("dsc-") && activePage === "dsc" && window.getCurrentRegisterTab?.("dsc") === id.slice("dsc-".length);
   const specialActive = fileViews[id] && activePage === "files" && state.filters.listView === fileViews[id] && !(id === "active-files" && state.filters.dashboardKind === "myTask");
   const normalActive = activePage === id && !fileViews[id] && (id !== "files" || !state.filters.listView);
   const myTaskActive = id === "my-task" && activePage === "files" && state.filters.listView === "active" && state.filters.dashboardKind === "myTask" && isStaffLogin();
-  return Boolean(normalActive || specialActive || myTaskActive);
+  return Boolean(normalActive || specialActive || myTaskActive || complaintActive || dscActive);
 }
 
 function navBadgeCounts() {
@@ -12556,12 +12620,13 @@ async function openClientProfile(id) {
   const page = document.querySelector("#clientMaster"); page.innerHTML = `<div class="panel-card">Loading client profile...</div>`;
   try {
     const [data, auditData] = await Promise.all([apiJson(`/api/clients/${id}/profile`), apiJson(`/api/clients/${id}/audit`)]); const client = data.client; const summary = data.summary;
-    page.innerHTML = `<div class="client-profile-head panel-card"><button class="mini-button" id="clientProfileBack">Back</button><div><span class="eyebrow">${escapeHtml(client.client_code)}</span><h2>${escapeHtml(client.client_name)}</h2><p>${escapeHtml(client.pan_reg_no || "PAN/Regn No. not available")} - ${escapeHtml((client.client_types || []).join(" | ") || client.client_type)}</p></div><div class="client-toolbar-actions"><button class="primary-button" id="clientProfileAddFile">Add New File for This Client</button><button class="secondary-button" id="clientProfileSync">Sync Latest Details to Active Files</button>${canViewClientCredentials() ? `<button class="secondary-button client-credential-action" id="clientProfileCredentials">View Portal Credentials</button>` : ""}</div></div>
+    page.innerHTML = `<div class="client-profile-head panel-card"><button class="mini-button" id="clientProfileBack">Back</button><div><span class="eyebrow">${escapeHtml(client.client_code)}</span><h2>${escapeHtml(client.client_name)}</h2><p>${escapeHtml(client.pan_reg_no || "PAN/Regn No. not available")} - ${escapeHtml((client.client_types || []).join(" | ") || client.client_type)}</p></div><div class="client-toolbar-actions"><button class="primary-button" id="clientProfileAddFile">Add New File for This Client</button><button class="secondary-button" id="clientProfileDsc">View DSC Records</button><button class="secondary-button" id="clientProfileSync">Sync Latest Details to Active Files</button>${canViewClientCredentials() ? `<button class="secondary-button client-credential-action" id="clientProfileCredentials">View Portal Credentials</button>` : ""}</div></div>
       <div class="client-profile-grid">${Object.entries({ "Total Files": summary.totalFiles, "Active Files": summary.activeFiles, "Completed Files": summary.completedFiles, "Overdue Files": summary.overdueFiles, "Non-Billed": summary.nonBilledFiles, "Fee Pending": summary.feePendingFiles }).map(([label, value]) => `<div class="client-profile-stat"><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>
       <div class="client-detail-sections">${clientProfileSection("Basic Details", { "Client Name": client.client_name, "Client Type": (client.client_types || []).join(" | ") || client.client_type, "C/o": client.care_of, Constitution: client.constitution, Status: client.status })}${clientProfileSection("Registration Details", { PAN: client.pan_reg_no, TAN: client.tan, "GST No.": client.gst_no, CIN: client.cin, "Other Regn No.": client.other_regn_no })}${clientProfileSection("Contact Details", { "Contact Person": client.contact_person, "Contact No.": client.contact_number, "Email ID": client.email, Place: client.place, Address: client.address })}${clientProfileSection("Additional Details", { Remarks: client.remarks })}</div>
       <div class="client-profile-content"><div class="panel-card"><h3>Recent Files</h3><div class="table-wrap"><table><thead><tr><th>Client</th><th>Service</th><th>FY</th><th>Status</th><th>Last Updated</th></tr></thead><tbody>${data.recentFiles.length ? data.recentFiles.map((file) => `<tr><td>${escapeHtml(file.name)}</td><td>${escapeHtml(file.serviceType || "-")}</td><td>${escapeHtml(file.fy || "-")}</td><td>${escapeHtml(currentWorkflowStage(file))}</td><td>${escapeHtml(fmt(file.updatedAt || file.lastUpdatedDate))}</td></tr>`).join("") : `<tr><td colspan="5">No linked files.</td></tr>`}</tbody></table></div></div><div class="panel-card client-audit-panel"><h3>Client Activity</h3><div class="client-audit-list">${auditData.events?.length ? auditData.events.map((event) => `<article><span><strong>${escapeHtml(event.action)}</strong><small>${escapeHtml(event.actor_name || "System")}</small></span><time>${escapeHtml(fmt(event.created_at))}</time></article>`).join("") : `<p class="small-muted">No client activity recorded.</p>`}</div></div></div>`;
     document.querySelector("#clientProfileBack").onclick = renderClientMasterPage;
     document.querySelector("#clientProfileAddFile").onclick = () => { selectedDrawerClient = client; openFileDrawer(); setTimeout(() => selectClientForFile(client), 0); };
+    document.querySelector("#clientProfileDsc").onclick = () => { activePage = "dsc"; window.openDscForClient?.(client.client_name); renderAll(); };
     document.querySelector("#clientProfileSync").onclick = async () => { if (!confirm("Update identity details on linked active files? Completed and billed file snapshots will remain unchanged.")) return; const result = await apiJson(`/api/clients/${id}/sync-active-files`, { method: "POST" }); toast(`${result.updated} active file(s) updated.`); };
     document.querySelector("#clientProfileCredentials")?.addEventListener("click", () => openClientCredentials(id));
   } catch (error) { page.innerHTML = `<div class="permission-note">${escapeHtml(error.message)}</div>`; }
@@ -15186,7 +15251,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="newUserRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
-        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>User Permissions</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="newUserManageClientMasters" type="checkbox"> Manage client types and masters</label><label class="permission-check"><input id="newUserCanAssignTodo" type="checkbox"> Assign To-Do tasks to others</label></div>` : ""}
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>User Permissions</label><label class="permission-check"><input id="newUserViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="newUserEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="newUserManageClientMasters" type="checkbox"> Manage client types and masters</label><label class="permission-check"><input id="newUserCanAssignTodo" type="checkbox"> Assign To-Do tasks to others</label><label class="permission-check"><input id="newUserManageDsc" type="checkbox"> Authorized DSC Custodian</label><label class="permission-check"><input id="newUserApproveDsc" type="checkbox"> Approve DSC handovers</label><label class="permission-check"><input id="newUserExportDsc" type="checkbox"> Export DSC registers</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="createUser" ${canManage && rolePerm().roles ? "" : "disabled"}>Create User</button>
@@ -15213,7 +15278,7 @@ function renderUsersPage() {
           <label>Access Type</label>
           <select id="accessRole" ${canManage && rolePerm().roles ? "" : "disabled"}>${roles.map(([role]) => `<option>${role}</option>`).join("")}</select>
         </div>
-        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>User Permissions</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="accessManageClientMasters" type="checkbox"> Manage client types and masters</label><label class="permission-check"><input id="accessCanAssignTodo" type="checkbox"> Assign To-Do tasks to others</label></div>` : ""}
+        ${normalizeRole(state.currentRole) === "Admin" ? `<div class="field client-permission-field"><label>User Permissions</label><label class="permission-check"><input id="accessViewCredentials" type="checkbox"> View credentials</label><label class="permission-check"><input id="accessEditCredentials" type="checkbox"> Edit credentials</label><label class="permission-check"><input id="accessManageClientMasters" type="checkbox"> Manage client types and masters</label><label class="permission-check"><input id="accessCanAssignTodo" type="checkbox"> Assign To-Do tasks to others</label><label class="permission-check"><input id="accessManageDsc" type="checkbox"> Authorized DSC Custodian</label><label class="permission-check"><input id="accessApproveDsc" type="checkbox"> Approve DSC handovers</label><label class="permission-check"><input id="accessExportDsc" type="checkbox"> Export DSC registers</label></div>` : ""}
         <div class="field">
           <label>Action</label>
           <button class="primary-button" id="updateAccess" ${canManage && rolePerm().roles ? "" : "disabled"}>Update User</button>
@@ -15247,6 +15312,9 @@ function renderUsersPage() {
     if (document.querySelector("#accessEditCredentials")) document.querySelector("#accessEditCredentials").checked = permissions.includes("edit_client_credentials");
     if (document.querySelector("#accessManageClientMasters")) document.querySelector("#accessManageClientMasters").checked = permissions.includes("manage_client_masters");
     if (document.querySelector("#accessCanAssignTodo")) document.querySelector("#accessCanAssignTodo").checked = selected?.role === "Admin" || permissions.includes("can_assign_todo");
+    if (document.querySelector("#accessManageDsc")) document.querySelector("#accessManageDsc").checked = permissions.includes("manage_dsc");
+    if (document.querySelector("#accessApproveDsc")) document.querySelector("#accessApproveDsc").checked = permissions.includes("approve_dsc_handover");
+    if (document.querySelector("#accessExportDsc")) document.querySelector("#accessExportDsc").checked = permissions.includes("export_dsc");
   };
   setAccessForm();
   accessUser.onchange = setAccessForm;
@@ -15260,6 +15328,9 @@ function renderUsersPage() {
       document.querySelector("#newUserEditCredentials")?.checked ? "edit_client_credentials" : "",
       document.querySelector("#newUserManageClientMasters")?.checked ? "manage_client_masters" : "",
       document.querySelector("#newUserCanAssignTodo")?.checked || role === "Admin" ? "can_assign_todo" : "",
+      document.querySelector("#newUserManageDsc")?.checked ? "manage_dsc" : "",
+      document.querySelector("#newUserApproveDsc")?.checked ? "approve_dsc_handover" : "",
+      document.querySelector("#newUserExportDsc")?.checked ? "export_dsc" : "",
     ].filter(Boolean);
     if (!name || !email || !password) return toast("Please enter name, email and password.");
     if (apiToken() && sessionStorage.getItem(API_MODE_KEY) === "supabase") {
@@ -15295,6 +15366,9 @@ function renderUsersPage() {
       document.querySelector("#accessEditCredentials")?.checked ? "edit_client_credentials" : "",
       document.querySelector("#accessManageClientMasters")?.checked ? "manage_client_masters" : "",
       document.querySelector("#accessCanAssignTodo")?.checked || normalizeRole(accessRole.value) === "Admin" ? "can_assign_todo" : "",
+      document.querySelector("#accessManageDsc")?.checked ? "manage_dsc" : "",
+      document.querySelector("#accessApproveDsc")?.checked ? "approve_dsc_handover" : "",
+      document.querySelector("#accessExportDsc")?.checked ? "export_dsc" : "",
     ].filter(Boolean);
     if (!email) return toast("Please enter email ID.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Please enter a valid email ID.");

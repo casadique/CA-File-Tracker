@@ -16,6 +16,7 @@ const { getAppStateRecord, migrateDisplayNames, migrateServiceTypes, migrateNoti
 const { dispatchDueReminders } = require("./src/services/pushNotificationService");
 const { migrateTodoAssignmentPermissions } = require("./src/services/userService");
 const { reconcileFileShadow, relationalShadowWriteEnabled } = require("./src/services/fileRecordService");
+const { dispatchRegisterReminders } = require("./src/services/registerReminderService");
 
 const app = express();
 const publicRoot = __dirname;
@@ -129,6 +130,9 @@ async function startServer() {
   // Minute-level polling is required for the exact allotted-at + 3 hour reminder.
   // Database/event idempotency makes retries safe across restarts or multiple workers.
   setInterval(runDueReminders, 60 * 1000).unref();
+  const runRegisterReminders = () => dispatchRegisterReminders().catch((error) => console.error("Complaint/DSC reminder dispatch failed:", error.message));
+  setTimeout(runRegisterReminders, 25 * 1000).unref();
+  setInterval(runRegisterReminders, 15 * 60 * 1000).unref();
 }
 
 startServer();

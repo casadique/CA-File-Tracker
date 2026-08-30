@@ -40,6 +40,7 @@
     "test:due-date-permissions": "node tools/test-due-date-permissions.js",
     "test:asset-cache": "node tools/test-first-party-cache-policy.js",
     "test:minified-client": "node tools/test-minified-client-bundle.js",
+    "test:registers": "node tools/test-register-modules.js",
     "test:correction-required": "node tools/test-correction-required-modernization.js",
     "test:reassigned-files": "node tools/test-reassigned-files-modernization.js",
     "test:correction-workflow": "node tools/test-correction-workflow.js",
