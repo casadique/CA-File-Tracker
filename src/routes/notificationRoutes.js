@@ -15,7 +15,8 @@ const {
   deliverySummary,
 } = require("../services/pushNotificationService");
 const { env } = require("../config/env");
-const { patchAppState } = require("../services/appStateService");
+const { patchAppState, getNotificationSnapshotRecord } = require("../services/appStateService");
+const { visibleNotificationRows } = require("../services/notificationRetentionService");
 
 const router = express.Router();
 const announcementLimiter = rateLimit({
@@ -24,6 +25,21 @@ const announcementLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many announcements. Please try again later." },
+});
+
+router.get("/history", requireAuth, async (req, res, next) => {
+  try {
+    const record = await getNotificationSnapshotRecord();
+    const stateContext = {
+      notificationRetention: record.notificationRetention,
+      users: record.users,
+    };
+    res.json({
+      ok: true,
+      notifications: visibleNotificationRows(record.notifications, stateContext, req.profile, req.user.id),
+      updatedAt: record.updatedAt,
+    });
+  } catch (error) { next(error); }
 });
 
 router.get("/config", requireAuth, async (req, res, next) => {

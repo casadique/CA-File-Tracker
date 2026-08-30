@@ -5,6 +5,7 @@ const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
 const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
 const FILE_SNAPSHOT_VERSION_KEY = `${STORAGE_KEY}-file-snapshot-version`;
+const NOTIFICATION_SNAPSHOT_USER_KEY = `${STORAGE_KEY}-notification-snapshot-user`;
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
 const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
@@ -414,6 +415,7 @@ let remoteSaveTimer = null;
 let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
 let centralImportInFlight = false;
+let notificationHistoryRefreshInFlight = false;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
 let dashboardCountsSnapshot = null;
@@ -1921,6 +1923,7 @@ async function loadStateFromApi() {
     dashboardCountsSnapshot = payload.dashboardCounts || null;
     centralStateLoading = false;
     applyCentralState(payload.state, { targetPage: activePage || "dashboard", rerender: true });
+    refreshNotificationHistoryFromApi();
     sessionStorage.setItem(API_MODE_KEY, "supabase");
     return true;
   } catch (error) {
@@ -1933,12 +1936,18 @@ async function loadStateFromApi() {
 async function loadSplitCentralStateFromApi() {
   try {
     const cachedFiles = Array.isArray(state.files) ? state.files : [];
+    const notificationUserKey = notificationSnapshotUserKey();
+    const cachedNotifications = notificationUserKey
+      && localStorage.getItem(NOTIFICATION_SNAPSHOT_USER_KEY) === notificationUserKey
+      && Array.isArray(state.fileNotifications)
+      ? state.fileNotifications
+      : [];
     const firstLoadSnapshot = cachedFiles.length ? null : apiJson("/api/files/snapshot");
     const [statePayload, versionPayload] = await Promise.all([
       apiJson("/api/state?excludeFiles=1"),
       apiJson("/api/files/snapshot/version"),
     ]);
-    if (!statePayload?.state || statePayload.filesExcluded !== true) {
+    if (!statePayload?.state || statePayload.filesExcluded !== true || statePayload.notificationsExcluded !== true) {
       throw new Error("Split startup response was incomplete.");
     }
     const cachedVersion = localStorage.getItem(FILE_SNAPSHOT_VERSION_KEY) || "";
@@ -1958,7 +1967,7 @@ async function loadSplitCentralStateFromApi() {
     else localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
     return {
       ...statePayload,
-      state: { ...statePayload.state, files: filePayload.files },
+      state: { ...statePayload.state, files: filePayload.files, fileNotifications: cachedNotifications },
       fileReadSource: filePayload.source || "unknown",
     };
   } catch (error) {
@@ -1966,6 +1975,43 @@ async function loadSplitCentralStateFromApi() {
     localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
     return apiJson("/api/state");
   }
+}
+
+async function refreshNotificationHistoryFromApi() {
+  if (!apiToken() || notificationHistoryRefreshInFlight) return false;
+  const requestUserKey = notificationSnapshotUserKey();
+  notificationHistoryRefreshInFlight = true;
+  try {
+    const payload = await apiJson("/api/notifications/history");
+    if (!Array.isArray(payload?.notifications)) throw new Error("Notification history response was incomplete.");
+    if (!requestUserKey || requestUserKey !== notificationSnapshotUserKey()) return false;
+    state.fileNotifications = dedupeFileNotifications(payload.notifications);
+    localStorage.setItem(NOTIFICATION_SNAPSHOT_USER_KEY, requestUserKey);
+    saveState({ skipMerge: true, skipRemote: true });
+    updateTopActionBadges();
+    dispatchLocalDesktopNotifications();
+    if (document.querySelector("#notificationPanel")?.classList.contains("open")) openNotifications();
+    return true;
+  } catch (error) {
+    console.warn("Notification history refresh failed; keeping the locally cached history.", error);
+    return false;
+  } finally {
+    notificationHistoryRefreshInFlight = false;
+  }
+}
+
+function notificationSnapshotUserKey() {
+  const user = loggedInUser() || {};
+  return String(
+    state.session?.userId
+    || state.session?.authUserId
+    || user.authUserId
+    || user.auth_user_id
+    || user.id
+    || user.email
+    || state.currentUser
+    || ""
+  ).trim().toLowerCase();
 }
 
 async function refreshCentralState(options = {}) {
@@ -1985,6 +2031,7 @@ async function refreshCentralState(options = {}) {
     const userIsScrollingDashboard = activePage === "dashboard" && Date.now() - lastDashboardScrollAt < 700;
     const preserveIndependentPage = activePage === "clientMaster" && Boolean(document.querySelector("#clientMaster .client-master-shell"));
     applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard && !preserveIndependentPage });
+    refreshNotificationHistoryFromApi();
     updateTopActionBadges();
     dispatchLocalDesktopNotifications();
     if (userIsScrollingDashboard && !chatOpen) scheduleDashboardRefreshRender();

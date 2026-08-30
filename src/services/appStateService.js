@@ -45,6 +45,21 @@ async function getAppStateWithoutFilesRecord() {
   return record;
 }
 
+async function getNotificationSnapshotRecord() {
+  const startedAt = perfStart();
+  const { data, error } = await supabaseAdmin.rpc("get_notification_snapshot");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  const record = {
+    notifications: Array.isArray(row?.notifications) ? row.notifications : [],
+    notificationRetention: row?.notification_retention || {},
+    users: Array.isArray(row?.users) ? row.users : [],
+    updatedAt: row?.updated_at || null,
+  };
+  perfLog("getNotificationSnapshotRecord", startedAt, { notifications: record.notifications.length });
+  return record;
+}
+
 async function getAppStateRecord(options = {}) {
   if (!options.bypassCache && appStateCache && Date.now() - appStateCache.cachedAt <= APP_STATE_CACHE_TTL_MS) {
     return cloneCachedRecord(appStateCache);
@@ -809,6 +824,7 @@ module.exports = {
   getAppState,
   getAppStateRecord,
   getAppStateWithoutFilesRecord,
+  getNotificationSnapshotRecord,
   saveAppState,
   saveAppStateIfCurrent,
   saveAppStateOperationsIfCurrent,

@@ -27,6 +27,7 @@ router.get("/", requireAuth, async (req, res, next) => {
       updatedAt: record.updatedAt,
       profile: req.profile,
       filesExcluded: excludeFiles,
+      notificationsExcluded: excludeFiles,
     });
   } catch (error) {
     next(error);

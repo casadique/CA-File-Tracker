@@ -33,6 +33,43 @@ function activeNotificationRows(rows = [], state = {}, now = Date.now()) {
     .sort((left, right) => notificationTimestamp(right) - notificationTimestamp(left));
 }
 
+function visibleNotificationRows(rows = [], state = {}, profile = {}, userId = "", now = Date.now()) {
+  const active = activeNotificationRows(rows, state, now);
+  if (["Admin", "Manager", "Staff Manager"].includes(profile?.role)) return active;
+
+  const profileKeys = new Set([userId, profile?.id, profile?.email, profile?.name]
+    .map(identityKey)
+    .filter(Boolean));
+  const matchedUser = (state.users || []).find((user) =>
+    [user.id, user.authUserId, user.auth_user_id, user.email, user.name]
+      .map(identityKey)
+      .some((key) => key && profileKeys.has(key))
+  );
+  [matchedUser?.id, matchedUser?.authUserId, matchedUser?.auth_user_id, matchedUser?.email, matchedUser?.name]
+    .map(identityKey)
+    .filter(Boolean)
+    .forEach((key) => profileKeys.add(key));
+
+  return active.filter((notice) =>
+    [
+      notice.targetUserId,
+      notice.target_user_id,
+      notice.targetUserAuthId,
+      notice.target_user_auth_id,
+      notice.targetUserEmail,
+      notice.target_user_email,
+      notice.targetUserName,
+      notice.target_user_name,
+      notice.user_id,
+      notice.userId,
+    ].map(identityKey).some((key) => key && profileKeys.has(key))
+  );
+}
+
+function identityKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function archiveExpiredNotificationRows(rows = [], state = {}, now = Date.now()) {
   const cutoff = notificationCutoffTime(state, now);
   const archivedAt = new Date(now).toISOString();
@@ -181,6 +218,7 @@ module.exports = {
   notificationTimestamp,
   notificationCutoffTime,
   activeNotificationRows,
+  visibleNotificationRows,
   archiveExpiredNotificationRows,
   applyInitialNotificationCleanup,
   VERIFIED_DUPLICATE_CLEANUP_VERSION,

@@ -47,6 +47,7 @@
     "test:file-relational-phase1": "node tools/test-file-relational-phase1.js",
     "test:file-relational-read": "node tools/test-file-relational-read.js",
     "test:split-startup-state": "node tools/test-split-startup-state.js",
+    "test:notification-startup-split": "node tools/test-notification-startup-split.js",
     "test:file-list-pagination": "node tools/test-file-list-pagination.js",
     "test:state-cache": "node tools/test-state-cache-performance.js",
     "test:todo-permissions": "node tools/test-todo-permissions.js",
