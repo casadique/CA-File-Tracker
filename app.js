@@ -4,6 +4,7 @@ const SYNC_EVENT_KEY = `${STORAGE_KEY}-sync-event`;
 const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
 const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
+const FILE_SNAPSHOT_VERSION_KEY = `${STORAGE_KEY}-file-snapshot-version`;
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
 const ACTIVE_FILE_DATA_RESET_VERSION = "active-files-cleared-2026-07-14";
@@ -450,6 +451,11 @@ const clientMasterUi = {
   renderRequestId: 0,
   masters: null,
   moreFiltersOpen: false,
+};
+const fileListPageUi = {
+  page: 1,
+  pageSize: 50,
+  signature: "",
 };
 const fileSaveRequests = new Set();
 const PERF_LOG_ENABLED = (() => {
@@ -1926,13 +1932,30 @@ async function loadStateFromApi() {
 
 async function loadSplitCentralStateFromApi() {
   try {
-    const [statePayload, filePayload] = await Promise.all([
+    const cachedFiles = Array.isArray(state.files) ? state.files : [];
+    const firstLoadSnapshot = cachedFiles.length ? null : apiJson("/api/files/snapshot");
+    const [statePayload, versionPayload] = await Promise.all([
       apiJson("/api/state?excludeFiles=1"),
-      apiJson("/api/files/snapshot"),
+      apiJson("/api/files/snapshot/version"),
     ]);
-    if (!statePayload?.state || statePayload.filesExcluded !== true || !Array.isArray(filePayload?.files)) {
+    if (!statePayload?.state || statePayload.filesExcluded !== true) {
       throw new Error("Split startup response was incomplete.");
     }
+    const cachedVersion = localStorage.getItem(FILE_SNAPSHOT_VERSION_KEY) || "";
+    const canReuseFiles = Boolean(
+      cachedFiles.length
+      && versionPayload?.available
+      && versionPayload.updatedAt
+      && cachedVersion === versionPayload.updatedAt
+      && cachedFiles.length === Number(versionPayload.total || 0)
+    );
+    const filePayload = canReuseFiles
+      ? { files: cachedFiles, source: "browser-cache", updatedAt: cachedVersion }
+      : await (firstLoadSnapshot || apiJson("/api/files/snapshot"));
+    if (!Array.isArray(filePayload?.files)) throw new Error("File snapshot response was incomplete.");
+    const snapshotVersion = filePayload.updatedAt || versionPayload?.updatedAt || "";
+    if (snapshotVersion) localStorage.setItem(FILE_SNAPSHOT_VERSION_KEY, snapshotVersion);
+    else localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
     return {
       ...statePayload,
       state: { ...statePayload.state, files: filePayload.files },
@@ -1940,6 +1963,7 @@ async function loadSplitCentralStateFromApi() {
     };
   } catch (error) {
     console.warn("Split central load failed; retrying the full compatible state.", error);
+    localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
     return apiJson("/api/state");
   }
 }
@@ -6778,22 +6802,90 @@ function configuredFinancialFileMatches(file, listView, filters) {
   return true;
 }
 
+function fileListPageSignature() {
+  return JSON.stringify({
+    role: normalizeRole(state.currentRole),
+    listView: state.filters.listView || "",
+    dashboardKind: state.filters.dashboardKind || "",
+    filters: state.filters,
+  });
+}
+
+function paginateFileRows(files = []) {
+  const signature = fileListPageSignature();
+  if (signature !== fileListPageUi.signature) {
+    fileListPageUi.signature = signature;
+    fileListPageUi.page = 1;
+  }
+  const total = files.length;
+  const pageSize = fileListPageUi.pageSize;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  fileListPageUi.page = Math.min(pageCount, Math.max(1, fileListPageUi.page));
+  const offset = (fileListPageUi.page - 1) * pageSize;
+  return {
+    rows: files.slice(offset, offset + pageSize),
+    total,
+    page: fileListPageUi.page,
+    pageSize,
+    pageCount,
+    offset,
+  };
+}
+
+function renderFileListPagination(pageData) {
+  if (!pageData || pageData.total <= pageData.pageSize) return "";
+  return `<nav class="pagination file-list-pagination" aria-label="File list pagination">
+    <div><span>Rows per page</span>
+      <select data-file-page-size>${[25, 50, 100].map((size) => `<option value="${size}" ${pageData.pageSize === size ? "selected" : ""}>${size}</option>`).join("")}</select>
+    </div>
+    <span>Page ${pageData.page} of ${pageData.pageCount} · ${pageData.total} files</span>
+    <div>
+      <button class="secondary-button" type="button" data-file-page="${Math.max(1, pageData.page - 1)}" ${pageData.page <= 1 ? "disabled" : ""}>Previous</button>
+      <button class="secondary-button" type="button" data-file-page="${Math.min(pageData.pageCount, pageData.page + 1)}" ${pageData.page >= pageData.pageCount ? "disabled" : ""}>Next</button>
+    </div>
+  </nav>`;
+}
+
+function bindFileListPagination(refresh) {
+  document.querySelectorAll("[data-file-page]").forEach((button) => {
+    button.onclick = () => {
+      fileListPageUi.page = Number(button.dataset.filePage) || 1;
+      refresh();
+    };
+  });
+  const pageSize = document.querySelector("[data-file-page-size]");
+  if (pageSize) pageSize.onchange = () => {
+    fileListPageUi.pageSize = Number(pageSize.value) || 50;
+    fileListPageUi.page = 1;
+    refresh();
+  };
+}
+
+function updateFileListPagination(pageData, refresh) {
+  const slot = document.querySelector("#fileListPagination");
+  if (!slot) return;
+  slot.innerHTML = renderFileListPagination(pageData);
+  bindFileListPagination(refresh);
+}
+
 function renderFilesPage() {
   if (isStaffLogin()) return renderStaffFilesPage();
   if (state.filters.listView === "removed") return renderRemovedFilesPage();
   if (!state.filters.receivedSort) state.filters.receivedSort = "Newest First";
   const configuredFilterConfig = configuredFinancialFilterConfig();
   if (configuredFilterConfig) initializeConfiguredFinancialFilters(configuredFilterConfig);
-  const files = sortFilesForDisplay(filteredFiles());
+  const allFiles = sortFilesForDisplay(filteredFiles());
+  const pageData = paginateFileRows(allFiles);
+  const files = pageData.rows;
   const isBilledView = state.filters.listView === "billed";
   const isConfiguredFilterView = Boolean(configuredFilterConfig);
   document.querySelector("#files").innerHTML = `
     <div class="panel">
-      ${isBilledView ? renderBilledFilesFilterPanel(files) : isConfiguredFilterView ? renderConfiguredFinancialFilterPanel(files, configuredFilterConfig) : `<div class="filter-hero">
+      ${isBilledView ? renderBilledFilesFilterPanel(allFiles) : isConfiguredFilterView ? renderConfiguredFinancialFilterPanel(allFiles, configuredFilterConfig) : `<div class="filter-hero">
         <div>
           <h3>Search & Filter Files</h3>
         </div>
-        <span id="fileCount">${files.length} File(s) Shown</span>
+        <span id="fileCount">${allFiles.length} File(s) Shown</span>
       </div>
       <div class="filters colourful-filters">
         ${inputFilter("search", "Global Search", "Search name, PAN, staff, remarks")}
@@ -6824,11 +6916,17 @@ function renderFilesPage() {
         ${rolePerm().export ? `<button class="secondary-button file-action-button pdf-export-button file-action-pdf" id="exportFilteredPdf">${navIcon("pdf")}Export to PDF</button>` : ""}
       </div>`}
       <div id="fileResults">${renderFileTable(files)}</div>
+      <div id="fileListPagination">${renderFileListPagination(pageData)}</div>
     </div>
   `;
   if (isBilledView) bindBilledFilesFilters();
   else if (isConfiguredFilterView) bindConfiguredFinancialFilters(configuredFilterConfig);
   else bindFilters();
+  bindFileListPagination(isBilledView
+    ? refreshBilledFileResults
+    : isConfiguredFilterView
+      ? () => refreshConfiguredFinancialResults(configuredFilterConfig)
+      : refreshFileResults);
   bindSpecialStatusFilter();
   document.querySelector("[data-generate-historical-receipts]")?.addEventListener("click", generateHistoricalReceiptsBulk);
   if (!isBilledView && !isConfiguredFilterView) {
@@ -7031,7 +7129,9 @@ function renderStaffFilesPage() {
   const listView = state.filters.listView || "";
   const configuredFilterConfig = configuredFinancialFilterConfig(listView);
   if (configuredFilterConfig) return renderConfiguredStaffFinancialFilesPage(listView, configuredFilterConfig);
-  const files = staffPageFiles(listView);
+  const allFiles = staffPageFiles(listView);
+  const pageData = paginateFileRows(allFiles);
+  const files = pageData.rows;
   const showDateFilter = ["completed", "notChecked"].includes(listView);
   const showActiveStaffFilters = ["", "active"].includes(listView);
   document.querySelector("#files").innerHTML = `
@@ -7040,7 +7140,7 @@ function renderStaffFilesPage() {
         <div>
           <h3>${staffFilePageTitle(listView)}</h3>
         </div>
-        <span id="fileCount">${files.length} File(s) Shown</span>
+        <span id="fileCount">${allFiles.length} File(s) Shown</span>
       </div>
       ${showDateFilter ? `
         <div class="filters colourful-filters staff-date-filter">
@@ -7068,6 +7168,7 @@ function renderStaffFilesPage() {
         <button class="secondary-button staff-report-action staff-report-print" id="staffPrintReport">${navIcon("print")}Print</button>
       </div>
       <div id="fileResults">${listView === "correctionRequired" ? renderCorrectionRequiredTable(files) : (listView === "notChecked" ? renderNotCheckedFileTable(files) : renderStaffFileTable(files, listView))}</div>
+      <div id="fileListPagination">${renderFileListPagination(pageData)}</div>
     </div>
   `;
   if (showDateFilter) {
@@ -7091,21 +7192,26 @@ function renderStaffFilesPage() {
       renderStaffFilesPage();
     };
   }
-  document.querySelector("#staffExportExcel").onclick = () => exportStaffPageExcel(listView, files);
-  document.querySelector("#staffExportPdf").onclick = () => exportStaffPagePdf(listView, files);
-  document.querySelector("#staffPrintReport").onclick = () => printStaffPageReport(listView, files);
+  document.querySelector("#staffExportExcel").onclick = () => exportStaffPageExcel(listView, allFiles);
+  document.querySelector("#staffExportPdf").onclick = () => exportStaffPagePdf(listView, allFiles);
+  document.querySelector("#staffPrintReport").onclick = () => printStaffPageReport(listView, allFiles);
+  bindFileListPagination(renderStaffFilesPage);
   bindFileActions();
 }
 
 function renderConfiguredStaffFinancialFilesPage(listView, config) {
   initializeConfiguredFinancialFilters(config);
-  const files = sortFilesForDisplay(filteredFiles());
+  const allFiles = sortFilesForDisplay(filteredFiles());
+  const pageData = paginateFileRows(allFiles);
+  const files = pageData.rows;
   document.querySelector("#files").innerHTML = `<div class="panel">
-    ${renderConfiguredFinancialFilterPanel(files, config)}
+    ${renderConfiguredFinancialFilterPanel(allFiles, config)}
     ${billedFilesActionToolbar()}
     <div id="fileResults">${listView === "" ? renderMasterFileTable(files) : listView === "active" ? renderActiveFileTable(files) : listView === "completed" ? renderCompletedFileTable(files) : listView === "notChecked" ? renderNotCheckedFileTable(files) : listView === "correctionRequired" ? renderCorrectionRequiredTable(files) : renderStaffFileTable(files, listView)}</div>
+    <div id="fileListPagination">${renderFileListPagination(pageData)}</div>
   </div>`;
   bindConfiguredFinancialFilters(config);
+  bindFileListPagination(() => renderConfiguredStaffFinancialFilesPage(listView, config));
   const exportExcelButton = document.querySelector("#exportFiltered");
   if (exportExcelButton) exportExcelButton.onclick = async () => {
     const reportFiles = sortFilesForDisplay(filteredFiles());
@@ -7821,14 +7927,16 @@ function updateBilledFilterChrome(files) {
 }
 
 function refreshBilledFileResults() {
-  const files = sortFilesForDisplay(filteredFiles());
+  const allFiles = sortFilesForDisplay(filteredFiles());
+  const pageData = paginateFileRows(allFiles);
   const results = document.querySelector("#fileResults");
-  updateBilledFilterChrome(files);
+  updateBilledFilterChrome(allFiles);
   setBilledFilterLoading(false);
   if (results) {
-    results.innerHTML = renderFileTable(files);
+    results.innerHTML = renderFileTable(pageData.rows);
     bindFileActions();
   }
+  updateFileListPagination(pageData, refreshBilledFileResults);
 }
 
 function scheduleBilledFilterRefresh(delay = 0) {
@@ -7967,8 +8075,10 @@ function updateConfiguredFinancialFilterChrome(files, config) {
 }
 
 function refreshConfiguredFinancialResults(config) {
-  const files = sortFilesForDisplay(filteredFiles());
-  updateConfiguredFinancialFilterChrome(files, config);
+  const allFiles = sortFilesForDisplay(filteredFiles());
+  const pageData = paginateFileRows(allFiles);
+  const files = pageData.rows;
+  updateConfiguredFinancialFilterChrome(allFiles, config);
   setConfiguredFinancialFilterLoading(false);
   const results = document.querySelector("#fileResults");
   if (results) {
@@ -7981,6 +8091,7 @@ function refreshConfiguredFinancialResults(config) {
       : (isStaffLogin() ? renderStaffFileTable(files, state.filters.listView) : renderFileTable(files));
     bindFileActions();
   }
+  updateFileListPagination(pageData, () => refreshConfiguredFinancialResults(config));
 }
 
 function scheduleConfiguredFinancialFilterRefresh(config, delay = 0) {
@@ -8058,14 +8169,16 @@ function bindConfiguredFinancialFilters(config) {
 }
 
 function refreshFileResults() {
-  const files = sortFilesForDisplay(filteredFiles());
+  const allFiles = sortFilesForDisplay(filteredFiles());
+  const pageData = paginateFileRows(allFiles);
   const count = document.querySelector("#fileCount");
   const results = document.querySelector("#fileResults");
-  if (count) count.textContent = `${files.length} File(s) Shown`;
+  if (count) count.textContent = `${allFiles.length} File(s) Shown`;
   if (results) {
-    results.innerHTML = renderFileTable(files);
+    results.innerHTML = renderFileTable(pageData.rows);
     bindFileActions();
   }
+  updateFileListPagination(pageData, refreshFileResults);
 }
 
 async function exportActiveFilesExcel(files = filteredFiles()) {

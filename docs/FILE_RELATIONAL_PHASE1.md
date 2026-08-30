@@ -52,6 +52,13 @@ previous startup behavior. The snapshot includes active and removed files.
 Both database functions are executable only by the server's `service_role`;
 browser users cannot call them directly.
 
+Phase 1D keeps the reconciled file snapshot in server memory and exposes a
+small version endpoint. Returning browser sessions reuse their verified local
+file snapshot when the version and record count match, avoiding a repeated
+multi-megabyte download. File List and Active Files render 50 rows at a time
+with 25/50/100 row controls; filtering and exports continue to operate on the
+complete compatible dataset.
+
 ## Rollback
 
 Set both feature flags to `0`. The application continues using

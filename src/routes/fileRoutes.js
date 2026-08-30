@@ -17,6 +17,7 @@ const { dispatchFileNotifications } = require("../services/pushNotificationServi
 const {
   relationalFileCandidates,
   relationalFileSnapshot,
+  fileSnapshotMetadata,
   relationalReadConfigured,
   relationalReadEnabled,
   waitForFileShadowSync,
@@ -26,6 +27,10 @@ function sendDesktopUpdates(state, notices) {
   dispatchFileNotifications(state, notices).catch((error) => console.error("Desktop file notification failed:", error.message));
 }
 
+router.get("/snapshot/version", requireAuth, (_req, res) => {
+  res.json(fileSnapshotMetadata());
+});
+
 router.get("/snapshot", requireAuth, async (_req, res, next) => {
   try {
     if (relationalReadEnabled()) {
@@ -33,7 +38,7 @@ router.get("/snapshot", requireAuth, async (_req, res, next) => {
         await waitForFileShadowSync();
         const files = await relationalFileSnapshot();
         res.set("X-File-Read-Source", "relational");
-        res.json({ files, total: files.length, source: "relational" });
+        res.json({ files, total: files.length, source: "relational", ...fileSnapshotMetadata() });
         return;
       } catch (error) {
         console.error("Relational file snapshot failed; using central fallback:", error.message);

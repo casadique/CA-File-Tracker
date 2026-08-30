@@ -5,6 +5,7 @@ const TABLE = "file_records";
 const WRITE_BATCH_SIZE = 200;
 let shadowQueue = Promise.resolve();
 let relationalReadReady = false;
+let fileSnapshotCache = null;
 
 function relationalShadowWriteEnabled() {
   return env.filesRelationalShadowWrite === true;
@@ -70,8 +71,13 @@ function queueFileShadowSync(previousFiles, nextFiles, options = {}) {
   if (!changeSet.upserts.length && !changeSet.deletedIds.length) return Promise.resolve({ skipped: true });
   shadowQueue = shadowQueue
     .then(() => syncFileChanges(changeSet, options))
+    .then((result) => {
+      setFileSnapshotCache(nextFiles, options.sourceStateUpdatedAt);
+      return result;
+    })
     .catch((error) => {
       relationalReadReady = false;
+      fileSnapshotCache = null;
       console.error("Relational file shadow sync failed:", error.message);
       return { ok: false, error: error.message };
     });
@@ -104,10 +110,33 @@ async function relationalFileCandidates(options = {}) {
 }
 
 async function relationalFileSnapshot() {
+  if (fileSnapshotCache) return fileSnapshotCache.files;
   const { data, error } = await supabaseAdmin.rpc("get_file_snapshot");
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
-  return Array.isArray(row?.files) ? row.files : [];
+  const files = Array.isArray(row?.files) ? row.files : [];
+  setFileSnapshotCache(files);
+  return fileSnapshotCache.files;
+}
+
+function setFileSnapshotCache(files = [], sourceStateUpdatedAt = null) {
+  fileSnapshotCache = {
+    files: validFiles(files).map((file) => ({ ...file })),
+    sourceStateUpdatedAt: timestamp(sourceStateUpdatedAt),
+    cachedAt: Date.now(),
+  };
+  return fileSnapshotCache;
+}
+
+function fileSnapshotMetadata() {
+  return fileSnapshotCache
+    ? {
+      available: true,
+      total: fileSnapshotCache.files.length,
+      updatedAt: fileSnapshotCache.sourceStateUpdatedAt,
+      cachedAt: fileSnapshotCache.cachedAt,
+    }
+    : { available: false, total: 0, updatedAt: null, cachedAt: null };
 }
 
 function applyCandidateFilters(query, options = {}) {
@@ -172,6 +201,7 @@ async function reconcileFileShadow(centralFiles = [], options = {}) {
   });
   if (error) throw error;
   relationalReadReady = parity.parity === true;
+  if (relationalReadReady) setFileSnapshotCache(expectedFiles, options.sourceStateUpdatedAt);
   return { ...result, ...parity, readReady: relationalReadEnabled() };
 }
 
@@ -260,6 +290,7 @@ module.exports = {
   waitForFileShadowSync,
   relationalFileCandidates,
   relationalFileSnapshot,
+  fileSnapshotMetadata,
   syncFileChanges,
   reconcileFileShadow,
   fileRelationalParity,

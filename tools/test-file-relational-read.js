@@ -87,7 +87,9 @@ const {
     return { data: rpcRows, error: null };
   };
   assert.equal((await relationalFileSnapshot()).length, 2);
+  assert.equal((await relationalFileSnapshot()).length, 2);
   assert.deepEqual(calls[0], ["rpc", "get_file_snapshot"]);
+  assert.equal(calls.filter(([name]) => name === "rpc").length, 1, "The server snapshot cache must prevent repeated database payload reads");
 
   const routeSource = fs.readFileSync(path.resolve(__dirname, "..", "src", "routes", "fileRoutes.js"), "utf8");
   assert.match(routeSource, /if \(relationalReadEnabled\(\)\)/);
@@ -97,6 +99,7 @@ const {
   assert.match(routeSource, /central-warming/);
   assert.match(routeSource, /router\.get\("\/snapshot"/);
   assert.match(routeSource, /await relationalFileSnapshot\(\)/);
+  assert.match(routeSource, /router\.get\("\/snapshot\/version"/);
 
   console.log("Relational file read, paging, filtering and fallback checks passed.");
 })().catch((error) => {

@@ -9,7 +9,10 @@ const fileRouteSource = fs.readFileSync(path.join(root, "src", "routes", "fileRo
 const stateServiceSource = fs.readFileSync(path.join(root, "src", "services", "appStateService.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(root, "database", "migrations", "20260830_split_file_startup.sql"), "utf8");
 
-assert.match(appSource, /Promise\.all\(\[\s*apiJson\("\/api\/state\?excludeFiles=1"\),\s*apiJson\("\/api\/files\/snapshot"\)/);
+assert.match(appSource, /apiJson\("\/api\/state\?excludeFiles=1"\)/);
+assert.match(appSource, /apiJson\("\/api\/files\/snapshot\/version"\)/);
+assert.match(appSource, /source: "browser-cache"/);
+assert.match(appSource, /cachedFiles\.length === Number\(versionPayload\.total \|\| 0\)/);
 assert.match(appSource, /Split central load failed; retrying the full compatible state/);
 assert.match(appSource, /return apiJson\("\/api\/state"\)/, "The original full-state request must remain as fallback");
 assert.equal(
@@ -22,6 +25,7 @@ assert.match(stateRouteSource, /excludeFiles/);
 assert.match(stateRouteSource, /excludeFiles \? await getAppStateWithoutFilesRecord\(\) : await getAppStateRecord\(\)/);
 assert.match(stateRouteSource, /filesExcluded: excludeFiles/);
 assert.match(fileRouteSource, /router\.get\("\/snapshot", requireAuth/);
+assert.match(fileRouteSource, /router\.get\("\/snapshot\/version", requireAuth/);
 assert.match(fileRouteSource, /source: "relational"/);
 assert.match(fileRouteSource, /source = relationalReadConfigured\(\) \? "central-fallback" : "central"/);
 assert.match(stateServiceSource, /rpc\("get_app_state_without_files"\)/);
