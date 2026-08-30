@@ -34,4 +34,4 @@ services:
       - key: FILES_RELATIONAL_SHADOW_WRITE
         value: "1"
       - key: FILES_RELATIONAL_READ
-        value: "0"
+        value: "1"

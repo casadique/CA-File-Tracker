@@ -123,6 +123,7 @@ with source_state as (
       then coalesce(payload ->> 'status_updated_at', payload ->> 'statusUpdatedAt', payload ->> 'updated_at')::timestamptz
     end as status_updated_at,
     lower(coalesce(payload ->> 'isRemoved', payload ->> 'is_removed', 'false')) in ('true', '1', 'yes')
+      or coalesce(payload #>> '{stages,Removed}', 'false') = 'true'
       or lower(coalesce(payload ->> 'status', payload ->> 'workflowStatus', '')) = 'removed' as is_removed,
     lower(coalesce(payload ->> 'filed', payload ->> 'isCompleted', payload ->> 'is_completed', 'false')) in ('true', '1', 'yes')
       or coalesce(payload #>> '{stages,Completed}', 'false') = 'true' as is_completed,

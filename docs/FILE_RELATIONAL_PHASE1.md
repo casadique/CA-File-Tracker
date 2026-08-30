@@ -31,6 +31,18 @@ Admin/Manager diagnostics expose `relationalFiles` count parity after the
 application deployment. Keep `FILES_RELATIONAL_READ=0` until parity remains
 clean during normal file creation, editing, removal, restoration and deletion.
 
+The Phase 1B server path is prepared behind `FILES_RELATIONAL_READ`. When
+enabled, `GET /api/files` loads candidates from `file_records`, applies the
+existing compatibility filters and sorting, and identifies the source in the
+`X-File-Read-Source` response header. Any relational failure automatically
+falls back to the central state. Browser startup remains unchanged during this
+checkpoint.
+
+Even when the read flag is configured, each new server instance reports
+`central-warming` and continues using central reads until its startup
+reconciliation proves exact file-ID parity. A shadow-write failure disables
+relational reads for that instance until it is safely reconciled again.
+
 ## Rollback
 
 Set both feature flags to `0`. The application continues using

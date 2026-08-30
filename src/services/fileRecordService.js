@@ -4,9 +4,18 @@ const { env } = require("../config/env");
 const TABLE = "file_records";
 const WRITE_BATCH_SIZE = 200;
 let shadowQueue = Promise.resolve();
+let relationalReadReady = false;
 
 function relationalShadowWriteEnabled() {
   return env.filesRelationalShadowWrite === true;
+}
+
+function relationalReadEnabled() {
+  return relationalReadConfigured() && relationalReadReady;
+}
+
+function relationalReadConfigured() {
+  return env.filesRelationalRead === true;
 }
 
 function fileToRelationalRow(file = {}, sourceStateUpdatedAt = null) {
@@ -30,7 +39,7 @@ function fileToRelationalRow(file = {}, sourceStateUpdatedAt = null) {
     file_received_date: dateOnly(file.fileReceivedDate || file.file_received_date),
     due_date: dateOnly(file.dueDate || file.due_date),
     status_updated_at: timestamp(file.status_updated_at || file.statusUpdatedAt || file.updated_at),
-    is_removed: truthy(file.isRemoved ?? file.is_removed) || workflowStatus.toLowerCase() === "removed",
+    is_removed: truthy(file.isRemoved ?? file.is_removed) || truthy(file.stages?.Removed) || workflowStatus.toLowerCase() === "removed",
     is_completed: truthy(file.filed ?? file.isCompleted ?? file.is_completed) || truthy(file.stages?.Completed),
     is_billed: truthy(file.billed ?? file.isBilled ?? file.is_billed) || truthy(file.stages?.Billed),
     payload: file,
@@ -62,10 +71,52 @@ function queueFileShadowSync(previousFiles, nextFiles, options = {}) {
   shadowQueue = shadowQueue
     .then(() => syncFileChanges(changeSet, options))
     .catch((error) => {
+      relationalReadReady = false;
       console.error("Relational file shadow sync failed:", error.message);
       return { ok: false, error: error.message };
     });
   return shadowQueue;
+}
+
+async function waitForFileShadowSync() {
+  if (!relationalShadowWriteEnabled()) return { skipped: true };
+  return shadowQueue;
+}
+
+async function relationalFileCandidates(options = {}) {
+  const pageSize = 1000;
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    let query = supabaseAdmin
+      .from(TABLE)
+      .select("payload")
+      .is("deleted_at", null)
+      .order("id", { ascending: true });
+    query = applyCandidateFilters(query, options);
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) throw error;
+    (data || []).forEach((row) => {
+      if (row?.payload && typeof row.payload === "object") rows.push(row.payload);
+    });
+    if ((data || []).length < pageSize) break;
+  }
+  return rows;
+}
+
+function applyCandidateFilters(query, options = {}) {
+  const listView = text(options.listView || options.view);
+  query = query.eq("is_removed", listView === "removed");
+  const service = text(options.service || options.serviceType);
+  const priority = text(options.priority);
+  const billing = text(options.billing || options.billingStatus).toLowerCase();
+  const from = dateOnly(options.from || options.receivedFrom || options.dateFrom);
+  const to = dateOnly(options.to || options.receivedTo || options.dateTo);
+  if (service) query = query.ilike("service_type", service);
+  if (priority) query = query.ilike("priority", priority);
+  if (billing) query = query.eq("is_billed", billing === "billed");
+  if (from) query = query.gte("file_received_date", from);
+  if (to) query = query.lte("file_received_date", to);
+  return query;
 }
 
 async function syncFileChanges(changeSet, options = {}) {
@@ -108,11 +159,13 @@ async function reconcileFileShadow(centralFiles = [], options = {}) {
       trigger: options.trigger || "application-startup",
       missingCount: parity.missingCount || 0,
       extraCount: parity.extraCount || 0,
-      readCutover: false,
+      readCutoverConfigured: relationalReadConfigured(),
+      readCutoverReady: parity.parity === true,
     },
   });
   if (error) throw error;
-  return { ...result, ...parity };
+  relationalReadReady = parity.parity === true;
+  return { ...result, ...parity, readReady: relationalReadEnabled() };
 }
 
 async function fileRelationalParity(centralFiles = []) {
@@ -122,7 +175,12 @@ async function fileRelationalParity(centralFiles = []) {
     actualIds = await relationalFileIds();
   } catch (error) {
     if (["42P01", "PGRST205"].includes(error.code)) {
-      return { available: false, shadowWriteEnabled: relationalShadowWriteEnabled() };
+      return {
+        available: false,
+        shadowWriteEnabled: relationalShadowWriteEnabled(),
+        readConfigured: relationalReadConfigured(),
+        readReady: relationalReadEnabled(),
+      };
     }
     throw error;
   }
@@ -132,6 +190,8 @@ async function fileRelationalParity(centralFiles = []) {
   return {
     available: true,
     shadowWriteEnabled: relationalShadowWriteEnabled(),
+    readConfigured: relationalReadConfigured(),
+    readReady: relationalReadEnabled(),
     centralCount: expectedIds.size,
     relationalCount,
     missingCount: missingIds.length,
@@ -190,8 +250,12 @@ module.exports = {
   fileToRelationalRow,
   fileChanges,
   queueFileShadowSync,
+  waitForFileShadowSync,
+  relationalFileCandidates,
   syncFileChanges,
   reconcileFileShadow,
   fileRelationalParity,
   relationalShadowWriteEnabled,
+  relationalReadEnabled,
+  relationalReadConfigured,
 };

@@ -24,7 +24,7 @@ const file = {
   dueDate: "2026-08-31",
   statusUpdatedAt: "2026-08-30T05:00:00.000Z",
   billed: true,
-  stages: { Completed: false },
+  stages: { Completed: false, Removed: true },
   remarks: "Preserve every historical field",
 };
 
@@ -34,6 +34,7 @@ assert.equal(row.client_name, file.name);
 assert.equal(row.assigned_staff_email, "staff@example.com");
 assert.equal(row.file_received_date, "2026-08-01");
 assert.equal(row.is_billed, true);
+assert.equal(row.is_removed, true, "Legacy stages.Removed records must remain visible in Removed Files");
 assert.deepEqual(row.payload, file, "The complete original file must be retained losslessly");
 
 const changed = { ...file, workflowStatus: "Completed", filed: true };
