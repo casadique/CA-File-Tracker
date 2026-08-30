@@ -18,4 +18,16 @@ router.get("/counts", requireAuth, requireRole("Admin", "Manager"), async (_req,
   }
 });
 
+router.get("/activity", requireAuth, requireRole("Admin", "Manager"), async (_req, res, next) => {
+  try {
+    const record = await getAppStateRecord();
+    const auditLog = [...(record.state.auditLog || [])]
+      .sort((left, right) => (Date.parse(right.at || "") || 0) - (Date.parse(left.at || "") || 0))
+      .slice(0, 50);
+    res.json({ ok: true, auditLog, updatedAt: record.updatedAt });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

@@ -50,6 +50,7 @@
     "test:notification-startup-split": "node tools/test-notification-startup-split.js",
     "test:file-list-pagination": "node tools/test-file-list-pagination.js",
     "test:dashboard-login-cache": "node tools/test-dashboard-login-cache.js",
+    "test:deferred-dashboard-history": "node tools/test-deferred-dashboard-history.js",
     "test:state-cache": "node tools/test-state-cache-performance.js",
     "test:todo-permissions": "node tools/test-todo-permissions.js",
     "test:todo-redesign": "node tools/test-todo-redesign.js",

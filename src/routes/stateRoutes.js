@@ -28,6 +28,7 @@ router.get("/", requireAuth, async (req, res, next) => {
       profile: req.profile,
       filesExcluded: excludeFiles,
       notificationsExcluded: excludeFiles,
+      deferredHistoryExcluded: excludeFiles,
     });
   } catch (error) {
     next(error);

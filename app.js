@@ -417,6 +417,10 @@ let lastRemoteSaveSnapshot = "";
 let lastCentralRefreshAt = 0;
 let centralImportInFlight = false;
 let notificationHistoryRefreshInFlight = false;
+let dashboardActivityRefreshInFlight = false;
+let financeSnapshotRefreshInFlight = false;
+let lastDashboardActivityRefreshAt = 0;
+let lastFinanceSnapshotRefreshAt = 0;
 let lastCentralVersion = "";
 let lastCentralVersionCheckAt = 0;
 let dashboardCountsSnapshot = null;
@@ -1925,6 +1929,7 @@ async function loadStateFromApi() {
     centralStateLoading = false;
     applyCentralState(payload.state, { targetPage: activePage || "dashboard", rerender: true });
     refreshNotificationHistoryFromApi();
+    refreshDashboardActivityFromApi();
     sessionStorage.setItem(API_MODE_KEY, "supabase");
     return true;
   } catch (error) {
@@ -1948,12 +1953,20 @@ async function loadSplitCentralStateFromApi() {
       && Array.isArray(state.fileNotifications)
       ? state.fileNotifications
       : [];
+    const sameUserCache = Boolean(fileUserKey && localStorage.getItem(FILE_SNAPSHOT_USER_KEY) === fileUserKey);
+    const cachedFeeReceipts = sameUserCache && Array.isArray(state.feeReceipts) ? state.feeReceipts : [];
+    const cachedAuditLog = sameUserCache && Array.isArray(state.auditLog) ? state.auditLog : [];
     const firstLoadSnapshot = cachedFiles.length ? null : apiJson("/api/files/snapshot");
     const [statePayload, versionPayload] = await Promise.all([
       apiJson("/api/state?excludeFiles=1"),
       apiJson("/api/files/snapshot/version"),
     ]);
-    if (!statePayload?.state || statePayload.filesExcluded !== true || statePayload.notificationsExcluded !== true) {
+    if (
+      !statePayload?.state
+      || statePayload.filesExcluded !== true
+      || statePayload.notificationsExcluded !== true
+      || statePayload.deferredHistoryExcluded !== true
+    ) {
       throw new Error("Split startup response was incomplete.");
     }
     const cachedVersion = localStorage.getItem(FILE_SNAPSHOT_VERSION_KEY) || "";
@@ -1976,7 +1989,13 @@ async function loadSplitCentralStateFromApi() {
     else localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
     return {
       ...statePayload,
-      state: { ...statePayload.state, files: filePayload.files, fileNotifications: cachedNotifications },
+      state: {
+        ...statePayload.state,
+        files: filePayload.files,
+        fileNotifications: cachedNotifications,
+        feeReceipts: cachedFeeReceipts,
+        auditLog: cachedAuditLog,
+      },
       fileReadSource: filePayload.source || "unknown",
     };
   } catch (error) {
@@ -2037,6 +2056,48 @@ function adoptLegacySameSessionFileSnapshot() {
   return true;
 }
 
+async function refreshDashboardActivityFromApi(options = {}) {
+  if (!apiToken() || !["Admin", "Manager"].includes(state.currentRole) || dashboardActivityRefreshInFlight) return false;
+  if (!options.force && Date.now() - lastDashboardActivityRefreshAt < 30000) return false;
+  dashboardActivityRefreshInFlight = true;
+  lastDashboardActivityRefreshAt = Date.now();
+  try {
+    const payload = await apiJson("/api/dashboard/activity");
+    if (!Array.isArray(payload?.auditLog)) throw new Error("Dashboard activity response was incomplete.");
+    state.auditLog = payload.auditLog;
+    saveState({ skipMerge: true, skipRemote: true });
+    const card = document.querySelector("#dashboardRecentActivitiesCard");
+    if (activePage === "dashboard" && card) card.outerHTML = renderRecentActivitiesCard();
+    return true;
+  } catch (error) {
+    console.warn("Dashboard activity refresh failed; keeping cached activity.", error);
+    return false;
+  } finally {
+    dashboardActivityRefreshInFlight = false;
+  }
+}
+
+async function refreshFinanceSnapshotFromApi(options = {}) {
+  if (!apiToken() || !["Admin", "Manager"].includes(state.currentRole) || financeSnapshotRefreshInFlight) return false;
+  if (!options.force && Date.now() - lastFinanceSnapshotRefreshAt < 60000) return false;
+  financeSnapshotRefreshInFlight = true;
+  lastFinanceSnapshotRefreshAt = Date.now();
+  try {
+    const payload = await apiJson("/api/finance");
+    ["expenses", "otherCashCollections", "feeReceipts", "openingBalances", "otherCashCollectionSources", "expenseItems", "cashReconciliations", "accountTransfers"]
+      .forEach((key) => { if (Array.isArray(payload?.[key])) state[key] = payload[key]; });
+    feeReceiptIndexSource = null;
+    saveState({ skipMerge: true, skipRemote: true });
+    if (activePage === "expenses") renderExpensesPage();
+    return true;
+  } catch (error) {
+    console.warn("Finance snapshot refresh failed; keeping cached finance data.", error);
+    return false;
+  } finally {
+    financeSnapshotRefreshInFlight = false;
+  }
+}
+
 async function refreshCentralState(options = {}) {
   if (!state.session?.loggedIn || !isSupabaseMode()) return false;
   if (centralImportInFlight) return false;
@@ -2055,6 +2116,7 @@ async function refreshCentralState(options = {}) {
     const preserveIndependentPage = activePage === "clientMaster" && Boolean(document.querySelector("#clientMaster .client-master-shell"));
     applyCentralState(payload.state, { rerender: !chatOpen && !userIsScrollingDashboard && !preserveIndependentPage });
     refreshNotificationHistoryFromApi();
+    refreshDashboardActivityFromApi();
     updateTopActionBadges();
     dispatchLocalDesktopNotifications();
     if (userIsScrollingDashboard && !chatOpen) scheduleDashboardRefreshRender();
@@ -5056,6 +5118,7 @@ function renderAll() {
   upgradeRenderedMonetaryInputs();
   enforceDateYearCap();
   dispatchLocalDesktopNotifications();
+  if (activePage === "expenses") refreshFinanceSnapshotFromApi();
 }
 
 function renderActivePage() {
@@ -5723,7 +5786,7 @@ function renderFeeCollectionOverviewCard(financials) {
 
 function renderRecentActivitiesCard() {
   const rows = dashboardRecentActivities().slice(0, 8);
-  return `<section class="dashboard-data-card dashboard-list-card">
+  return `<section class="dashboard-data-card dashboard-list-card" id="dashboardRecentActivitiesCard">
     <div class="dashboard-card-head"><div><h3>Recent Activities</h3><p>Newest first</p></div><button class="mini-button" id="dashboardViewActivities">View All</button></div>
     <div class="dashboard-list-scroll">${rows.length ? rows.map((row) => `<div class="dashboard-activity-row"><span class="activity-dot ${row.tone}">${navIcon(row.icon)}</span><div><strong>${escapeHtml(row.title)}</strong><p>${escapeHtml(row.text)}</p></div><time>${escapeHtml(row.time)}</time></div>`).join("") : dashboardEmptyState("No recent activity")}</div>
   </section>`;

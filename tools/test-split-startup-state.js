@@ -9,6 +9,8 @@ const fileRouteSource = fs.readFileSync(path.join(root, "src", "routes", "fileRo
 const stateServiceSource = fs.readFileSync(path.join(root, "src", "services", "appStateService.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(root, "database", "migrations", "20260830_split_file_startup.sql"), "utf8");
 const notificationMigrationSource = fs.readFileSync(path.join(root, "database", "migrations", "20260830_split_notification_startup.sql"), "utf8");
+const deferredHistoryMigrationSource = fs.readFileSync(path.join(root, "database", "migrations", "20260830_defer_heavy_startup_history.sql"), "utf8");
+const dashboardRouteSource = fs.readFileSync(path.join(root, "src", "routes", "dashboardRoutes.js"), "utf8");
 const notificationRouteSource = fs.readFileSync(path.join(root, "src", "routes", "notificationRoutes.js"), "utf8");
 const notificationServiceSource = fs.readFileSync(path.join(root, "src", "services", "notificationRetentionService.js"), "utf8");
 
@@ -21,6 +23,11 @@ assert.match(appSource, /localStorage\.setItem\(FILE_SNAPSHOT_USER_KEY, fileUser
 assert.match(appSource, /cachedFiles\.length === Number\(versionPayload\.total \|\| 0\)/);
 assert.match(appSource, /Split central load failed; retrying the full compatible state/);
 assert.match(appSource, /statePayload\.notificationsExcluded !== true/);
+assert.match(appSource, /statePayload\.deferredHistoryExcluded !== true/);
+assert.match(appSource, /feeReceipts: cachedFeeReceipts/);
+assert.match(appSource, /auditLog: cachedAuditLog/);
+assert.match(appSource, /apiJson\("\/api\/dashboard\/activity"\)/);
+assert.match(appSource, /apiJson\("\/api\/finance"\)/);
 assert.match(appSource, /fileNotifications: cachedNotifications/);
 assert.match(appSource, /NOTIFICATION_SNAPSHOT_USER_KEY/);
 assert.match(appSource, /localStorage\.getItem\(NOTIFICATION_SNAPSHOT_USER_KEY\) === notificationUserKey/);
@@ -39,6 +46,8 @@ assert.match(stateRouteSource, /excludeFiles/);
 assert.match(stateRouteSource, /excludeFiles \? await getAppStateWithoutFilesRecord\(\) : await getAppStateRecord\(\)/);
 assert.match(stateRouteSource, /filesExcluded: excludeFiles/);
 assert.match(stateRouteSource, /notificationsExcluded: excludeFiles/);
+assert.match(stateRouteSource, /deferredHistoryExcluded: excludeFiles/);
+assert.match(dashboardRouteSource, /router\.get\("\/activity", requireAuth, requireRole\("Admin", "Manager"\)/);
 assert.match(notificationRouteSource, /router\.get\("\/history", requireAuth/);
 assert.match(notificationRouteSource, /visibleNotificationRows\(record\.notifications/);
 assert.match(notificationServiceSource, /function visibleNotificationRows/);
@@ -56,5 +65,8 @@ assert.match(notificationMigrationSource, /- 'files' - 'fileNotifications'/);
 assert.match(notificationMigrationSource, /create or replace function public\.get_notification_snapshot\(\)/);
 assert.match(notificationMigrationSource, /revoke all on function public\.get_notification_snapshot\(\) from authenticated/);
 assert.match(notificationMigrationSource, /grant execute on function public\.get_notification_snapshot\(\) to service_role/);
+assert.match(deferredHistoryMigrationSource, /- 'feeReceipts'/);
+assert.match(deferredHistoryMigrationSource, /- 'auditLog'/);
+assert.match(deferredHistoryMigrationSource, /grant execute on function public\.get_app_state_without_files\(\) to service_role/);
 
 console.log("Split startup state and compatibility fallback checks passed.");
