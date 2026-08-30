@@ -1,6 +1,6 @@
 const express = require("express");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { getAppStateRecord, saveAppState, saveAppStateIfCurrent, assertSafeStateReplacement } = require("../services/appStateService");
+const { getAppStateRecord, getAppStateWithoutFilesRecord, saveAppState, saveAppStateIfCurrent, assertSafeStateReplacement } = require("../services/appStateService");
 const { visibleChatMessages } = require("../services/chatService");
 const { resetAllFileData } = require("../services/fileDataResetService");
 const { calculateDashboardCounts } = require("../services/fileViewRules");
@@ -16,14 +16,17 @@ const router = express.Router();
 
 router.get("/", requireAuth, async (req, res, next) => {
   try {
-    const record = await getAppStateRecord();
+    const excludeFiles = ["1", "true", "yes"].includes(String(req.query.excludeFiles || "").toLowerCase());
+    const record = excludeFiles ? await getAppStateWithoutFilesRecord() : await getAppStateRecord();
+    const visibleState = stateForProfile(record.state, req.profile, req.user.id);
     res.json({
-      state: stateForProfile(record.state, req.profile, req.user.id),
-      dashboardCounts: ["Admin", "Manager"].includes(req.profile?.role)
+      state: visibleState,
+      dashboardCounts: !excludeFiles && ["Admin", "Manager"].includes(req.profile?.role)
         ? calculateDashboardCounts(record.state.files || [])
         : null,
       updatedAt: record.updatedAt,
       profile: req.profile,
+      filesExcluded: excludeFiles,
     });
   } catch (error) {
     next(error);

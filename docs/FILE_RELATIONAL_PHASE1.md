@@ -43,6 +43,15 @@ Even when the read flag is configured, each new server instance reports
 reconciliation proves exact file-ID parity. A shadow-write failure disables
 relational reads for that instance until it is safely reconciled again.
 
+Phase 1C splits browser startup into two parallel authenticated requests: a
+non-file state response (`/api/state?excludeFiles=1`) and the complete file
+snapshot (`/api/files/snapshot`). The browser combines both responses before
+normalization. If either split response is unavailable or incomplete, it
+automatically retries the original `/api/state` response, preserving the
+previous startup behavior. The snapshot includes active and removed files.
+Both database functions are executable only by the server's `service_role`;
+browser users cannot call them directly.
+
 ## Rollback
 
 Set both feature flags to `0`. The application continues using

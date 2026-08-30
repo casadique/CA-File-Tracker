@@ -40,6 +40,7 @@ delete require.cache[require.resolve("../src/services/fileRecordService")];
 
 const {
   relationalFileCandidates,
+  relationalFileSnapshot,
   relationalReadConfigured,
   relationalReadEnabled,
 } = require("../src/services/fileRecordService");
@@ -69,12 +70,33 @@ const {
   assert.ok(filters.some((entry) => entry.join("|") === "lte|file_received_date|2026-08-31"));
   assert.equal(calls.filter(([name]) => name === "order").length, 2, "Every page must use stable ID ordering");
 
+  calls.length = 0;
+  sourceRows.length = 2;
+  await relationalFileCandidates({ includeRemoved: true });
+  const snapshotFilters = calls.find(([name]) => name === "range")[3];
+  assert.equal(
+    snapshotFilters.some((entry) => entry[1] === "is_removed"),
+    false,
+    "Startup snapshots must include active and removed files"
+  );
+
+  calls.length = 0;
+  const rpcRows = [{ files: sourceRows.map((row) => row.payload), total: sourceRows.length }];
+  require.cache[supabasePath].exports.supabaseAdmin.rpc = async (name) => {
+    calls.push(["rpc", name]);
+    return { data: rpcRows, error: null };
+  };
+  assert.equal((await relationalFileSnapshot()).length, 2);
+  assert.deepEqual(calls[0], ["rpc", "get_file_snapshot"]);
+
   const routeSource = fs.readFileSync(path.resolve(__dirname, "..", "src", "routes", "fileRoutes.js"), "utf8");
   assert.match(routeSource, /if \(relationalReadEnabled\(\)\)/);
   assert.match(routeSource, /await waitForFileShadowSync\(\)/);
   assert.match(routeSource, /X-File-Read-Source", "relational"/);
   assert.match(routeSource, /central-fallback/);
   assert.match(routeSource, /central-warming/);
+  assert.match(routeSource, /router\.get\("\/snapshot"/);
+  assert.match(routeSource, /await relationalFileSnapshot\(\)/);
 
   console.log("Relational file read, paging, filtering and fallback checks passed.");
 })().catch((error) => {

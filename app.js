@@ -1909,7 +1909,7 @@ async function loadStateFromApi() {
   if (!apiToken()) return false;
   persistTransactionEntryDrafts();
   try {
-    const payload = await apiJson("/api/state");
+    const payload = await loadSplitCentralStateFromApi();
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
     dashboardCountsSnapshot = payload.dashboardCounts || null;
@@ -1924,6 +1924,26 @@ async function loadStateFromApi() {
   }
 }
 
+async function loadSplitCentralStateFromApi() {
+  try {
+    const [statePayload, filePayload] = await Promise.all([
+      apiJson("/api/state?excludeFiles=1"),
+      apiJson("/api/files/snapshot"),
+    ]);
+    if (!statePayload?.state || statePayload.filesExcluded !== true || !Array.isArray(filePayload?.files)) {
+      throw new Error("Split startup response was incomplete.");
+    }
+    return {
+      ...statePayload,
+      state: { ...statePayload.state, files: filePayload.files },
+      fileReadSource: filePayload.source || "unknown",
+    };
+  } catch (error) {
+    console.warn("Split central load failed; retrying the full compatible state.", error);
+    return apiJson("/api/state");
+  }
+}
+
 async function refreshCentralState(options = {}) {
   if (!state.session?.loggedIn || !isSupabaseMode()) return false;
   if (centralImportInFlight) return false;
@@ -1933,7 +1953,7 @@ async function refreshCentralState(options = {}) {
   persistTransactionEntryDrafts();
   lastCentralRefreshAt = Date.now();
   try {
-    const payload = await apiJson("/api/state");
+    const payload = await loadSplitCentralStateFromApi();
     if (!payload.state) return false;
     lastCentralVersion = payload.updatedAt || lastCentralVersion;
     dashboardCountsSnapshot = payload.dashboardCounts || null;

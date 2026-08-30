@@ -31,6 +31,20 @@ async function getAppState() {
   return state;
 }
 
+async function getAppStateWithoutFilesRecord() {
+  const startedAt = perfStart();
+  const { data, error } = await supabaseAdmin.rpc("get_app_state_without_files");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  const record = {
+    state: normalizeServerState({ ...(row?.state || {}), files: [] }),
+    updatedAt: row?.updated_at || null,
+    updatedBy: row?.updated_by || null,
+  };
+  perfLog("getAppStateWithoutFilesRecord", startedAt);
+  return record;
+}
+
 async function getAppStateRecord(options = {}) {
   if (!options.bypassCache && appStateCache && Date.now() - appStateCache.cachedAt <= APP_STATE_CACHE_TTL_MS) {
     return cloneCachedRecord(appStateCache);
@@ -794,6 +808,7 @@ function backupPayload(state, exportedBy = "", extras = {}) {
 module.exports = {
   getAppState,
   getAppStateRecord,
+  getAppStateWithoutFilesRecord,
   saveAppState,
   saveAppStateIfCurrent,
   saveAppStateOperationsIfCurrent,

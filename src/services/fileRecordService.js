@@ -103,9 +103,16 @@ async function relationalFileCandidates(options = {}) {
   return rows;
 }
 
+async function relationalFileSnapshot() {
+  const { data, error } = await supabaseAdmin.rpc("get_file_snapshot");
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return Array.isArray(row?.files) ? row.files : [];
+}
+
 function applyCandidateFilters(query, options = {}) {
   const listView = text(options.listView || options.view);
-  query = query.eq("is_removed", listView === "removed");
+  if (!options.includeRemoved) query = query.eq("is_removed", listView === "removed");
   const service = text(options.service || options.serviceType);
   const priority = text(options.priority);
   const billing = text(options.billing || options.billingStatus).toLowerCase();
@@ -252,6 +259,7 @@ module.exports = {
   queueFileShadowSync,
   waitForFileShadowSync,
   relationalFileCandidates,
+  relationalFileSnapshot,
   syncFileChanges,
   reconcileFileShadow,
   fileRelationalParity,
