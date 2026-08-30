@@ -11,6 +11,7 @@ const {
   applyVerifiedDuplicateCleanup,
 } = require("./notificationRetentionService");
 const { normalizeFileAssignment } = require("../constants/assignmentStatus");
+const { queueFileShadowSync } = require("./fileRecordService");
 
 const APP_STATE_ID = "default";
 const APP_STATE_CACHE_TTL_MS = Math.max(0, Number(process.env.APP_STATE_CACHE_TTL_MS || 5000));
@@ -70,6 +71,7 @@ async function getAppStateVersion() {
 async function saveAppState(state, updatedBy = null) {
   const startedAt = perfStart();
   const normalized = normalizeServerState(state || emptyState());
+  const previousFiles = cachedFiles();
   const { data, error } = await supabaseAdmin
     .from("app_state")
     .upsert({
@@ -82,6 +84,7 @@ async function saveAppState(state, updatedBy = null) {
     .single();
   if (error) throw error;
   setAppStateCache({ state: normalized, updatedAt: data.updated_at, updatedBy: data.updated_by || updatedBy });
+  queueFileShadowSync(previousFiles, normalized.files || [], { sourceStateUpdatedAt: data.updated_at, updatedBy });
   perfLog("saveAppState", startedAt, { files: normalized.files?.length || 0 });
   return normalized;
 }
@@ -93,6 +96,7 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     throw error;
   }
   const normalized = normalizeServerState(state || emptyState());
+  const previousFiles = cachedFiles(expectedUpdatedAt);
   const previousTime = Date.parse(expectedUpdatedAt) || 0;
   const nextUpdatedAt = new Date(Math.max(Date.now(), previousTime + 1)).toISOString();
   const { data, error } = await supabaseAdmin
@@ -117,6 +121,7 @@ async function saveAppStateIfCurrent(state, updatedBy = null, expectedUpdatedAt 
     throw conflict;
   }
   setAppStateCache({ state: normalized, updatedAt: data.updated_at, updatedBy });
+  queueFileShadowSync(previousFiles, normalized.files || [], { sourceStateUpdatedAt: data.updated_at, updatedBy });
   return { state: normalized, updatedAt: data.updated_at };
 }
 
@@ -157,6 +162,7 @@ async function saveAppStateOperationsIfCurrent(previousState, nextState, updated
     throw conflict;
   }
   setAppStateCache({ state: normalized, updatedAt, updatedBy });
+  queueFileShadowSync(previousState.files || [], normalized.files || [], { sourceStateUpdatedAt: updatedAt, updatedBy });
   return { state: normalized, updatedAt };
 }
 
@@ -210,6 +216,12 @@ function cloneCachedRecord(record) {
 
 function invalidateAppStateCache() {
   appStateCache = null;
+}
+
+function cachedFiles(expectedUpdatedAt = null) {
+  if (!appStateCache) return [];
+  if (expectedUpdatedAt && appStateCache.updatedAt !== expectedUpdatedAt) return [];
+  return appStateCache.state?.files || [];
 }
 
 function assertSafeStateReplacement(currentState = {}, incomingState = {}) {

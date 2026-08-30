@@ -29,6 +29,8 @@ function readEnv() {
     corsOrigin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(",").map((item) => item.trim()) : true,
     rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
     rateLimitMax: Number(process.env.RATE_LIMIT_MAX || 300),
+    filesRelationalShadowWrite: process.env.FILES_RELATIONAL_SHADOW_WRITE === "1",
+    filesRelationalRead: process.env.FILES_RELATIONAL_READ === "1",
   };
 }
 

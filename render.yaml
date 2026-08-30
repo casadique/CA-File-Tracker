@@ -31,3 +31,7 @@ services:
         value: "900000"
       - key: RATE_LIMIT_MAX
         value: "300"
+      - key: FILES_RELATIONAL_SHADOW_WRITE
+        value: "1"
+      - key: FILES_RELATIONAL_READ
+        value: "0"

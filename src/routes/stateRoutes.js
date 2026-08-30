@@ -10,6 +10,7 @@ const { mergeStaffDetailsImport } = require("../services/staffDetailsService");
 const { activeNotificationRows } = require("../services/notificationRetentionService");
 const { createCompleteBackup } = require("../services/completeBackupService");
 const { restoreCompleteBackup, mergeState } = require("../services/completeRestoreService");
+const { fileRelationalParity } = require("../services/fileRecordService");
 
 const router = express.Router();
 
@@ -95,6 +96,7 @@ router.get("/diagnostics", requireAuth, requireRole("Admin", "Manager"), async (
   try {
     const record = await getAppStateRecord();
     const state = record.state;
+    const relationalFiles = await fileRelationalParity(state.files || []);
     const assignmentCounts = {};
     for (const file of state.files || []) {
       const key = String(file.assignedStaffEmail || file.assignedStaff || "Not Assigned").trim() || "Not Assigned";
@@ -107,6 +109,7 @@ router.get("/diagnostics", requireAuth, requireRole("Admin", "Manager"), async (
       notifications: state.fileNotifications?.length || 0,
       auditEvents: state.auditLog?.length || 0,
       assignmentCounts,
+      relationalFiles,
       updatedAt: record.updatedAt,
       generatedAt: new Date().toISOString(),
     });

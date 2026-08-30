@@ -44,6 +44,7 @@
     "test:state-safety": "node tools/test-central-state-safety.js",
     "test:save-performance": "node tools/test-save-performance.js",
     "test:performance-phase2": "node tools/test-performance-phase-2.js",
+    "test:file-relational-phase1": "node tools/test-file-relational-phase1.js",
     "test:state-cache": "node tools/test-state-cache-performance.js",
     "test:todo-permissions": "node tools/test-todo-permissions.js",
     "test:todo-redesign": "node tools/test-todo-redesign.js",
