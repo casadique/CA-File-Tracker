@@ -46,7 +46,7 @@ const stateRoutes = fs.readFileSync(path.join(root, "src", "routes", "stateRoute
 const financeRoutes = fs.readFileSync(path.join(root, "src", "routes", "financeRoutes.js"), "utf8");
 const userService = fs.readFileSync(path.join(root, "src", "services", "userService.js"), "utf8");
 assert.match(app, /window\.addEventListener\("focus",[\s\S]*checkCentralStateVersion\(\{ force: true \}\)/);
-assert.match(app, /centralStateLoading = user\.source === "supabase-auth";\s*mount\(\);\s*if \(!\(await loadStateFromApi\(\)\)\)/);
+assert.match(app, /centralStateLoading = user\.source === "supabase-auth" && !reusableFileSnapshot;\s*mount\(\);\s*if \(!\(await loadStateFromApi\(\)\)\)/);
 assert.match(app, /else if \(result\?\.receipt\) state\.feeReceipts = mergeById/);
 assert.match(stateRoutes, /activeNotificationRows\(visibleState\.fileNotifications/);
 assert.match(financeRoutes, /receipt: issuedReceipt,[\s\S]*file: \(state\.files[\s\S]*collection: linkedCollection/);

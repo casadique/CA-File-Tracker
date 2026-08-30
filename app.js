@@ -5,6 +5,7 @@ const API_TOKEN_KEY = `${STORAGE_KEY}-api-token`;
 const API_REFRESH_TOKEN_KEY = `${STORAGE_KEY}-api-refresh-token`;
 const API_MODE_KEY = `${STORAGE_KEY}-api-mode`;
 const FILE_SNAPSHOT_VERSION_KEY = `${STORAGE_KEY}-file-snapshot-version`;
+const FILE_SNAPSHOT_USER_KEY = `${STORAGE_KEY}-file-snapshot-user`;
 const NOTIFICATION_SNAPSHOT_USER_KEY = `${STORAGE_KEY}-notification-snapshot-user`;
 const AUTO_BACKUP_DONE_KEY = `${STORAGE_KEY}-auto-backup-done-ist-date`;
 const FILE_DATA_RESET_VERSION = "all-file-data-cleared-2026-07-16-fresh-import";
@@ -1935,7 +1936,12 @@ async function loadStateFromApi() {
 
 async function loadSplitCentralStateFromApi() {
   try {
-    const cachedFiles = Array.isArray(state.files) ? state.files : [];
+    const fileUserKey = notificationSnapshotUserKey();
+    const cachedFiles = fileUserKey
+      && localStorage.getItem(FILE_SNAPSHOT_USER_KEY) === fileUserKey
+      && Array.isArray(state.files)
+      ? state.files
+      : [];
     const notificationUserKey = notificationSnapshotUserKey();
     const cachedNotifications = notificationUserKey
       && localStorage.getItem(NOTIFICATION_SNAPSHOT_USER_KEY) === notificationUserKey
@@ -1963,7 +1969,10 @@ async function loadSplitCentralStateFromApi() {
       : await (firstLoadSnapshot || apiJson("/api/files/snapshot"));
     if (!Array.isArray(filePayload?.files)) throw new Error("File snapshot response was incomplete.");
     const snapshotVersion = filePayload.updatedAt || versionPayload?.updatedAt || "";
-    if (snapshotVersion) localStorage.setItem(FILE_SNAPSHOT_VERSION_KEY, snapshotVersion);
+    if (snapshotVersion) {
+      localStorage.setItem(FILE_SNAPSHOT_VERSION_KEY, snapshotVersion);
+      localStorage.setItem(FILE_SNAPSHOT_USER_KEY, fileUserKey);
+    }
     else localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
     return {
       ...statePayload,
@@ -2012,6 +2021,20 @@ function notificationSnapshotUserKey() {
     || state.currentUser
     || ""
   ).trim().toLowerCase();
+}
+
+function adoptLegacySameSessionFileSnapshot() {
+  const userKey = notificationSnapshotUserKey();
+  if (
+    !state.session?.loggedIn
+    || !userKey
+    || localStorage.getItem(FILE_SNAPSHOT_USER_KEY)
+    || !localStorage.getItem(FILE_SNAPSHOT_VERSION_KEY)
+    || !Array.isArray(state.files)
+    || !state.files.length
+  ) return false;
+  localStorage.setItem(FILE_SNAPSHOT_USER_KEY, userKey);
+  return true;
 }
 
 async function refreshCentralState(options = {}) {
@@ -4743,12 +4766,29 @@ async function handleLogin() {
   resetFilters();
   activePage = "dashboard";
   saveTabSession();
+  let reusableFileSnapshot = false;
   if (user.source === "supabase-auth") {
-    state.files = [];
-    state.fileNotifications = [];
+    const currentUserKey = notificationSnapshotUserKey();
+    reusableFileSnapshot = Boolean(
+      currentUserKey
+      && localStorage.getItem(FILE_SNAPSHOT_USER_KEY) === currentUserKey
+      && localStorage.getItem(FILE_SNAPSHOT_VERSION_KEY)
+      && Array.isArray(state.files)
+      && state.files.length
+    );
+    const reusableNotificationSnapshot = Boolean(
+      currentUserKey
+      && localStorage.getItem(NOTIFICATION_SNAPSHOT_USER_KEY) === currentUserKey
+      && Array.isArray(state.fileNotifications)
+    );
+    if (!reusableFileSnapshot) {
+      state.files = [];
+      localStorage.removeItem(FILE_SNAPSHOT_VERSION_KEY);
+    }
+    if (!reusableNotificationSnapshot) state.fileNotifications = [];
   }
   saveState({ skipMerge: true, skipRemote: true });
-  centralStateLoading = user.source === "supabase-auth";
+  centralStateLoading = user.source === "supabase-auth" && !reusableFileSnapshot;
   mount();
   if (!(await loadStateFromApi())) {
     mount();
@@ -26266,6 +26306,7 @@ async function bootApp() {
     return;
   }
   if (state.session?.loggedIn && isSupabaseMode()) {
+    adoptLegacySameSessionFileSnapshot();
     // Render cached UI immediately. Central data refresh must never hold the app on its loading screen.
     mount();
     loadStateFromApi().then((loaded) => {

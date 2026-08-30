@@ -15,6 +15,9 @@ const notificationServiceSource = fs.readFileSync(path.join(root, "src", "servic
 assert.match(appSource, /apiJson\("\/api\/state\?excludeFiles=1"\)/);
 assert.match(appSource, /apiJson\("\/api\/files\/snapshot\/version"\)/);
 assert.match(appSource, /source: "browser-cache"/);
+assert.match(appSource, /FILE_SNAPSHOT_USER_KEY/);
+assert.match(appSource, /localStorage\.getItem\(FILE_SNAPSHOT_USER_KEY\) === fileUserKey/);
+assert.match(appSource, /localStorage\.setItem\(FILE_SNAPSHOT_USER_KEY, fileUserKey\)/);
 assert.match(appSource, /cachedFiles\.length === Number\(versionPayload\.total \|\| 0\)/);
 assert.match(appSource, /Split central load failed; retrying the full compatible state/);
 assert.match(appSource, /statePayload\.notificationsExcluded !== true/);
@@ -22,6 +25,7 @@ assert.match(appSource, /fileNotifications: cachedNotifications/);
 assert.match(appSource, /NOTIFICATION_SNAPSHOT_USER_KEY/);
 assert.match(appSource, /localStorage\.getItem\(NOTIFICATION_SNAPSHOT_USER_KEY\) === notificationUserKey/);
 assert.match(appSource, /requestUserKey !== notificationSnapshotUserKey\(\)/);
+assert.match(appSource, /centralStateLoading = user\.source === "supabase-auth" && !reusableFileSnapshot/);
 assert.match(appSource, /apiJson\("\/api\/notifications\/history"\)/);
 assert.match(appSource, /notificationHistoryRefreshInFlight/);
 assert.match(appSource, /return apiJson\("\/api\/state"\)/, "The original full-state request must remain as fallback");
