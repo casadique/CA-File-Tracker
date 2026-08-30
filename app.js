@@ -4619,6 +4619,7 @@ function mount() {
         <section class="page" id="clientMaster"></section>
         <section class="page" id="complaints"></section>
         <section class="page" id="dsc"></section>
+        <section class="page" id="recurringWork"></section>
         <section class="page" id="users"></section>
         <section class="page" id="invites"></section>
         <section class="page" id="visitors"></section>
@@ -5033,6 +5034,10 @@ function renderNav() {
         activePage = "dsc";
         window.openDscTab?.(page.slice("dsc-".length));
         saveTabSession();
+      } else if (page.startsWith("recurring-")) {
+        activePage = "recurringWork";
+        window.openRecurringTab?.(page.slice("recurring-".length));
+        saveTabSession();
       } else if (fileViews[page]) {
         persistConfiguredFinancialFilterValues(state.filters.listView);
         activePage = "files";
@@ -5074,7 +5079,7 @@ function renderAll() {
   if (activePage === "expenses" && !canUseExpenseModule()) activePage = "dashboard";
   if (activePage === "staffDetails" && !canUseStaffDetails()) activePage = "dashboard";
   if (activePage === "clientMaster" && !["Admin", "Manager"].includes(normalizeRole(state.currentRole))) activePage = "dashboard";
-  if (isStaffLogin() && !["dashboard", "todo", "files", "staffDetails", "complaints", "dsc"].includes(activePage)) activePage = "dashboard";
+  if (isStaffLogin() && !["dashboard", "todo", "files", "staffDetails", "complaints", "dsc", "recurringWork"].includes(activePage)) activePage = "dashboard";
   if (isStaffLogin() && activePage === "files" && state.filters.listView && !["active", "completed", "notChecked", "correctionRequired", "reAssigned", "nonBilled", "billed", "feePending", "feeReceived"].includes(state.filters.listView) && !state.filters.fromDashboard) {
     state.filters.listView = "active";
   }
@@ -5098,6 +5103,7 @@ function renderAll() {
     clientMaster: ["Client Master", "Central client identity, contact and file history"],
     complaints: ["Complaints & Service Issues", "Assignment, SLA, follow-up, resolution and root cause management"],
     dsc: ["DSC Register & Custody", "Storage, handover permission, custody, expiry and renewal tracking"],
+    recurringWork: ["Recurring Work", "Periodic compliance work generation through the existing File Tracker workflow"],
     users: ["User Management", ""],
     invites: ["Team Invitation", ""],
     visitors: ["Visitors", "Visitor register and office meeting log"],
@@ -5159,6 +5165,7 @@ function renderActivePage() {
     clientMaster: renderClientMasterPage,
     complaints: () => window.renderComplaintRegisterPage?.(),
     dsc: () => window.renderDscRegisterPage?.(),
+    recurringWork: () => window.renderRecurringWorkPage?.(),
     users: renderUsersPage,
     visitors: renderVisitorsPage,
     dailyReport: renderDailyReportPage,
@@ -5393,6 +5400,11 @@ function navGroupDefinitions() {
         navItem("dsc-handover", "users", "Handover Requests"),
         navItem("dsc-expiry", "pending", "Expiry Register"),
       ] },
+      { key: "recurring", label: "Recurring Work", collapsible: true, items: [
+        navItem("recurring-dashboard", "dashboard", "Dashboard"),
+        navItem("recurring-upcoming", "pending", "Upcoming Work"),
+        navItem("recurring-generated", "file", "Generated Work"),
+      ] },
     ];
   }
   return [
@@ -5440,6 +5452,16 @@ function navGroupDefinitions() {
       navItem("dsc-reports", "report", "DSC Reports"),
       navItem("dsc-settings", "lock", "DSC Settings"),
     ] },
+    { key: "recurring", label: "Recurring Work", collapsible: true, items: [
+      navItem("recurring-dashboard", "dashboard", "Dashboard"),
+      navItem("recurring-active", "task", "Active Schedules"),
+      navItem("recurring-upcoming", "pending", "Upcoming Work"),
+      navItem("recurring-generated", "file", "Generated Work"),
+      navItem("recurring-history", "report", "Generation History"),
+      navItem("recurring-paused", "pending", "Paused Schedules"),
+      navItem("recurring-templates", "database", "Templates"),
+      navItem("recurring-settings", "lock", "Settings"),
+    ] },
     { key: "reports", label: "Reports & Operations", collapsible: true, items: [
       navItem("dailyReport", "report", "Daily Report M&A"),
       navItem("visitors", "users", "Visitors"),
@@ -5470,10 +5492,11 @@ function navItemButton(item, fileViews, counts) {
 function navItemActive(id, fileViews) {
   const complaintActive = id.startsWith("complaints-") && activePage === "complaints" && window.getCurrentRegisterTab?.("complaint") === id.slice("complaints-".length);
   const dscActive = id.startsWith("dsc-") && activePage === "dsc" && window.getCurrentRegisterTab?.("dsc") === id.slice("dsc-".length);
+  const recurringActive = id.startsWith("recurring-") && activePage === "recurringWork" && window.getCurrentRecurringTab?.() === id.slice("recurring-".length);
   const specialActive = fileViews[id] && activePage === "files" && state.filters.listView === fileViews[id] && !(id === "active-files" && state.filters.dashboardKind === "myTask");
   const normalActive = activePage === id && !fileViews[id] && (id !== "files" || !state.filters.listView);
   const myTaskActive = id === "my-task" && activePage === "files" && state.filters.listView === "active" && state.filters.dashboardKind === "myTask" && isStaffLogin();
-  return Boolean(normalActive || specialActive || myTaskActive || complaintActive || dscActive);
+  return Boolean(normalActive || specialActive || myTaskActive || complaintActive || dscActive || recurringActive);
 }
 
 function navBadgeCounts() {
@@ -12620,12 +12643,14 @@ async function openClientProfile(id) {
   const page = document.querySelector("#clientMaster"); page.innerHTML = `<div class="panel-card">Loading client profile...</div>`;
   try {
     const [data, auditData] = await Promise.all([apiJson(`/api/clients/${id}/profile`), apiJson(`/api/clients/${id}/audit`)]); const client = data.client; const summary = data.summary;
-    page.innerHTML = `<div class="client-profile-head panel-card"><button class="mini-button" id="clientProfileBack">Back</button><div><span class="eyebrow">${escapeHtml(client.client_code)}</span><h2>${escapeHtml(client.client_name)}</h2><p>${escapeHtml(client.pan_reg_no || "PAN/Regn No. not available")} - ${escapeHtml((client.client_types || []).join(" | ") || client.client_type)}</p></div><div class="client-toolbar-actions"><button class="primary-button" id="clientProfileAddFile">Add New File for This Client</button><button class="secondary-button" id="clientProfileDsc">View DSC Records</button><button class="secondary-button" id="clientProfileSync">Sync Latest Details to Active Files</button>${canViewClientCredentials() ? `<button class="secondary-button client-credential-action" id="clientProfileCredentials">View Portal Credentials</button>` : ""}</div></div>
+    page.innerHTML = `<div class="client-profile-head panel-card"><button class="mini-button" id="clientProfileBack">Back</button><div><span class="eyebrow">${escapeHtml(client.client_code)}</span><h2>${escapeHtml(client.client_name)}</h2><p>${escapeHtml(client.pan_reg_no || "PAN/Regn No. not available")} - ${escapeHtml((client.client_types || []).join(" | ") || client.client_type)}</p></div><div class="client-toolbar-actions"><button class="primary-button" id="clientProfileAddFile">Add New File for This Client</button><button class="secondary-button" id="clientProfileRecurring">Add Recurring Work</button><button class="secondary-button" id="clientProfileRecurringList">Recurring Services</button><button class="secondary-button" id="clientProfileDsc">View DSC Records</button><button class="secondary-button" id="clientProfileSync">Sync Latest Details to Active Files</button>${canViewClientCredentials() ? `<button class="secondary-button client-credential-action" id="clientProfileCredentials">View Portal Credentials</button>` : ""}</div></div>
       <div class="client-profile-grid">${Object.entries({ "Total Files": summary.totalFiles, "Active Files": summary.activeFiles, "Completed Files": summary.completedFiles, "Overdue Files": summary.overdueFiles, "Non-Billed": summary.nonBilledFiles, "Fee Pending": summary.feePendingFiles }).map(([label, value]) => `<div class="client-profile-stat"><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>
       <div class="client-detail-sections">${clientProfileSection("Basic Details", { "Client Name": client.client_name, "Client Type": (client.client_types || []).join(" | ") || client.client_type, "C/o": client.care_of, Constitution: client.constitution, Status: client.status })}${clientProfileSection("Registration Details", { PAN: client.pan_reg_no, TAN: client.tan, "GST No.": client.gst_no, CIN: client.cin, "Other Regn No.": client.other_regn_no })}${clientProfileSection("Contact Details", { "Contact Person": client.contact_person, "Contact No.": client.contact_number, "Email ID": client.email, Place: client.place, Address: client.address })}${clientProfileSection("Additional Details", { Remarks: client.remarks })}</div>
       <div class="client-profile-content"><div class="panel-card"><h3>Recent Files</h3><div class="table-wrap"><table><thead><tr><th>Client</th><th>Service</th><th>FY</th><th>Status</th><th>Last Updated</th></tr></thead><tbody>${data.recentFiles.length ? data.recentFiles.map((file) => `<tr><td>${escapeHtml(file.name)}</td><td>${escapeHtml(file.serviceType || "-")}</td><td>${escapeHtml(file.fy || "-")}</td><td>${escapeHtml(currentWorkflowStage(file))}</td><td>${escapeHtml(fmt(file.updatedAt || file.lastUpdatedDate))}</td></tr>`).join("") : `<tr><td colspan="5">No linked files.</td></tr>`}</tbody></table></div></div><div class="panel-card client-audit-panel"><h3>Client Activity</h3><div class="client-audit-list">${auditData.events?.length ? auditData.events.map((event) => `<article><span><strong>${escapeHtml(event.action)}</strong><small>${escapeHtml(event.actor_name || "System")}</small></span><time>${escapeHtml(fmt(event.created_at))}</time></article>`).join("") : `<p class="small-muted">No client activity recorded.</p>`}</div></div></div>`;
     document.querySelector("#clientProfileBack").onclick = renderClientMasterPage;
     document.querySelector("#clientProfileAddFile").onclick = () => { selectedDrawerClient = client; openFileDrawer(); setTimeout(() => selectClientForFile(client), 0); };
+    document.querySelector("#clientProfileRecurring").onclick = () => window.openRecurringScheduleForm?.({ clientId: client.id });
+    document.querySelector("#clientProfileRecurringList").onclick = () => { activePage = "recurringWork"; window.openRecurringForClient?.(client.id); renderAll(); };
     document.querySelector("#clientProfileDsc").onclick = () => { activePage = "dsc"; window.openDscForClient?.(client.client_name); renderAll(); };
     document.querySelector("#clientProfileSync").onclick = async () => { if (!confirm("Update identity details on linked active files? Completed and billed file snapshots will remain unchanged.")) return; const result = await apiJson(`/api/clients/${id}/sync-active-files`, { method: "POST" }); toast(`${result.updated} active file(s) updated.`); };
     document.querySelector("#clientProfileCredentials")?.addEventListener("click", () => openClientCredentials(id));
@@ -12870,6 +12895,7 @@ function openFileDrawer(id) {
     </form>
     <div class="drawer-actions">
       <button class="secondary-button" id="cancelFile">Cancel</button>
+      ${id && ["Admin", "Manager", "Staff Manager"].includes(normalizeRole(state.currentRole)) ? `<button class="secondary-button" id="makeFileRecurring">Make Recurring</button>` : ""}
       <button class="primary-button" id="saveFile">Save Record</button>
     </div>
   `;
@@ -12879,6 +12905,10 @@ function openFileDrawer(id) {
   document.querySelector("#closeDrawer").onclick = closeOverlays;
   document.querySelector("#cancelFile").onclick = closeOverlays;
   document.querySelector("#saveFile").onclick = saveFileFromDrawer;
+  document.querySelector("#makeFileRecurring")?.addEventListener("click", () => {
+    closeOverlays();
+    window.openRecurringScheduleForm?.({ clientId: file.clientId || file.client_id, serviceType: file.serviceType, workType: file.workType || file.returnType || file.serviceType, description: file.workDescription || file.remarks || "", assigned_staff_id: file.assignedStaffId, priority: file.priority });
+  });
   const contactInput = document.querySelector('#fileForm [name="contactNo"]');
   if (contactInput) contactInput.maxLength = 40;
   bindFileClientLinker();

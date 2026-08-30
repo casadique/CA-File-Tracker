@@ -17,6 +17,7 @@ const { dispatchDueReminders } = require("./src/services/pushNotificationService
 const { migrateTodoAssignmentPermissions } = require("./src/services/userService");
 const { reconcileFileShadow, relationalShadowWriteEnabled } = require("./src/services/fileRecordService");
 const { dispatchRegisterReminders } = require("./src/services/registerReminderService");
+const { processDueSchedules } = require("./src/services/recurringWorkService");
 
 const app = express();
 const publicRoot = __dirname;
@@ -133,6 +134,11 @@ async function startServer() {
   const runRegisterReminders = () => dispatchRegisterReminders().catch((error) => console.error("Complaint/DSC reminder dispatch failed:", error.message));
   setTimeout(runRegisterReminders, 25 * 1000).unref();
   setInterval(runRegisterReminders, 15 * 60 * 1000).unref();
+  const runRecurringScheduler = () => processDueSchedules().then((result) => {
+    if (result.processed) console.log(`Recurring work scheduler processed ${result.processed} schedule(s).`);
+  }).catch((error) => console.error("Recurring work scheduler failed:", error.message));
+  setTimeout(runRecurringScheduler, 35000).unref();
+  setInterval(runRecurringScheduler, 5 * 60 * 1000).unref();
 }
 
 startServer();

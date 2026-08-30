@@ -17,6 +17,7 @@ const invoiceRoutes = require("./invoiceRoutes");
 const todoRoutes = require("./todoRoutes");
 const complaintRoutes = require("./complaintRoutes");
 const dscRoutes = require("./dscRoutes");
+const recurringWorkRoutes = require("./recurringWorkRoutes");
 const { env } = require("../config/env");
 
 const router = express.Router();
@@ -46,5 +47,6 @@ router.use("/invoices", invoiceRoutes);
 router.use("/todos", todoRoutes);
 router.use("/complaints", complaintRoutes);
 router.use("/dsc", dscRoutes);
+router.use("/recurring-work", recurringWorkRoutes);
 
 module.exports = router;
