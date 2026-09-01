@@ -32,6 +32,15 @@ assert.match(dscService, /Approved handover permission is required/, "DSC out mu
 assert.match(dscService, /async function addMovement[\s\S]+\["OUT","IN","TRANSFER"\]/, "DSC Movement must support Out, In and Transfer");
 assert.match(dscService, /Select an Approved Handover Request before recording an Out movement/, "Manual Out movement must preserve configured handover approval");
 assert.match(dscRoutes, /router\.post\("\/movements"/, "DSC Movement save route is missing");
+for (const report of ["movements", "expiry", "fresh"]) {
+  assert.ok(client.includes(`/api/dsc/export/pdf?report=${report}`), `${report} PDF export button is missing`);
+  assert.ok(client.includes(`/api/dsc/export/xlsx?report=${report}`), `${report} Excel export button is missing`);
+}
+assert.match(dscRoutes, /type === "movements"[\s\S]+listMovements/, "DSC movement export must use the movement register data");
+assert.match(dscRoutes, /type === "expiry"[\s\S]+expiryFrom[\s\S]+expiryTo[\s\S]+listDsc/, "DSC expiry export must use the expiry register period");
+assert.match(dscRoutes, /type === "fresh"[\s\S]+listGeneric\("dsc_fresh_issues"/, "Fresh DSC Issue export must use fresh issue data");
+const dscExportSource = dscRoutes.slice(dscRoutes.indexOf("async function exportDsc"));
+assert.doesNotMatch(dscExportSource, /password_encrypted|\bPW\b/, "DSC PDF and Excel exports must never include PW data");
 assert.match(client, /\+ Add DSC Movement/, "DSC In & Out must provide Add DSC Movement");
 assert.match(client, /value="OUT">Out[\s\S]+value="IN">In/, "DSC Movement form must provide both Out and In");
 for (const label of ["DSC NAME","ORGANISATION","DATE & TIME","DSC TYPE","TOKEN NAME","AUTHORITY","RECEIVED FROM","MOBILE NO","BOX NAME","SLOT NO","PW","EXPIRY DATE"]) assert.match(client, new RegExp(label), `DSC In movement is missing ${label}`);
