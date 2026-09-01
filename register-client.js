@@ -319,8 +319,8 @@
     const optionHtml = (values, selected) => values.map((value) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(value)}</option>`).join("");
     showModal(existing ? "Edit DSC" : "Add DSC", `<form id="dscForm" class="register-form-grid dsc-form-layout">
       <label class="dsc-span-6">DSC HOLDER NAME<input name="holderName" value="${esc(existing?.holder_name || "")}" required></label>
-      <label class="dsc-span-8"><span class="dsc-label-row">ENTITY NAME<button type="button" data-dsc-add-option="entity_name" aria-label="Add Entity Name">+</button></span><select name="clientId" id="dscEntity" required><option value="">Select from Client Master</option>${clients.map((c) => `<option value="${c.id}" data-name="${esc(c.client_name)}" data-pan="${esc(c.pan_reg_no || "")}" data-phone="${esc(c.contact_number || "")}" data-email="${esc(c.email || "")}" data-careof="${esc(c.care_of || "")}" ${existing?.client_id === c.id ? "selected" : ""}>${esc(c.client_name)}${c.pan_reg_no ? ` — ${esc(c.pan_reg_no)}` : ""}</option>`).join("")}${customEntities.map((item) => `<option value="custom:${item.id}" data-custom="true" data-name="${esc(item.value)}" ${!existing?.client_id && item.value.toLowerCase() === entityName.toLowerCase() ? "selected" : ""}>${esc(item.value)}</option>`).join("")}</select><input type="hidden" name="entityName" value="${esc(entityName)}"></label>
-      <label class="dsc-span-6"><span class="dsc-label-row">DESIGNATION<button type="button" data-dsc-add-option="designation" aria-label="Add Designation">+</button></span><select name="holderDesignation" id="dscDesignation">${optionHtml(designationValues,existing?.holder_designation || "Director")}</select></label>
+      <label class="dsc-span-8"><span class="dsc-label-row">ENTITY NAME<button type="button" data-dsc-add-option="entity_name" data-dsc-option-target="#dscEntity" aria-label="Add Entity Name">+</button></span><select name="clientId" id="dscEntity" required><option value="">Select from Client Master</option>${clients.map((c) => `<option value="${c.id}" data-name="${esc(c.client_name)}" data-pan="${esc(c.pan_reg_no || "")}" data-phone="${esc(c.contact_number || "")}" data-email="${esc(c.email || "")}" data-careof="${esc(c.care_of || "")}" ${existing?.client_id === c.id ? "selected" : ""}>${esc(c.client_name)}${c.pan_reg_no ? ` — ${esc(c.pan_reg_no)}` : ""}</option>`).join("")}${customEntities.map((item) => `<option value="custom:${item.id}" data-custom="true" data-name="${esc(item.value)}" ${!existing?.client_id && item.value.toLowerCase() === entityName.toLowerCase() ? "selected" : ""}>${esc(item.value)}</option>`).join("")}</select><input type="hidden" name="entityName" value="${esc(entityName)}"></label>
+      <label class="dsc-span-6"><span class="dsc-label-row">DESIGNATION<button type="button" data-dsc-add-option="designation" data-dsc-option-target="#dscDesignation" aria-label="Add Designation">+</button></span><select name="holderDesignation" id="dscDesignation">${optionHtml(designationValues,existing?.holder_designation || "Director")}</select></label>
       <label class="dsc-span-5">C/O<select name="careOf"><option value="">Select C/O</option>${optionHtml(careOfValues,existing?.care_of || "")}</select></label>
       <label class="dsc-span-5">PAN<input name="pan" value="${esc(existing?.pan || "")}"></label>
       <label class="dsc-span-5">PW<input name="password" type="password" autocomplete="new-password"></label>
@@ -328,7 +328,7 @@
       <label class="dsc-span-4">EMAIL<input name="email" type="email" value="${esc(existing?.email || "")}"></label>
       <label class="dsc-span-4">DSC TYPE<select name="dscType"><option value="Token" ${(existing?.dsc_type || "Token") === "Token" ? "selected" : ""}>Token</option><option value="Other file" ${existing?.dsc_type === "Other file" ? "selected" : ""}>Other file</option></select></label>
       <label class="dsc-span-4">DSC CLASS<select name="certificateClass">${optionHtml(["Class II","Class III","Class I"],existing?.certificate_class || "Class III")}</select></label>
-      <label class="dsc-span-4"><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" aria-label="Add Token Name">+</button></span><select name="tokenName" id="dscTokenName">${optionHtml(tokenValues,existing?.token_name || existing?.token_make || "Extratrust")}</select></label>
+      <label class="dsc-span-4"><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" data-dsc-option-target="#dscTokenName" aria-label="Add Token Name">+</button></span><select name="tokenName" id="dscTokenName">${optionHtml(tokenValues,existing?.token_name || existing?.token_make || "Extratrust")}</select></label>
       <label class="dsc-span-4">BOX TYPE<select name="boxType">${optionHtml(["Blue","Black"],existing?.box_type || "Blue")}</select></label>
       <label class="dsc-span-5">SLOT POSITION<input name="slotPosition" value="${esc(existing?.slot_position || "")}"></label>
       <label class="dsc-span-5">ISSUE DATE<input name="issuedDate" type="date" value="${esc(existing?.issued_date || "")}"></label>
@@ -348,15 +348,15 @@
   }
 
   async function addDscFormOption(button, form) {
-    const config = { entity_name: ["Entity Name","#dscEntity"], designation: ["Designation","#dscDesignation"], token_name: ["Token Name","#dscTokenName"] }[button.dataset.dscAddOption];
-    const value = window.prompt(`Enter new ${config[0]}:`)?.trim(); if(!value)return;
+    const labels = { entity_name: "Entity Name", designation: "Designation", token_name: "Token Name", authority: "Authority", box_name: "Box Name" };
+    const label=labels[button.dataset.dscAddOption],select=form.querySelector(button.dataset.dscOptionTarget); const value = window.prompt(`Enter new ${label}:`)?.trim(); if(!value)return;
     button.disabled=true;
     try {
-      const result=await submitJson(`/api/dsc/form-options/${button.dataset.dscAddOption}`,"POST",{value}); const select=form.querySelector(config[1]);
+      const result=await submitJson(`/api/dsc/form-options/${button.dataset.dscAddOption}`,"POST",{value});
       let option=[...select.options].find((item)=>item.textContent.trim().toLowerCase()===result.option.value.toLowerCase());
       if(!option){option=document.createElement("option");option.textContent=result.option.value;option.value=button.dataset.dscAddOption==="entity_name"?`custom:${result.option.id}`:result.option.value;select.appendChild(option);}
-      if(button.dataset.dscAddOption==="entity_name"){option.dataset.custom="true";option.dataset.name=result.option.value;form.elements.entityName.value=result.option.value;}
-      select.value=option.value; toast(`${config[0]} added.`);
+      if(button.dataset.dscAddOption==="entity_name"){option.dataset.custom="true";option.dataset.name=result.option.value;if(form.elements.entityName)form.elements.entityName.value=result.option.value;if(form.elements.organizationName)form.elements.organizationName.value=result.option.value;}
+      select.value=option.value; toast(`${label} added.`);
     } catch(error){toast(error.message);} finally {button.disabled=false;}
   }
   async function openDscDetail(id) {
@@ -409,17 +409,19 @@
   function addBoxForm() { simplePrompt("Add Storage Box", `${inputField("Box Code","boxCode","",true)}${inputField("Box Name","boxName")}${inputField("Cabinet","cabinet")}${inputField("Shelf","shelf")}${inputField("Location","location","",true)}${numberField("Capacity","capacity",20)}`, async(values)=>{ await submitJson("/api/dsc/boxes","POST",values); toast("Storage box added."); window.renderDscRegisterPage(); }); }
   async function viewBox(id) { const result=await api(`/api/dsc/boxes/${id}`); showModal(`Box ${result.box.box_code}`, `<div class="detail-summary-grid"><span><small>Location</small><strong>${esc(result.box.location)}</strong></span><span><small>Capacity</small><strong>${result.box.capacity}</strong></span><span><small>Occupied</small><strong>${result.box.occupied}</strong></span><span><small>Available</small><strong>${result.box.available}</strong></span></div>${genericRows(result.records,["slot_position","client_name","holder_name","token_name","expiry_date","status"])}<div class="modal-actions"><button class="secondary-button" onclick="window.print()">Print Box List</button></div>`); }
   async function freshIssueForm(){
-    const [clientResult, optionResult, boxResult]=await Promise.all([api("/api/clients/search?limit=50"),api("/api/dsc/form-options"),api("/api/dsc/boxes")]);
+    const [clientResult, optionResult]=await Promise.all([api("/api/clients/search?limit=50"),api("/api/dsc/form-options")]);
     const uniqueValues=(defaults,custom)=>[...new Set([...defaults,...(custom||[]).map((item)=>item.value)].filter(Boolean))];
-    const clients=clientResult.clients||[],customEntities=optionResult.entityNames||[],boxes=boxResult.boxes||[];
+    const clients=clientResult.clients||[],customEntities=optionResult.entityNames||[];
     const designations=uniqueValues(["Director","Designated Partner","Owner","Auth Representative"],optionResult.designations);
-    const tokenNames=uniqueValues(["Extratrust","Vsign","Emudhra"],optionResult.tokenNames);
+    const tokenNames=uniqueValues(["HyperKey","Proxkey","Others"],optionResult.tokenNames);
+    const authorities=uniqueValues(["XtraTrust","Vsign","Emudhra"],optionResult.authorities);
+    const boxNames=uniqueValues(["Blue","Black"],optionResult.boxNames);
     const statuses=["New Request","Documents Pending","Documents Received","Application Prepared","Application Submitted","Payment Pending","Verification Pending","Video Verification Pending","Under Processing","Approved","Token Awaited","DSC Received","Handed Over","Completed","Rejected","Cancelled"];
     const options=(values,selected="")=>values.map((value)=>`<option value="${esc(value)}" ${value===selected?"selected":""}>${esc(value)}</option>`).join("");
     const workDate=new Date(Date.now()+330*60000).toISOString().slice(0,10);
     showModal("New Fresh DSC Issue",`<form id="freshDscForm" class="register-form-grid dsc-fresh-form-layout">
       <label>CLIENT NAME<input name="clientName" required></label>
-      <label>ORGANIZATION NAME<select name="clientId" id="freshOrganization" required><option value="">Select from Client Master</option>${clients.map((client)=>`<option value="${client.id}" data-name="${esc(client.client_name)}" data-pan="${esc(client.pan_reg_no||"")}" data-mobile="${esc(client.contact_number||"")}" data-email="${esc(client.email||"")}">${esc(client.client_name)}</option>`).join("")}${customEntities.map((item)=>`<option value="custom:${item.id}" data-custom="true" data-name="${esc(item.value)}">${esc(item.value)}</option>`).join("")}</select><input type="hidden" name="organizationName"></label>
+      <label><span class="dsc-label-row">ORGANIZATION NAME<button type="button" data-dsc-add-option="entity_name" data-dsc-option-target="#freshOrganization" aria-label="Add Organization Name">+</button></span><select name="clientId" id="freshOrganization" required><option value="">Select from Client Master</option>${clients.map((client)=>`<option value="${client.id}" data-name="${esc(client.client_name)}" data-pan="${esc(client.pan_reg_no||"")}" data-mobile="${esc(client.contact_number||"")}" data-email="${esc(client.email||"")}">${esc(client.client_name)}</option>`).join("")}${customEntities.map((item)=>`<option value="custom:${item.id}" data-custom="true" data-name="${esc(item.value)}">${esc(item.value)}</option>`).join("")}</select><input type="hidden" name="organizationName"></label>
       <label>DESIGNATION<select name="designation"><option value="">Select designation</option>${options(designations)}</select></label>
       <label>PAN<input name="pan"></label>
       <label>MOBILE NO<input name="mobile" type="tel"></label>
@@ -428,15 +430,15 @@
       <label>WORK DATE<input name="workDate" type="date" value="${workDate}" required></label>
       <label>STATUS<select name="status">${options(statuses,"New Request")}</select></label>
       <label>APPLICATION ID<input name="applicationId" maxlength="120" required></label>
-      <label>TOKEN NAME<select name="tokenName" required><option value="">Select token</option>${options(tokenNames)}</select></label>
-      <label>AUTHORITY<select name="authority"><option value="Extra Trust">Extra Trust</option><option value="Emudhra">Emudhra</option><option value="Vsign">Vsign</option></select></label>
+      <label><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" data-dsc-option-target="#freshTokenName" aria-label="Add Token Name">+</button></span><select name="tokenName" id="freshTokenName" required><option value="">Select token</option>${options(tokenNames)}</select></label>
+      <label><span class="dsc-label-row">AUTHORITY<button type="button" data-dsc-add-option="authority" data-dsc-option-target="#freshAuthority" aria-label="Add Authority">+</button></span><select name="authority" id="freshAuthority">${options(authorities,"XtraTrust")}</select></label>
       <label>CLASS TYPE<select name="classType"><option value="Class II">Class II</option><option value="Class III" selected>Class III</option></select></label>
-      <label>PW<input name="password" type="password" autocomplete="new-password"></label>
-      <label>ISSUE DATE<input name="issuedDate" type="date"></label>
-      <label>VALID FROM<input name="validFrom" type="date"></label>
-      <label>VALID TO<input name="validTo" type="date"></label>
+      <label><span class="dsc-label-row">PW<button type="button" class="pw-visibility-toggle" data-toggle-fresh-pw>Show</button></span><input name="password" id="freshPassword" type="password" autocomplete="new-password"></label>
+      <label>ISSUE DATE<input name="issuedDate" type="date" value="${workDate}"></label>
+      <label>VALID FROM<input name="validFrom" type="date" value="${workDate}"></label>
+      <label>VALID TO<input name="validTo" type="date" value="${dscAddYears(workDate,2)}"></label>
       <label>KEEP IN CUSTODY<select name="keepInCustody" id="freshCustody"><option value="No">No</option><option value="Yes">Kept With Us</option></select></label>
-      <label data-fresh-custody-field hidden>BOX NAME<select name="boxId"><option value="">Select Box</option>${boxes.map((box)=>`<option value="${box.id}">${esc(box.box_name||box.box_code)} — ${esc(box.location||"")}</option>`).join("")}</select></label>
+      <label data-fresh-custody-field hidden><span class="dsc-label-row">BOX NAME<button type="button" data-dsc-add-option="box_name" data-dsc-option-target="#freshBoxName" aria-label="Add Box Name">+</button></span><select name="boxName" id="freshBoxName"><option value="">Select Box</option>${options(boxNames)}</select></label>
       <label data-fresh-custody-field hidden>SLOT POSITION<input name="slotPosition"></label>
       <label class="form-span-2 fresh-remarks">REMARKS<textarea name="remarks" rows="2"></textarea></label>
       <div class="security-callout form-span-2">PW is encrypted and masked. It is never included in lists, reports, exports, notifications or QR codes.</div>
@@ -444,9 +446,11 @@
       <div class="modal-actions form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save Fresh Issue</button></div>
     </form>`);
     const form=document.querySelector("#freshDscForm"),custodyFields=[...form.querySelectorAll("[data-fresh-custody-field]")];
-    const toggleCustody=()=>{const kept=form.elements.keepInCustody.value==="Yes";custodyFields.forEach((label)=>label.hidden=!kept);form.elements.boxId.required=kept;form.elements.slotPosition.required=kept;if(!kept){form.elements.boxId.value="";form.elements.slotPosition.value="";}};
+    const toggleCustody=()=>{const kept=form.elements.keepInCustody.value==="Yes";custodyFields.forEach((label)=>label.hidden=!kept);form.elements.boxName.required=kept;form.elements.slotPosition.required=kept;if(!kept){form.elements.boxName.value="";form.elements.slotPosition.value="";}};
     const setFreshValidTo=()=>{const value=form.elements.validFrom.value;if(!value)return;form.elements.validTo.value=dscAddYears(value,2);};
     form.elements.keepInCustody.onchange=toggleCustody;toggleCustody();
+    form.querySelectorAll("[data-dsc-add-option]").forEach((button)=>button.onclick=()=>addDscFormOption(button,form));
+    form.querySelector("[data-toggle-fresh-pw]").onclick=(event)=>{const input=form.elements.password,showing=input.type==="text";input.type=showing?"password":"text";event.currentTarget.textContent=showing?"Show":"Hide";};
     form.elements.issuedDate.onchange=()=>{form.elements.validFrom.value=form.elements.issuedDate.value;setFreshValidTo();};form.elements.validFrom.onchange=setFreshValidTo;
     form.querySelector("#freshOrganization").onchange=(event)=>{const selected=event.target.selectedOptions[0];if(!selected?.value)return;form.elements.organizationName.value=selected.dataset.name;if(selected.dataset.custom==="true"){form.elements.pan.value="";form.elements.mobile.value="";form.elements.email.value="";return;}form.elements.pan.value=selected.dataset.pan;form.elements.mobile.value=selected.dataset.mobile;form.elements.email.value=selected.dataset.email;};
     form.onsubmit=async(event)=>{event.preventDefault();const submit=form.querySelector('[type="submit"]'),errorBox=form.querySelector("[data-fresh-save-error]");submit.disabled=true;submit.textContent="Saving…";errorBox.hidden=true;try{const body=formObject(form);if(String(body.clientId).startsWith("custom:"))body.clientId="";body.keepInCustody=body.keepInCustody==="Yes";await submitJson("/api/dsc/fresh-issues","POST",body);closeModal();toast("Fresh DSC issue added.");window.renderDscRegisterPage();}catch(error){errorBox.textContent=error.message||"Unable to save the Fresh DSC Issue.";errorBox.hidden=false;submit.disabled=false;submit.textContent="Save Fresh Issue";}};

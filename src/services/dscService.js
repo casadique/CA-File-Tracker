@@ -8,7 +8,7 @@ const APPROVE_PERMISSION = "approve_dsc_handover";
 const EXPORT_PERMISSION = "export_dsc";
 const DSC_STATUSES = ["Fresh Issue Pending","Application in Progress","Verification Pending","Issued","Active","Expiring Soon","Renewal Initiated","Renewal in Progress","Renewed","Expired","In Office","Issued Out","Returned","Lost / Missing","Damaged","Revoked","Closed"];
 const FRESH_STATUSES = ["New Request","Documents Pending","Documents Received","Application Prepared","Application Submitted","Payment Pending","Verification Pending","Video Verification Pending","Under Processing","Approved","Token Awaited","DSC Received","Handed Over","Completed","Rejected","Cancelled"];
-const FORM_OPTION_TYPES = ["entity_name", "designation", "token_name"];
+const FORM_OPTION_TYPES = ["entity_name", "designation", "token_name", "authority", "box_name"];
 
 function text(value, max = 5000) { return String(value ?? "").trim().slice(0, max); }
 function fail(message, status = 400) { const error = new Error(message); error.status = status; return error; }
@@ -187,8 +187,8 @@ async function importDscRows(rows, req) {
 async function formOptions() {
   const { data, error } = await supabaseAdmin.from("dsc_form_options").select("id,option_type,value").eq("is_active", true).order("value");
   if (error) throw error;
-  const result = { entityNames: [], designations: [], tokenNames: [] };
-  const keys = { entity_name: "entityNames", designation: "designations", token_name: "tokenNames" };
+  const result = { entityNames: [], designations: [], tokenNames: [], authorities: [], boxNames: [] };
+  const keys = { entity_name: "entityNames", designation: "designations", token_name: "tokenNames", authority: "authorities", box_name: "boxNames" };
   for (const option of data || []) result[keys[option.option_type]].push({ id: option.id, value: option.value });
   return result;
 }
@@ -201,6 +201,16 @@ async function addFormOption(kind, input, req) {
   const { data, error } = await supabaseAdmin.from("dsc_form_options").upsert({ option_type: kind, value, is_active: true, created_by: req.user.id }, { onConflict: "option_type,normalized_value" }).select("id,option_type,value").single();
   if (error) throw error;
   return data;
+}
+
+async function acceptedFormOption(kind, value, defaults) {
+  const selected = text(value, 160);
+  if (!selected) return null;
+  if (defaults.includes(selected)) return selected;
+  const { data, error } = await supabaseAdmin.from("dsc_form_options").select("value").eq("option_type", kind).eq("normalized_value", selected.toLowerCase()).eq("is_active", true).maybeSingle();
+  if (error) throw error;
+  if (!data) throw fail(`Select a valid ${kind.replace("_", " ")} option.`);
+  return data.value;
 }
 
 async function boxes(includeInactive = false) {
@@ -363,13 +373,12 @@ async function createFresh(input, req) {
   const organizationName = text(input.organizationName, 240);
   if (!applicationNo || !holderName || !organizationName) throw fail("Client Name, Organization Name and Application ID are required.");
   const keepInCustody = input.keepInCustody === true || input.keepInCustody === "true" || input.keepInCustody === "Yes";
-  let custodyBox = null;
+  const tokenName = await acceptedFormOption("token_name", input.tokenName, ["HyperKey","Proxkey","Others"]);
+  const authority = await acceptedFormOption("authority", input.authority, ["XtraTrust","Vsign","Emudhra"]);
+  let custodyBoxName = null;
   if (keepInCustody) {
-    if (!input.boxId || !text(input.slotPosition, 80)) throw fail("Box Name and Slot Position are required when the DSC is kept in custody.");
-    const { data: box, error: boxError } = await supabaseAdmin.from("dsc_boxes").select("id,box_code,box_name").eq("id", input.boxId).eq("is_active", true).maybeSingle();
-    if (boxError) throw boxError;
-    if (!box) throw fail("Select an active Box Name from the Box Register.");
-    custodyBox = box;
+    if (!input.boxName || !text(input.slotPosition, 80)) throw fail("Box Name and Slot Position are required when the DSC is kept in custody.");
+    custodyBoxName = await acceptedFormOption("box_name", input.boxName, ["Blue","Black"]);
   }
   const issuedDate = input.issuedDate || null;
   const validFrom = input.validFrom || issuedDate;
@@ -379,11 +388,11 @@ async function createFresh(input, req) {
     holder_name: holderName, designation: text(input.designation, 160) || null, pan: text(input.pan, 40) || null,
     mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null, aadhaar_no: text(input.aadhaarNo, 24) || null,
     application_date: input.workDate || new Date().toISOString().slice(0,10), status: FRESH_STATUSES.includes(input.status) ? input.status : "New Request",
-    token_name: text(input.tokenName, 160) || null, authority: ["Extra Trust","Emudhra","Vsign"].includes(input.authority) ? input.authority : null, provider_vendor: ["Extra Trust","Emudhra","Vsign"].includes(input.authority) ? input.authority : null,
+    token_name: tokenName, authority, provider_vendor: authority,
     class_type: ["Class II","Class III"].includes(input.classType) ? input.classType : null,
     password_encrypted: Object.prototype.hasOwnProperty.call(input, "password") ? encryptPassword(input.password) : null,
     actual_issue_date: issuedDate, valid_from: validFrom, valid_to: validTo, keep_in_custody: keepInCustody,
-    box_id: custodyBox?.id || null, box_name: custodyBox ? (custodyBox.box_name || custodyBox.box_code) : null,
+    box_id: null, box_name: custodyBoxName,
     slot_position: keepInCustody ? text(input.slotPosition, 80) : null, remarks: text(input.remarks),
     created_by: req.user.id, updated_by: req.user.id,
   };
@@ -396,7 +405,7 @@ async function addFreshToMaster(id, input, req) {
   assertManage(req.profile);
   const { data: fresh, error } = await supabaseAdmin.from("dsc_fresh_issues").select("*").eq("id", id).single(); if (error) throw error;
   if (fresh.status !== "DSC Received") throw fail("Fresh Issue must be at DSC Received before adding it to DSC Master.", 409);
-  const result = await createDsc({ ...input, clientId: fresh.client_id, clientName: fresh.organization_name || fresh.client_name, entityName: fresh.organization_name || fresh.client_name, holderName: fresh.holder_name, holderDesignation: fresh.designation, pan: fresh.pan, mobile: fresh.mobile, email: fresh.email, tokenName: fresh.token_name || "Not Provided", certificateClass: fresh.class_type, issuedDate: fresh.actual_issue_date, validFrom: fresh.valid_from, expiryDate: fresh.valid_to, boxId: fresh.keep_in_custody ? fresh.box_id : null, slotPosition: fresh.keep_in_custody ? fresh.slot_position : null, status: fresh.keep_in_custody ? "In Office" : "Active", assignedUserId: fresh.assigned_user_id }, req);
+  const result = await createDsc({ ...input, clientId: fresh.client_id, clientName: fresh.organization_name || fresh.client_name, entityName: fresh.organization_name || fresh.client_name, holderName: fresh.holder_name, holderDesignation: fresh.designation, pan: fresh.pan, mobile: fresh.mobile, email: fresh.email, tokenName: fresh.token_name || "Not Provided", certificateClass: fresh.class_type, boxType: fresh.keep_in_custody ? fresh.box_name : null, issuedDate: fresh.actual_issue_date, validFrom: fresh.valid_from, expiryDate: fresh.valid_to, slotPosition: fresh.keep_in_custody ? fresh.slot_position : null, status: fresh.keep_in_custody ? "In Office" : "Active", assignedUserId: fresh.assigned_user_id }, req);
   if (fresh.password_encrypted) await supabaseAdmin.from("dsc_master").update({ password_encrypted: fresh.password_encrypted }).eq("id", result.record.id);
   await supabaseAdmin.from("dsc_fresh_issues").update({ linked_dsc_id: result.record.id, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", id);
   return result;

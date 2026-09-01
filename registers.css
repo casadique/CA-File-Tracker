@@ -8,4 +8,4 @@
 .dsc-fresh-form-layout{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.dsc-fresh-form-layout>.form-span-2,.dsc-fresh-form-layout>.fresh-remarks{grid-column:1/-1}.dsc-fresh-form-layout [hidden]{display:none!important}
 @media(max-width:900px){.dsc-fresh-form-layout{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.dsc-fresh-form-layout{grid-template-columns:1fr}.dsc-fresh-form-layout>.form-span-2,.dsc-fresh-form-layout>.fresh-remarks{grid-column:auto}}
-#dscMovementForm [hidden]{display:none!important}
+#dscMovementForm [hidden]{display:none!important}.dsc-label-row .pw-visibility-toggle{width:auto;padding:0 8px;font-size:10px;text-transform:none}
