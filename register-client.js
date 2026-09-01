@@ -311,6 +311,7 @@
     const careOfValues = cleanValues([], (masterResult.careOf || []).map((value) => ({ value })), existing?.care_of);
     const designationValues = cleanValues(["Director","Designated Partner","Owner","Auth Representative"], optionResult.designations, existing?.holder_designation);
     const tokenValues = cleanValues(["Extratrust","Vsign","Emudhra"], optionResult.tokenNames, existing?.token_name || existing?.token_make);
+    const boxValues = cleanValues(["Blue","Black"], optionResult.boxNames, existing?.box_type);
     const entityName = existing?.entity_name || existing?.client_name || "";
     const clients = [...ui.clients];
     if (existing?.client_id && !clients.some((client) => client.id === existing.client_id)) clients.push({ id: existing.client_id, client_name: entityName, pan_reg_no: existing.pan, contact_number: existing.mobile, email: existing.email, care_of: existing.care_of });
@@ -323,19 +324,20 @@
       <label class="dsc-span-6"><span class="dsc-label-row">DESIGNATION<button type="button" data-dsc-add-option="designation" data-dsc-option-target="#dscDesignation" aria-label="Add Designation">+</button></span><select name="holderDesignation" id="dscDesignation">${optionHtml(designationValues,existing?.holder_designation || "Director")}</select></label>
       <label class="dsc-span-5">C/O<select name="careOf"><option value="">Select C/O</option>${optionHtml(careOfValues,existing?.care_of || "")}</select></label>
       <label class="dsc-span-5">PAN<input name="pan" value="${esc(existing?.pan || "")}"></label>
-      <label class="dsc-span-5">PW<input name="password" type="password" autocomplete="new-password"></label>
+      <label class="dsc-span-5"><span class="dsc-label-row">PW<button type="button" class="pw-visibility-toggle" data-toggle-dsc-pw>Show</button></span><input name="password" type="password" autocomplete="new-password"></label>
       <label class="dsc-span-5">MOBILE NO<input name="mobile" type="tel" value="${esc(existing?.mobile || "")}"></label>
       <label class="dsc-span-4">EMAIL<input name="email" type="email" value="${esc(existing?.email || "")}"></label>
       <label class="dsc-span-4">DSC TYPE<select name="dscType"><option value="Token" ${(existing?.dsc_type || "Token") === "Token" ? "selected" : ""}>Token</option><option value="Other file" ${existing?.dsc_type === "Other file" ? "selected" : ""}>Other file</option></select></label>
       <label class="dsc-span-4">DSC CLASS<select name="certificateClass">${optionHtml(["Class II","Class III","Class I"],existing?.certificate_class || "Class III")}</select></label>
       <label class="dsc-span-4"><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" data-dsc-option-target="#dscTokenName" aria-label="Add Token Name">+</button></span><select name="tokenName" id="dscTokenName">${optionHtml(tokenValues,existing?.token_name || existing?.token_make || "Extratrust")}</select></label>
-      <label class="dsc-span-4">BOX TYPE<select name="boxType">${optionHtml(["Blue","Black"],existing?.box_type || "Blue")}</select></label>
-      <label class="dsc-span-5">SLOT POSITION<input name="slotPosition" value="${esc(existing?.slot_position || "")}"></label>
-      <label class="dsc-span-5">ISSUE DATE<input name="issuedDate" type="date" value="${esc(existing?.issued_date || "")}"></label>
-      <label class="dsc-span-5">VALID FROM<input name="validFrom" type="date" value="${esc(existing?.valid_from || "")}"></label>
-      <label class="dsc-span-5">VALID TO<input name="expiryDate" type="date" value="${esc(existing?.expiry_date || "")}"></label>
+      <label class="dsc-span-4"><span class="dsc-label-row">BOX TYPE<button type="button" data-dsc-add-option="box_name" data-dsc-option-target="#dscBoxType" aria-label="Add Box Type">+</button></span><select name="boxType" id="dscBoxType">${optionHtml(boxValues,existing?.box_type || "Blue")}</select></label>
+      <label class="dsc-span-2 dsc-slot-compact">SLOT POSITION<input name="slotPosition" value="${esc(existing?.slot_position || "")}"></label>
+      <label class="dsc-span-6">ISSUE DATE<input name="issuedDate" type="date" value="${esc(existing?.issued_date || "")}"></label>
+      <label class="dsc-span-6">VALID FROM<input name="validFrom" type="date" value="${esc(existing?.valid_from || "")}"></label>
+      <label class="dsc-span-6">VALID TO<input name="expiryDate" type="date" value="${esc(existing?.expiry_date || "")}"></label>
       <label class="dsc-span-20 form-span-2">REMARKS<textarea name="remarks" rows="2">${esc(existing?.remarks || "")}</textarea></label>
       <div class="security-callout dsc-span-20 form-span-2">PW is encrypted and masked. It is never included in DSC lists, reports, exports, notifications or QR codes.</div>
+      <div class="register-error dsc-span-20 form-span-2" data-dsc-save-error role="alert" hidden></div>
       <div class="modal-actions dsc-span-20 form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save DSC</button></div>
     </form>`);
     const form = document.querySelector("#dscForm");
@@ -344,7 +346,8 @@
     form.elements.validFrom.onchange = setValidTo;
     form.querySelector("#dscEntity").onchange = (event) => { const o=event.target.selectedOptions[0]; if(!o?.value)return; form.elements.entityName.value=o.dataset.name; if(o.dataset.custom === "true"){form.elements.pan.value="";form.elements.mobile.value="";form.elements.email.value="";return;} form.elements.pan.value=o.dataset.pan; form.elements.mobile.value=o.dataset.phone; form.elements.email.value=o.dataset.email; if(o.dataset.careof)form.elements.careOf.value=o.dataset.careof; };
     form.querySelectorAll("[data-dsc-add-option]").forEach((button) => button.onclick = () => addDscFormOption(button, form));
-    form.onsubmit = async (event) => { event.preventDefault(); const body=formObject(form); if(String(body.clientId).startsWith("custom:"))body.clientId=""; const path=existing ? `/api/dsc/${existing.id}` : "/api/dsc"; await submitJson(path,existing ? "PUT" : "POST",body); closeModal(); toast(existing ? "DSC updated." : "DSC added to Master."); window.renderDscRegisterPage(); };
+    form.querySelector("[data-toggle-dsc-pw]").onclick = (event) => { const input=form.elements.password,showing=input.type==="text"; input.type=showing?"password":"text"; event.currentTarget.textContent=showing?"Show":"Hide"; };
+    form.onsubmit = async (event) => { event.preventDefault(); const submit=form.querySelector('[type="submit"]'),errorBox=form.querySelector("[data-dsc-save-error]"); submit.disabled=true; submit.textContent="Saving…"; errorBox.hidden=true; try { const body=formObject(form); if(String(body.clientId).startsWith("custom:"))body.clientId=""; const path=existing ? `/api/dsc/${existing.id}` : "/api/dsc"; await submitJson(path,existing ? "PUT" : "POST",body); closeModal(); toast(existing ? "DSC updated." : "DSC added to Master."); window.renderDscRegisterPage(); } catch(error) { errorBox.textContent=error.message||"Unable to save the DSC. Please review the entered details."; errorBox.hidden=false; submit.disabled=false; submit.textContent="Save DSC"; } };
   }
 
   async function addDscFormOption(button, form) {

@@ -23,11 +23,14 @@ assert(routes.indexOf('Status: row.status || ""') < routes.indexOf('Remarks: row
 assert(routes.includes('router.post("/import"'), "DSC import route is missing.");
 assert(!routes.includes('"PW": row.'), "DSC exports must never contain PW.");
 assert(migration.includes("password_encrypted") && migration.includes("box_type"), "DSC form migration is incomplete.");
-for (const text of ['dsc-span-5">C/O','dsc-span-5">PAN','dsc-span-5">PW','dsc-span-5">MOBILE NO']) assert(client.includes(text), `DSC second-row layout is missing: ${text}`);
-for (const text of ['dsc-span-4">EMAIL','dsc-span-4">DSC TYPE','dsc-span-4">DSC CLASS','dsc-span-4"><span class="dsc-label-row">TOKEN NAME','dsc-span-4">BOX TYPE']) assert(client.includes(text), `DSC third-row layout is missing: ${text}`);
-for (const text of ['dsc-span-5">SLOT POSITION','dsc-span-5">ISSUE DATE','dsc-span-5">VALID FROM','dsc-span-5">VALID TO']) assert(client.includes(text), `DSC date-row layout is missing: ${text}`);
+for (const text of ['dsc-span-5">C/O','dsc-span-5">PAN','dsc-span-5"><span class="dsc-label-row">PW','dsc-span-5">MOBILE NO']) assert(client.includes(text), `DSC second-row layout is missing: ${text}`);
+for (const text of ['dsc-span-4">EMAIL','dsc-span-4">DSC TYPE','dsc-span-4">DSC CLASS','dsc-span-4"><span class="dsc-label-row">TOKEN NAME','dsc-span-4"><span class="dsc-label-row">BOX TYPE']) assert(client.includes(text), `DSC third-row layout is missing: ${text}`);
+for (const text of ['dsc-span-2 dsc-slot-compact">SLOT POSITION','dsc-span-6">ISSUE DATE','dsc-span-6">VALID FROM','dsc-span-6">VALID TO']) assert(client.includes(text), `DSC date-row layout is missing: ${text}`);
 assert(client.includes('value="Token"') && client.includes('value="Other file"') && service.includes('existing.dsc_type || "Token"'), "DSC Type must be Token/Other file with Token default.");
-for (const kind of ["entity_name","designation","token_name"]) assert(client.includes(`data-dsc-add-option="${kind}"`), `Missing + option for ${kind}`);
+for (const kind of ["entity_name","designation","token_name","box_name"]) assert(client.includes(`data-dsc-add-option="${kind}"`), `Missing + option for ${kind}`);
+assert(client.includes('data-dsc-option-target="#dscBoxType"'), "Add/Edit DSC Box Type needs a + add button.");
+assert(client.includes("data-toggle-dsc-pw") && client.includes("data-dsc-save-error"), "Add/Edit DSC must provide PW visibility and persistent save errors.");
+assert(client.includes('dsc-span-2 dsc-slot-compact">SLOT POSITION') && styles.includes(".dsc-span-2"), "Add/Edit DSC Slot Position must use a reduced width.");
 assert(optionMigration.includes("dsc_form_options") && optionMigration.includes("revoke all"), "Persistent DSC form options must be server-managed.");
 assert(service.includes("addFormOption") && routes.includes('/form-options/:kind'), "DSC custom option API is missing.");
 assert(styles.includes("grid-template-columns:repeat(20") && styles.includes(".dsc-span-4") && styles.includes(".dsc-span-5"), "DSC row layout styles are missing.");

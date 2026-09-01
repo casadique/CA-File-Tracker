@@ -106,7 +106,9 @@ async function selectMany(table, column, id, order) {
 
 function dscPayload(input, req, existing = {}) {
   const entityName = text(input.entityName ?? input.entity_name ?? existing.entity_name, 240);
-  const clientName = text(input.clientName ?? input.client_name ?? existing.client_name, 240) || entityName;
+  const clientName = text(input.clientName ?? input.client_name, 240) || entityName || text(existing.client_name, 240);
+  const requestedClientId = input.clientId ?? input.client_id;
+  const clientId = requestedClientId === "" || requestedClientId === null ? null : (requestedClientId || existing.client_id || null);
   const holderName = text(input.holderName ?? input.holder_name, 240);
   const tokenName = text(input.tokenName ?? input.token_name ?? existing.token_name, 240);
   if (!entityName || !holderName || !tokenName) throw fail("DSC Holder Name, Entity Name and Token Name are required.");
@@ -117,7 +119,7 @@ function dscPayload(input, req, existing = {}) {
   const expiryDate = input.expiryDate || input.expiry_date || existing.expiry_date || addYears(validFrom, 2);
   const status = DSC_STATUSES.includes(input.status) ? input.status : (existing.status || validityStatus(expiryDate));
   return {
-    client_id: input.clientId || input.client_id || existing.client_id || null, client_name: clientName,
+    client_id: clientId, client_name: clientName,
     pan: text(input.pan, 40) || null, entity_name: entityName,
     holder_name: holderName, holder_designation: text(input.holderDesignation ?? input.holder_designation, 160) || null,
     care_of: text(input.careOf ?? input.care_of, 160) || null,
@@ -130,7 +132,7 @@ function dscPayload(input, req, existing = {}) {
     current_location: text(input.currentLocation ?? input.current_location, 240) || null,
     box_id: input.boxId || input.box_id || null, box_type: text(input.boxType || input.box_type, 160) || null,
     slot_position: text(input.slotPosition ?? input.slot_position, 80) || null,
-    assigned_user_id: input.assignedUserId || input.assigned_user_id || null, remarks: remarks || null,
+    assigned_user_id: input.assignedUserId || input.assigned_user_id || existing.assigned_user_id || null, remarks: remarks || null,
     updated_by: req.user.id, updated_at: new Date().toISOString(),
   };
 }
