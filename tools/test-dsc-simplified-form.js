@@ -7,6 +7,7 @@ const service = fs.readFileSync(path.join(root, "src/services/dscService.js"), "
 const routes = fs.readFileSync(path.join(root, "src/routes/dscRoutes.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "database/migrations/20260830_dsc_simplified_add_form.sql"), "utf8");
 const optionMigration = fs.readFileSync(path.join(root, "database/migrations/20260901_dsc_form_options.sql"), "utf8");
+const freshMigration = fs.readFileSync(path.join(root, "database/migrations/20260901_fresh_dsc_issue_form.sql"), "utf8");
 const styles = fs.readFileSync(path.join(root, "registers.css"), "utf8");
 
 for (const label of ["DSC HOLDER NAME","ENTITY NAME","DESIGNATION","C/O","PAN","PW","MOBILE NO","EMAIL","DSC TYPE","DSC CLASS","TOKEN NAME","BOX TYPE","SLOT POSITION","ISSUE DATE","VALID FROM","VALID TO","STATUS","REMARKS"]) assert(client.includes(label), `Missing Add DSC/import field: ${label}`);
@@ -28,4 +29,12 @@ for (const kind of ["entity_name","designation","token_name"]) assert(client.inc
 assert(optionMigration.includes("dsc_form_options") && optionMigration.includes("revoke all"), "Persistent DSC form options must be server-managed.");
 assert(service.includes("addFormOption") && routes.includes('/form-options/:kind'), "DSC custom option API is missing.");
 assert(styles.includes("grid-template-columns:repeat(20") && styles.includes(".dsc-span-4") && styles.includes(".dsc-span-5"), "DSC row layout styles are missing.");
+const freshStart = client.indexOf('showModal("New Fresh DSC Issue"');
+const freshEnd = client.indexOf("async function", freshStart + 20);
+const freshForm = client.slice(freshStart, freshEnd > freshStart ? freshEnd : undefined);
+for (const label of ["CLIENT NAME","ORGANIZATION NAME","DESIGNATION","PAN","MOBILE NO","EMAIL ID","AADHAAR NO","WORK DATE","STATUS","APPLICATION ID","TOKEN NAME","AUTHORITY","PW","ISSUE DATE","VALID FROM","VALID TO","KEEP IN CUSTODY","BOX NAME","SLOT POSITION","REMARKS"]) assert(freshForm.includes(label), `Fresh DSC form is missing ${label}`);
+assert(freshForm.includes("data-fresh-custody-field hidden") && freshForm.includes("form.elements.boxId.required=kept") && freshForm.includes("form.elements.slotPosition.required=kept"), "Fresh DSC custody fields must only appear and become required when kept with us.");
+assert(service.includes('table === "dsc_fresh_issues" ? (data || []).map(withoutPassword)') && service.includes("password_encrypted: Object.prototype.hasOwnProperty.call(input"), "Fresh DSC PW must be encrypted and removed from browser responses.");
+for (const column of ["organization_name","designation","aadhaar_no","token_name","authority","password_encrypted","valid_from","valid_to","keep_in_custody","box_id","box_name","slot_position"]) assert(freshMigration.includes(column), `Fresh DSC migration is missing ${column}`);
+assert(styles.includes(".dsc-fresh-form-layout{grid-template-columns:repeat(4"), "Fresh DSC desktop layout must use four columns.");
 console.log("Simplified Add DSC form, protected PW, Excel import and date rules passed.");

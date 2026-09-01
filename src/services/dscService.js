@@ -317,11 +317,54 @@ async function listGeneric(table, filters, req, dateColumn = "created_at") {
   if (!canViewAll(req.profile)) query = query.or(`assigned_user_id.eq.${req.profile.id},created_by.eq.${req.user.id}`);
   if (filters.status) query = query.eq("status", filters.status);
   const from = (page - 1) * pageSize; const { data, error, count } = await query.order(dateColumn, { ascending: false }).range(from, from + pageSize - 1); if (error) throw error;
-  return { records: data || [], total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
+  const records = table === "dsc_fresh_issues" ? (data || []).map(withoutPassword) : (data || []);
+  return { records, total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
 }
 
-async function createFresh(input, req) { assertManage(req.profile); const applicationNo = text(input.applicationNo, 120); if (!applicationNo || !text(input.clientName) || !text(input.holderName)) throw fail("Application No., Client and DSC Holder are required."); const payload = { application_no: applicationNo, client_id: input.clientId || null, client_name: text(input.clientName, 240), holder_name: text(input.holderName, 240), pan: text(input.pan, 40) || null, mobile: text(input.mobile, 40) || null, email: text(input.email, 240) || null, application_date: input.applicationDate || new Date().toISOString().slice(0,10), provider_vendor: text(input.providerVendor, 160) || null, application_type: text(input.applicationType, 120) || null, holder_type: text(input.holderType, 80) || null, documents_required: text(input.documentsRequired), documents_received: text(input.documentsReceived), documents_pending: text(input.documentsPending), payment_status: text(input.paymentStatus, 80), verification_status: text(input.verificationStatus, 80), video_verification_status: text(input.videoVerificationStatus, 80), status: FRESH_STATUSES.includes(input.status) ? input.status : "New Request", expected_issue_date: input.expectedIssueDate || null, actual_issue_date: input.actualIssueDate || null, token_received_date: input.tokenReceivedDate || null, assigned_user_id: input.assignedUserId || null, remarks: text(input.remarks), created_by: req.user.id, updated_by: req.user.id }; const { data, error } = await supabaseAdmin.from("dsc_fresh_issues").insert(payload).select("*").single(); if (error) throw error; return { record: data }; }
-async function addFreshToMaster(id, input, req) { assertManage(req.profile); const { data: fresh, error } = await supabaseAdmin.from("dsc_fresh_issues").select("*").eq("id", id).single(); if (error) throw error; if (fresh.status !== "DSC Received") throw fail("Fresh Issue must be at DSC Received before adding it to DSC Master.", 409); const result = await createDsc({ ...input, clientId: fresh.client_id, clientName: fresh.client_name, holderName: fresh.holder_name, pan: fresh.pan, mobile: fresh.mobile, email: fresh.email, issuedDate: fresh.actual_issue_date, status: "In Office", assignedUserId: fresh.assigned_user_id }, req); await supabaseAdmin.from("dsc_fresh_issues").update({ linked_dsc_id: result.record.id, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", id); return result; }
+async function createFresh(input, req) {
+  assertManage(req.profile);
+  const applicationNo = text(input.applicationId ?? input.applicationNo, 120);
+  const holderName = text(input.clientName ?? input.holderName, 240);
+  const organizationName = text(input.organizationName, 240);
+  if (!applicationNo || !holderName || !organizationName) throw fail("Client Name, Organization Name and Application ID are required.");
+  const keepInCustody = input.keepInCustody === true || input.keepInCustody === "true" || input.keepInCustody === "Yes";
+  let custodyBox = null;
+  if (keepInCustody) {
+    if (!input.boxId || !text(input.slotPosition, 80)) throw fail("Box Name and Slot Position are required when the DSC is kept in custody.");
+    const { data: box, error: boxError } = await supabaseAdmin.from("dsc_boxes").select("id,box_code,box_name").eq("id", input.boxId).eq("is_active", true).maybeSingle();
+    if (boxError) throw boxError;
+    if (!box) throw fail("Select an active Box Name from the Box Register.");
+    custodyBox = box;
+  }
+  const issuedDate = input.issuedDate || null;
+  const validFrom = input.validFrom || issuedDate;
+  const validTo = input.validTo || addYears(validFrom, 2);
+  const payload = {
+    application_no: applicationNo, client_id: input.clientId || null, client_name: organizationName, organization_name: organizationName,
+    holder_name: holderName, designation: text(input.designation, 160) || null, pan: text(input.pan, 40) || null,
+    mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null, aadhaar_no: text(input.aadhaarNo, 24) || null,
+    application_date: input.workDate || new Date().toISOString().slice(0,10), status: FRESH_STATUSES.includes(input.status) ? input.status : "New Request",
+    token_name: text(input.tokenName, 160) || null, authority: text(input.authority, 160) || null, provider_vendor: text(input.authority, 160) || null,
+    password_encrypted: Object.prototype.hasOwnProperty.call(input, "password") ? encryptPassword(input.password) : null,
+    actual_issue_date: issuedDate, valid_from: validFrom, valid_to: validTo, keep_in_custody: keepInCustody,
+    box_id: custodyBox?.id || null, box_name: custodyBox ? (custodyBox.box_name || custodyBox.box_code) : null,
+    slot_position: keepInCustody ? text(input.slotPosition, 80) : null, remarks: text(input.remarks),
+    created_by: req.user.id, updated_by: req.user.id,
+  };
+  const { data, error } = await supabaseAdmin.from("dsc_fresh_issues").insert(payload).select("*").single();
+  if (error?.code === "23505") throw fail("This Application ID already exists.", 409);
+  if (error) throw error;
+  return { record: withoutPassword(data) };
+}
+async function addFreshToMaster(id, input, req) {
+  assertManage(req.profile);
+  const { data: fresh, error } = await supabaseAdmin.from("dsc_fresh_issues").select("*").eq("id", id).single(); if (error) throw error;
+  if (fresh.status !== "DSC Received") throw fail("Fresh Issue must be at DSC Received before adding it to DSC Master.", 409);
+  const result = await createDsc({ ...input, clientId: fresh.client_id, clientName: fresh.organization_name || fresh.client_name, entityName: fresh.organization_name || fresh.client_name, holderName: fresh.holder_name, holderDesignation: fresh.designation, pan: fresh.pan, mobile: fresh.mobile, email: fresh.email, tokenName: fresh.token_name || "Not Provided", issuedDate: fresh.actual_issue_date, validFrom: fresh.valid_from, expiryDate: fresh.valid_to, boxId: fresh.keep_in_custody ? fresh.box_id : null, slotPosition: fresh.keep_in_custody ? fresh.slot_position : null, status: fresh.keep_in_custody ? "In Office" : "Active", assignedUserId: fresh.assigned_user_id }, req);
+  if (fresh.password_encrypted) await supabaseAdmin.from("dsc_master").update({ password_encrypted: fresh.password_encrypted }).eq("id", result.record.id);
+  await supabaseAdmin.from("dsc_fresh_issues").update({ linked_dsc_id: result.record.id, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", id);
+  return result;
+}
 async function startRenewal(id, input, req) { assertManage(req.profile); const { record } = await getDsc(id, req.profile, req.user.id); const { data, error } = await supabaseAdmin.from("dsc_renewals").insert({ existing_dsc_id: id, expiry_date: record.expiry_date, initiated_date: input.initiatedDate || new Date().toISOString().slice(0,10), assigned_user_id: input.assignedUserId || record.assigned_user_id, documents_pending: text(input.documentsPending), status: "Renewal Initiated", remarks: text(input.remarks), created_by: req.user.id, updated_by: req.user.id }).select("*").single(); if (error) throw error; await supabaseAdmin.from("dsc_master").update({ status: "Renewal Initiated", updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", id); await audit(id, "Renewal initiated", req, null, data); return { renewal: data }; }
 
 async function dashboard(profile, userId) {

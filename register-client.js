@@ -233,7 +233,7 @@
 
   async function freshList() {
     const result = await api("/api/dsc/fresh-issues?page=1&pageSize=100");
-    return `<section class="register-card"><div class="register-card-head"><div><h3>Fresh DSC Issue Tracker</h3><p>Documents, verification, payment and token receipt.</p></div>${canManageDsc() ? `<button class="primary-button" id="newFreshIssue">+ New Fresh Issue</button>` : ""}</div>${genericRows(result.records || [], ["application_no","client_name","holder_name","application_date","status"])}</section>`;
+    return `<section class="register-card"><div class="register-card-head"><div><h3>Fresh DSC Issue Tracker</h3><p>Application, issue, validity and custody tracking.</p></div>${canManageDsc() ? `<button class="primary-button" id="newFreshIssue">+ New Fresh Issue</button>` : ""}</div>${genericRows(result.records || [], ["application_no","holder_name","organization_name","application_date","status","keep_in_custody"])}</section>`;
   }
 
   async function renewalList() {
@@ -374,7 +374,48 @@
   async function returnDscForm(id, requestId = "") { if(!ui.boxes.length) ui.boxes=(await api("/api/dsc/boxes")).boxes||[]; simplePrompt("Mark DSC Returned", `<label>Returned Box<select name="boxId" required><option value="">Select box</option>${ui.boxes.map((b)=>`<option value="${b.id}">${esc(b.box_code)} — ${esc(b.location)}</option>`).join("")}</select></label>${inputField("Slot / Position","slotPosition","",true)}${selectField("Condition","condition",["Good","Damaged","Needs Inspection"],"Good")}<label>Remarks<textarea name="remarks"></textarea></label>`, async(values)=>{ await submitJson(`/api/dsc/${id}/return`,"POST",{...values,requestId}); closeModal(); toast("DSC returned to office storage."); window.renderDscRegisterPage(); }); }
   function addBoxForm() { simplePrompt("Add Storage Box", `${inputField("Box Code","boxCode","",true)}${inputField("Box Name","boxName")}${inputField("Cabinet","cabinet")}${inputField("Shelf","shelf")}${inputField("Location","location","",true)}${numberField("Capacity","capacity",20)}`, async(values)=>{ await submitJson("/api/dsc/boxes","POST",values); toast("Storage box added."); window.renderDscRegisterPage(); }); }
   async function viewBox(id) { const result=await api(`/api/dsc/boxes/${id}`); showModal(`Box ${result.box.box_code}`, `<div class="detail-summary-grid"><span><small>Location</small><strong>${esc(result.box.location)}</strong></span><span><small>Capacity</small><strong>${result.box.capacity}</strong></span><span><small>Occupied</small><strong>${result.box.occupied}</strong></span><span><small>Available</small><strong>${result.box.available}</strong></span></div>${genericRows(result.records,["slot_position","client_name","holder_name","token_name","expiry_date","status"])}<div class="modal-actions"><button class="secondary-button" onclick="window.print()">Print Box List</button></div>`); }
-  function freshIssueForm(){ simplePrompt("New Fresh DSC Issue", `${inputField("Application No.","applicationNo","",true)}${inputField("Client Name","clientName","",true)}${inputField("DSC Holder","holderName","",true)}${inputField("PAN","pan")}${inputField("Mobile","mobile")}${inputField("Email","email")}${inputField("Application Date","applicationDate",new Date().toISOString().slice(0,10),true,"date")}${inputField("Provider / Vendor","providerVendor")}${selectField("Status","status",["New Request","Documents Pending","Documents Received","Application Prepared","Application Submitted","Payment Pending","Verification Pending","Video Verification Pending","Under Processing","Approved","Token Awaited","DSC Received","Handed Over","Completed","Rejected","Cancelled"])}<label>Documents Pending<textarea name="documentsPending"></textarea></label><label>Remarks<textarea name="remarks"></textarea></label>`, async(values)=>{ await submitJson("/api/dsc/fresh-issues","POST",values); toast("Fresh DSC issue added."); window.renderDscRegisterPage(); }); }
+  async function freshIssueForm(){
+    const [clientResult, optionResult, boxResult]=await Promise.all([api("/api/clients/search?limit=50"),api("/api/dsc/form-options"),api("/api/dsc/boxes")]);
+    const uniqueValues=(defaults,custom)=>[...new Set([...defaults,...(custom||[]).map((item)=>item.value)].filter(Boolean))];
+    const clients=clientResult.clients||[],customEntities=optionResult.entityNames||[],boxes=boxResult.boxes||[];
+    const designations=uniqueValues(["Director","Designated Partner","Owner","Auth Representative"],optionResult.designations);
+    const tokenNames=uniqueValues(["Extratrust","Vsign","Emudhra"],optionResult.tokenNames);
+    const statuses=["New Request","Documents Pending","Documents Received","Application Prepared","Application Submitted","Payment Pending","Verification Pending","Video Verification Pending","Under Processing","Approved","Token Awaited","DSC Received","Handed Over","Completed","Rejected","Cancelled"];
+    const options=(values,selected="")=>values.map((value)=>`<option value="${esc(value)}" ${value===selected?"selected":""}>${esc(value)}</option>`).join("");
+    const workDate=new Date(Date.now()+330*60000).toISOString().slice(0,10);
+    showModal("New Fresh DSC Issue",`<form id="freshDscForm" class="register-form-grid dsc-fresh-form-layout">
+      <label>CLIENT NAME<input name="clientName" required></label>
+      <label>ORGANIZATION NAME<select name="clientId" id="freshOrganization" required><option value="">Select from Client Master</option>${clients.map((client)=>`<option value="${client.id}" data-name="${esc(client.client_name)}" data-pan="${esc(client.pan_reg_no||"")}" data-mobile="${esc(client.contact_number||"")}" data-email="${esc(client.email||"")}">${esc(client.client_name)}</option>`).join("")}${customEntities.map((item)=>`<option value="custom:${item.id}" data-custom="true" data-name="${esc(item.value)}">${esc(item.value)}</option>`).join("")}</select><input type="hidden" name="organizationName"></label>
+      <label>DESIGNATION<select name="designation"><option value="">Select designation</option>${options(designations)}</select></label>
+      <label>PAN<input name="pan"></label>
+      <label>MOBILE NO<input name="mobile" type="tel"></label>
+      <label>EMAIL ID<input name="email" type="email"></label>
+      <label>AADHAAR NO<input name="aadhaarNo" inputmode="numeric" maxlength="14"></label>
+      <label>WORK DATE<input name="workDate" type="date" value="${workDate}" required></label>
+      <label>STATUS<select name="status">${options(statuses,"New Request")}</select></label>
+      <label>APPLICATION ID<input name="applicationId" maxlength="120" required></label>
+      <label>TOKEN NAME<select name="tokenName" required><option value="">Select token</option>${options(tokenNames)}</select></label>
+      <label>AUTHORITY<input name="authority" maxlength="160"></label>
+      <label>PW<input name="password" type="password" autocomplete="new-password"></label>
+      <label>ISSUE DATE<input name="issuedDate" type="date"></label>
+      <label>VALID FROM<input name="validFrom" type="date"></label>
+      <label>VALID TO<input name="validTo" type="date"></label>
+      <label>KEEP IN CUSTODY<select name="keepInCustody" id="freshCustody"><option value="No">No</option><option value="Yes">Kept With Us</option></select></label>
+      <label data-fresh-custody-field hidden>BOX NAME<select name="boxId"><option value="">Select Box</option>${boxes.map((box)=>`<option value="${box.id}">${esc(box.box_name||box.box_code)} — ${esc(box.location||"")}</option>`).join("")}</select></label>
+      <label data-fresh-custody-field hidden>SLOT POSITION<input name="slotPosition"></label>
+      <label class="form-span-2 fresh-remarks">REMARKS<textarea name="remarks" rows="2"></textarea></label>
+      <div class="security-callout form-span-2">PW is encrypted and masked. It is never included in lists, reports, exports, notifications or QR codes.</div>
+      <div class="form-span-2 register-error" data-fresh-save-error role="alert" hidden></div>
+      <div class="modal-actions form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save Fresh Issue</button></div>
+    </form>`);
+    const form=document.querySelector("#freshDscForm"),custodyFields=[...form.querySelectorAll("[data-fresh-custody-field]")];
+    const toggleCustody=()=>{const kept=form.elements.keepInCustody.value==="Yes";custodyFields.forEach((label)=>label.hidden=!kept);form.elements.boxId.required=kept;form.elements.slotPosition.required=kept;if(!kept){form.elements.boxId.value="";form.elements.slotPosition.value="";}};
+    const setFreshValidTo=()=>{const value=form.elements.validFrom.value;if(!value)return;form.elements.validTo.value=dscAddYears(value,2);};
+    form.elements.keepInCustody.onchange=toggleCustody;toggleCustody();
+    form.elements.issuedDate.onchange=()=>{form.elements.validFrom.value=form.elements.issuedDate.value;setFreshValidTo();};form.elements.validFrom.onchange=setFreshValidTo;
+    form.querySelector("#freshOrganization").onchange=(event)=>{const selected=event.target.selectedOptions[0];if(!selected?.value)return;form.elements.organizationName.value=selected.dataset.name;if(selected.dataset.custom==="true"){form.elements.pan.value="";form.elements.mobile.value="";form.elements.email.value="";return;}form.elements.pan.value=selected.dataset.pan;form.elements.mobile.value=selected.dataset.mobile;form.elements.email.value=selected.dataset.email;};
+    form.onsubmit=async(event)=>{event.preventDefault();const submit=form.querySelector('[type="submit"]'),errorBox=form.querySelector("[data-fresh-save-error]");submit.disabled=true;submit.textContent="Saving…";errorBox.hidden=true;try{const body=formObject(form);if(String(body.clientId).startsWith("custom:"))body.clientId="";body.keepInCustody=body.keepInCustody==="Yes";await submitJson("/api/dsc/fresh-issues","POST",body);closeModal();toast("Fresh DSC issue added.");window.renderDscRegisterPage();}catch(error){errorBox.textContent=error.message||"Unable to save the Fresh DSC Issue.";errorBox.hidden=false;submit.disabled=false;submit.textContent="Save Fresh Issue";}};
+  }
 
   function showModal(title, content) { closeModal(); const modal=document.createElement("div"); modal.id="registerModal"; modal.className="register-modal-backdrop"; modal.innerHTML=`<div class="register-modal" role="dialog" aria-modal="true"><header><h3>${esc(title)}</h3><button type="button" data-close-register-modal aria-label="Close">×</button></header><div class="register-modal-body">${content}</div></div>`; document.body.appendChild(modal); modal.querySelectorAll("[data-close-register-modal]").forEach((b)=>b.onclick=closeModal); modal.addEventListener("click",(e)=>{if(e.target===modal)closeModal();}); }
   function closeModal(){ document.querySelector("#registerModal")?.remove(); }
