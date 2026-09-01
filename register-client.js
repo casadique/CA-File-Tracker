@@ -192,7 +192,8 @@
       await loadDirectory(); let body;
       if (ui.dscTab === "dashboard") body = await dscDashboard();
       else if (["master","expiry"].includes(ui.dscTab)) body = await dscList();
-      else if (ui.dscTab === "handover" || ui.dscTab === "movements") body = await handoverList();
+      else if (ui.dscTab === "movements") body = await movementList();
+      else if (ui.dscTab === "handover") body = await handoverList();
       else if (ui.dscTab === "boxes") body = await boxList();
       else if (ui.dscTab === "fresh") body = await freshList();
       else if (ui.dscTab === "renewal") body = await renewalList();
@@ -224,6 +225,12 @@
     const result = await api("/api/dsc/handovers?page=1&pageSize=100");
     return `<section class="register-card"><div class="register-card-head"><div><h3>${ui.dscTab === "movements" ? "DSC In & Out" : "Handover Requests"}</h3><p>Permission, handover and return trail.</p></div><button class="primary-button" id="requestHandover">Request Handover Permission</button></div>
       <div class="register-table-wrap"><table class="register-table"><thead><tr><th>Request</th><th>DSC</th><th>Hand Over To</th><th>Purpose</th><th>Expected Return</th><th>Status</th><th>Action</th></tr></thead><tbody>${(result.requests || []).map((r) => `<tr><td><strong>${esc(r.request_no)}</strong><small>${date(r.created_at,true)}</small></td><td>${esc(r.dsc?.holder_name || "")}<small>${esc(r.dsc?.token_name || r.dsc?.token_serial || "")}</small></td><td>${esc(r.handover_to)}</td><td>${esc(r.purpose)}</td><td>${date(r.expected_return_date)}</td><td>${badge(r.status)}</td><td>${canApproveDsc() && ["Requested","Level 1 Approved"].includes(r.status) ? `<button class="mini-button" data-approve-handover="${r.id}">Approve</button> <button class="mini-button danger" data-reject-handover="${r.id}">Reject</button>` : ""}${canManageDsc() && r.status === "Approved" ? `<button class="mini-button" data-mark-out="${r.id}">Mark Out</button>` : ""}${r.status === "Handed Over" && canManageDsc() ? `<button class="mini-button" data-return-dsc="${r.dsc?.id}" data-request-id="${r.id}">Mark Returned</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="7">No handover requests.</td></tr>`}</tbody></table></div></section>`;
+  }
+
+  async function movementList() {
+    const result=await api("/api/dsc/movements?page=1&pageSize=100");
+    return `<section class="register-card"><div class="register-card-head"><div><h3>DSC In & Out</h3><p>Complete custody movement trail.</p></div><div>${canManageDsc()?`<button class="primary-button" id="addDscMovement">+ Add DSC Movement</button> `:""}<button class="secondary-button" id="requestHandover">Request Handover Permission</button></div></div>
+      <div class="register-table-wrap"><table class="register-table"><thead><tr><th>Date & Time</th><th>Movement</th><th>DSC / Holder</th><th>Issued To / Condition</th><th>From / To Slot</th><th>Remarks</th></tr></thead><tbody>${(result.movements||[]).map((row)=>`<tr><td>${date(row.movement_at,true)}</td><td>${badge(row.movement_type==="RETURN"?"IN":row.movement_type)}</td><td><strong>${esc(row.dsc?.entity_name||row.dsc?.client_name||"")}</strong><small>${esc(row.dsc?.holder_name||"")} · ${esc(row.dsc?.token_name||"")}</small></td><td><strong>${esc(row.issued_to||row.condition||"—")}</strong><small>${esc(row.purpose||"")}</small></td><td>${esc(row.from_slot||"—")} → ${esc(row.to_slot||"—")}</td><td>${esc(row.remarks||"")}</td></tr>`).join("")||`<tr><td colspan="6">No DSC movements recorded.</td></tr>`}</tbody></table></div></section>`;
   }
 
   async function boxList() {
@@ -264,6 +271,7 @@
     root.querySelectorAll("[data-view-dsc]").forEach((button) => button.onclick = () => openDscDetail(button.dataset.viewDsc));
     root.querySelectorAll("[data-download]").forEach((button) => button.onclick = () => secureDownload(button.dataset.download));
     root.querySelector("#requestHandover")?.addEventListener("click", requestHandoverForm);
+    root.querySelector("#addDscMovement")?.addEventListener("click", addDscMovementForm);
     root.querySelectorAll("[data-approve-handover]").forEach((b) => b.onclick = () => decideHandover(b.dataset.approveHandover,"Approved"));
     root.querySelectorAll("[data-reject-handover]").forEach((b) => b.onclick = () => decideHandover(b.dataset.rejectHandover,"Rejected"));
     root.querySelectorAll("[data-mark-out]").forEach((b) => b.onclick = async () => { await submitJson(`/api/dsc/handovers/${b.dataset.markOut}/out`,"POST",{}); toast("DSC marked Issued Out."); window.renderDscRegisterPage(); });
@@ -370,6 +378,32 @@
     document.querySelector("#handoverForm").onsubmit = async (event) => { event.preventDefault(); await submitJson("/api/dsc/handovers","POST",formObject(event.currentTarget)); closeModal(); toast("Handover permission requested."); window.renderDscRegisterPage(); };
   }
 
+  async function addDscMovementForm(){
+    const [dscResult,approvedResult,handedResult,boxResult]=await Promise.all([api("/api/dsc?page=1&pageSize=100"),api("/api/dsc/handovers?page=1&pageSize=100&status=Approved"),api("/api/dsc/handovers?page=1&pageSize=100&status=Handed%20Over"),api("/api/dsc/boxes")]);
+    const records=dscResult.records||[],approved=approvedResult.requests||[],handed=handedResult.requests||[],boxes=boxResult.boxes||[];
+    const movementAt=new Date(Date.now()+330*60000).toISOString().slice(0,16);
+    showModal("Add DSC Movement",`<form id="dscMovementForm" class="register-form-grid">
+      <label>MOVEMENT TYPE<select name="movementType" id="movementType"><option value="OUT">Out</option><option value="IN">In</option></select></label>
+      <label>DSC<select name="dscId" id="movementDsc" required><option value="">Select DSC</option>${records.map((row)=>`<option value="${row.id}">${esc(row.entity_name||row.client_name)} — ${esc(row.holder_name)} — ${esc(row.token_name||row.token_serial||"")}</option>`).join("")}</select></label>
+      <label>DATE & TIME<input name="movementAt" type="datetime-local" value="${movementAt}" required></label>
+      <label data-movement-out>APPROVED HANDOVER REQUEST<select name="handoverRequestId" id="movementRequest"><option value="">Select if approval is enabled</option>${approved.map((request)=>`<option value="${request.id}" data-dsc="${request.dsc?.id||request.dsc_id}">${esc(request.request_no)} — ${esc(request.dsc?.holder_name||"")} — ${esc(request.handover_to)}</option>`).join("")}</select></label>
+      <label data-movement-out>ISSUED TO<input name="issuedTo"></label>
+      <label data-movement-out>PURPOSE<input name="purpose"></label>
+      <label data-movement-out>EXPECTED RETURN DATE<input name="expectedReturnDate" type="date"></label>
+      <label data-movement-in hidden>RETURNED BOX<select name="boxId"><option value="">Select Box</option>${boxes.map((box)=>`<option value="${box.id}">${esc(box.box_name||box.box_code)} — ${esc(box.location||"")}</option>`).join("")}</select></label>
+      <label data-movement-in hidden>SLOT POSITION<input name="slotPosition"></label>
+      <label data-movement-in hidden>CONDITION<select name="condition"><option value="Good">Good</option><option value="Damaged">Damaged</option><option value="Needs Inspection">Needs Inspection</option></select></label>
+      <input type="hidden" name="requestId">
+      <label class="form-span-2">REMARKS<textarea name="remarks" rows="3"></textarea></label>
+      <div class="form-span-2 register-error" data-movement-error role="alert" hidden></div>
+      <div class="modal-actions form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save Movement</button></div>
+    </form>`);
+    const form=document.querySelector("#dscMovementForm"),outFields=[...form.querySelectorAll("[data-movement-out]")],inFields=[...form.querySelectorAll("[data-movement-in]")];
+    const updateRequirements=()=>{const isOut=form.elements.movementType.value==="OUT",hasRequest=Boolean(form.elements.handoverRequestId.value);outFields.forEach((field)=>field.hidden=!isOut);inFields.forEach((field)=>field.hidden=isOut);form.elements.issuedTo.required=isOut&&!hasRequest;form.elements.purpose.required=isOut&&!hasRequest;form.elements.boxId.required=!isOut;form.elements.slotPosition.required=!isOut;if(!isOut){const match=handed.find((request)=>(request.dsc?.id||request.dsc_id)===form.elements.dscId.value);form.elements.requestId.value=match?.id||"";}else form.elements.requestId.value="";};
+    form.elements.movementType.onchange=updateRequirements;form.elements.handoverRequestId.onchange=()=>{const selected=form.elements.handoverRequestId.selectedOptions[0];if(selected?.dataset.dsc)form.elements.dscId.value=selected.dataset.dsc;updateRequirements();};form.elements.dscId.onchange=updateRequirements;updateRequirements();
+    form.onsubmit=async(event)=>{event.preventDefault();const submit=form.querySelector('[type="submit"]'),errorBox=form.querySelector("[data-movement-error]");submit.disabled=true;submit.textContent="Saving…";errorBox.hidden=true;try{await submitJson("/api/dsc/movements","POST",formObject(form));closeModal();toast("DSC movement recorded.");window.renderDscRegisterPage();}catch(error){errorBox.textContent=error.message||"Unable to save the DSC movement.";errorBox.hidden=false;submit.disabled=false;submit.textContent="Save Movement";}};
+  }
+
   async function decideHandover(id, decision) { const remarks = prompt(`${decision} remarks (optional):`) || ""; await submitJson(`/api/dsc/handovers/${id}/decision`,"POST",{ decision, remarks }); toast(`Handover ${decision.toLowerCase()}.`); window.renderDscRegisterPage(); }
   async function returnDscForm(id, requestId = "") { if(!ui.boxes.length) ui.boxes=(await api("/api/dsc/boxes")).boxes||[]; simplePrompt("Mark DSC Returned", `<label>Returned Box<select name="boxId" required><option value="">Select box</option>${ui.boxes.map((b)=>`<option value="${b.id}">${esc(b.box_code)} — ${esc(b.location)}</option>`).join("")}</select></label>${inputField("Slot / Position","slotPosition","",true)}${selectField("Condition","condition",["Good","Damaged","Needs Inspection"],"Good")}<label>Remarks<textarea name="remarks"></textarea></label>`, async(values)=>{ await submitJson(`/api/dsc/${id}/return`,"POST",{...values,requestId}); closeModal(); toast("DSC returned to office storage."); window.renderDscRegisterPage(); }); }
   function addBoxForm() { simplePrompt("Add Storage Box", `${inputField("Box Code","boxCode","",true)}${inputField("Box Name","boxName")}${inputField("Cabinet","cabinet")}${inputField("Shelf","shelf")}${inputField("Location","location","",true)}${numberField("Capacity","capacity",20)}`, async(values)=>{ await submitJson("/api/dsc/boxes","POST",values); toast("Storage box added."); window.renderDscRegisterPage(); }); }
@@ -395,7 +429,8 @@
       <label>STATUS<select name="status">${options(statuses,"New Request")}</select></label>
       <label>APPLICATION ID<input name="applicationId" maxlength="120" required></label>
       <label>TOKEN NAME<select name="tokenName" required><option value="">Select token</option>${options(tokenNames)}</select></label>
-      <label>AUTHORITY<input name="authority" maxlength="160"></label>
+      <label>AUTHORITY<select name="authority"><option value="Extra Trust">Extra Trust</option><option value="Emudhra">Emudhra</option><option value="Vsign">Vsign</option></select></label>
+      <label>CLASS TYPE<select name="classType"><option value="Class II">Class II</option><option value="Class III" selected>Class III</option></select></label>
       <label>PW<input name="password" type="password" autocomplete="new-password"></label>
       <label>ISSUE DATE<input name="issuedDate" type="date"></label>
       <label>VALID FROM<input name="validFrom" type="date"></label>

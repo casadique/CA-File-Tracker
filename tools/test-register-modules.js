@@ -25,6 +25,11 @@ assert.match(migration, /dsc_no_credentials/i, "database must reject obvious PIN
 assert.match(migration, /unique \(dsc_id, reminder_stage, recipient_user_id, channel\)/i, "DSC reminders must be idempotent");
 assert.match(dscService, /Authorized DSC Custodian permission is required/, "DSC mutations need backend authorization");
 assert.match(dscService, /Approved handover permission is required/, "DSC out must require configured approval");
+assert.match(dscService, /async function addMovement[\s\S]+\["OUT","IN"\]/, "DSC Movement must support both Out and In");
+assert.match(dscService, /Select an Approved Handover Request before recording an Out movement/, "Manual Out movement must preserve configured handover approval");
+assert.match(dscRoutes, /router\.post\("\/movements"/, "DSC Movement save route is missing");
+assert.match(client, /\+ Add DSC Movement/, "DSC In & Out must provide Add DSC Movement");
+assert.match(client, /value="OUT">Out[\s\S]+value="IN">In/, "DSC Movement form must provide both Out and In");
 assert.match(dscService, /A DSC with this Token or Certificate Serial already exists/, "duplicate DSC tokens must be blocked");
 assert.match(complaintService, /A complaint must be Resolved before it can be Closed/, "resolution and closure must remain separate");
 assert.match(complaintService, /Resolution Summary.*required when resolving/s, "complaint resolution fields must be mandatory");

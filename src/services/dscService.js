@@ -252,6 +252,16 @@ async function listHandovers(filters, req) {
   return { requests: data || [], total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
 }
 
+async function listMovements(filters, req) {
+  const page = Math.max(1, Number(filters.page) || 1); const pageSize = Math.min(100, Math.max(10, Number(filters.pageSize) || 25));
+  let query = supabaseAdmin.from("dsc_movements").select("*,dsc:dsc_master(id,dsc_id,client_name,entity_name,holder_name,token_name)", { count: "exact" });
+  if (!canViewAll(req.profile)) query = query.eq("handled_by", req.user.id);
+  if (filters.type) query = query.eq("movement_type", filters.type);
+  const from = (page - 1) * pageSize; const { data, error, count } = await query.order("movement_at", { ascending: false }).range(from, from + pageSize - 1);
+  if (error) throw error;
+  return { movements: data || [], total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
+}
+
 async function decideHandover(id, input, req) {
   assertApprove(req.profile);
   const { data: request, error } = await supabaseAdmin.from("dsc_handover_requests").select("*,dsc:dsc_master(*)").eq("id", id).single(); if (error) throw error;
@@ -292,6 +302,31 @@ async function recordReturn(id, input, req) {
   await supabaseAdmin.from("dsc_master").update({ status: "In Office", current_custody: "Office", current_location: "Office Storage", box_id: input.boxId, slot_position: text(input.slotPosition, 80), updated_by: req.user.id, updated_at: now }).eq("id", id);
   if (input.requestId) await supabaseAdmin.from("dsc_handover_requests").update({ status: "Returned", updated_at: now }).eq("id", input.requestId);
   await audit(id, "Returned", req, record, movement, input.remarks);
+  return { movement: data };
+}
+
+async function addMovement(input, req) {
+  assertManage(req.profile);
+  const type = String(input.movementType || input.movement_type || "").toUpperCase();
+  const dscId = input.dscId || input.dsc_id;
+  if (!dscId || !["OUT","IN"].includes(type)) throw fail("Select a DSC and movement type.");
+  if (type === "IN") return recordReturn(dscId, { ...input, returnAt: input.movementAt || input.returnAt }, req);
+  if (input.handoverRequestId) {
+    const { data: request, error } = await supabaseAdmin.from("dsc_handover_requests").select("id,dsc_id,status").eq("id", input.handoverRequestId).maybeSingle();
+    if (error) throw error;
+    if (!request || request.dsc_id !== dscId) throw fail("The approved handover request does not match the selected DSC.");
+    return recordOut(request.id, { movementAt: input.movementAt, remarks: input.remarks }, req);
+  }
+  const config = await settings();
+  if (config.approval_levels > 0) throw fail("Select an Approved Handover Request before recording an Out movement.", 409);
+  const { record } = await getDsc(dscId, req.profile, req.user.id);
+  if (["Issued Out","Lost / Missing"].includes(record.status)) throw fail("This DSC cannot be issued out in its current status.", 409);
+  const issuedTo = text(input.issuedTo, 240); const purpose = text(input.purpose, 1000);
+  if (!issuedTo || !purpose) throw fail("Issued To and Purpose are required for an Out movement.");
+  const movement = { dsc_id: dscId, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: issuedTo, purpose, expected_return_date: input.expectedReturnDate || null, handled_by: req.user.id, from_box_id: record.box_id, from_slot: record.slot_position, remarks: text(input.remarks, 2000) || null };
+  const { data, error } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (error) throw error;
+  const { error: updateError } = await supabaseAdmin.from("dsc_master").update({ status: "Issued Out", current_custody: issuedTo, current_location: "Outside Office", box_id: null, slot_position: null, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", dscId); if (updateError) throw updateError;
+  await audit(dscId, "Issued out", req, record, movement, input.remarks);
   return { movement: data };
 }
 
@@ -344,7 +379,8 @@ async function createFresh(input, req) {
     holder_name: holderName, designation: text(input.designation, 160) || null, pan: text(input.pan, 40) || null,
     mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null, aadhaar_no: text(input.aadhaarNo, 24) || null,
     application_date: input.workDate || new Date().toISOString().slice(0,10), status: FRESH_STATUSES.includes(input.status) ? input.status : "New Request",
-    token_name: text(input.tokenName, 160) || null, authority: text(input.authority, 160) || null, provider_vendor: text(input.authority, 160) || null,
+    token_name: text(input.tokenName, 160) || null, authority: ["Extra Trust","Emudhra","Vsign"].includes(input.authority) ? input.authority : null, provider_vendor: ["Extra Trust","Emudhra","Vsign"].includes(input.authority) ? input.authority : null,
+    class_type: ["Class II","Class III"].includes(input.classType) ? input.classType : null,
     password_encrypted: Object.prototype.hasOwnProperty.call(input, "password") ? encryptPassword(input.password) : null,
     actual_issue_date: issuedDate, valid_from: validFrom, valid_to: validTo, keep_in_custody: keepInCustody,
     box_id: custodyBox?.id || null, box_name: custodyBox ? (custodyBox.box_name || custodyBox.box_code) : null,
@@ -360,7 +396,7 @@ async function addFreshToMaster(id, input, req) {
   assertManage(req.profile);
   const { data: fresh, error } = await supabaseAdmin.from("dsc_fresh_issues").select("*").eq("id", id).single(); if (error) throw error;
   if (fresh.status !== "DSC Received") throw fail("Fresh Issue must be at DSC Received before adding it to DSC Master.", 409);
-  const result = await createDsc({ ...input, clientId: fresh.client_id, clientName: fresh.organization_name || fresh.client_name, entityName: fresh.organization_name || fresh.client_name, holderName: fresh.holder_name, holderDesignation: fresh.designation, pan: fresh.pan, mobile: fresh.mobile, email: fresh.email, tokenName: fresh.token_name || "Not Provided", issuedDate: fresh.actual_issue_date, validFrom: fresh.valid_from, expiryDate: fresh.valid_to, boxId: fresh.keep_in_custody ? fresh.box_id : null, slotPosition: fresh.keep_in_custody ? fresh.slot_position : null, status: fresh.keep_in_custody ? "In Office" : "Active", assignedUserId: fresh.assigned_user_id }, req);
+  const result = await createDsc({ ...input, clientId: fresh.client_id, clientName: fresh.organization_name || fresh.client_name, entityName: fresh.organization_name || fresh.client_name, holderName: fresh.holder_name, holderDesignation: fresh.designation, pan: fresh.pan, mobile: fresh.mobile, email: fresh.email, tokenName: fresh.token_name || "Not Provided", certificateClass: fresh.class_type, issuedDate: fresh.actual_issue_date, validFrom: fresh.valid_from, expiryDate: fresh.valid_to, boxId: fresh.keep_in_custody ? fresh.box_id : null, slotPosition: fresh.keep_in_custody ? fresh.slot_position : null, status: fresh.keep_in_custody ? "In Office" : "Active", assignedUserId: fresh.assigned_user_id }, req);
   if (fresh.password_encrypted) await supabaseAdmin.from("dsc_master").update({ password_encrypted: fresh.password_encrypted }).eq("id", result.record.id);
   await supabaseAdmin.from("dsc_fresh_issues").update({ linked_dsc_id: result.record.id, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", id);
   return result;
@@ -378,4 +414,4 @@ async function dashboard(profile, userId) {
   return { totalActive: rows.filter((r) => !["Expired","Revoked","Closed"].includes(r.status)).length, inOffice: rows.filter((r) => r.current_custody === "Office").length, issuedOut: rows.filter((r) => r.status === "Issued Out").length, returnOverdue: activeHandovers.requests.filter((r) => r.expected_return_date && r.expected_return_date < todayText).length, expiring30: rows.filter((r) => r.expiry_date >= todayText && r.expiry_date <= in30).length, expired: rows.filter((r) => r.expiry_date && r.expiry_date < todayText).length, renewalPending: rows.filter((r) => ["Renewal Initiated","Renewal in Progress"].includes(r.status)).length, freshPending: freshIssues.records.filter((r) => !["Completed","Rejected","Cancelled"].includes(r.status)).length, approvalPending: pendingHandovers.total, missingDamaged: rows.filter((r) => ["Lost / Missing","Damaged"].includes(r.status)).length, upcoming: rows.filter((r) => r.expiry_date >= todayText).slice(0,8) };
 }
 
-module.exports = { APPROVE_PERMISSION, EXPORT_PERMISSION, MANAGE_PERMISSION, addFormOption, addFreshToMaster, boxContents, boxes, canApprove, canExport, canManage, createDsc, createFresh, createHandover, dashboard, decideHandover, formOptions, getDsc, importDscRows, listDsc, listGeneric, listHandovers, markMissing, recordOut, recordReturn, saveBox, saveSettings, settings, startRenewal, updateDsc };
+module.exports = { APPROVE_PERMISSION, EXPORT_PERMISSION, MANAGE_PERMISSION, addFormOption, addFreshToMaster, addMovement, boxContents, boxes, canApprove, canExport, canManage, createDsc, createFresh, createHandover, dashboard, decideHandover, formOptions, getDsc, importDscRows, listDsc, listGeneric, listHandovers, listMovements, markMissing, recordOut, recordReturn, saveBox, saveSettings, settings, startRenewal, updateDsc };
