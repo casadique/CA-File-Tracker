@@ -379,28 +379,39 @@
   }
 
   async function addDscMovementForm(){
-    const [dscResult,approvedResult,handedResult,boxResult]=await Promise.all([api("/api/dsc?page=1&pageSize=100"),api("/api/dsc/handovers?page=1&pageSize=100&status=Approved"),api("/api/dsc/handovers?page=1&pageSize=100&status=Handed%20Over"),api("/api/dsc/boxes")]);
-    const records=dscResult.records||[],approved=approvedResult.requests||[],handed=handedResult.requests||[],boxes=boxResult.boxes||[];
+    const [dscResult,approvedResult,handedResult,optionResult]=await Promise.all([api("/api/dsc?page=1&pageSize=100"),api("/api/dsc/handovers?page=1&pageSize=100&status=Approved"),api("/api/dsc/handovers?page=1&pageSize=100&status=Handed%20Over"),api("/api/dsc/form-options")]);
+    const records=dscResult.records||[],approved=approvedResult.requests||[],handed=handedResult.requests||[];
+    const uniqueValues=(defaults,custom,current)=>[...new Set([...defaults,...(custom||[]).map((item)=>item.value),...(current||[])].map((value)=>String(value||"").trim()).filter(Boolean))];
+    const tokenNames=uniqueValues(["Hyperkey","Prox Key","Other"],optionResult.tokenNames,records.map((row)=>row.token_name));
+    const boxNames=uniqueValues(["Blue","Black"],optionResult.boxNames,records.map((row)=>row.box_type));
+    const options=(values)=>values.map((value)=>`<option value="${esc(value)}">${esc(value)}</option>`).join("");
     const movementAt=new Date(Date.now()+330*60000).toISOString().slice(0,16);
     showModal("Add DSC Movement",`<form id="dscMovementForm" class="register-form-grid">
       <label>MOVEMENT TYPE<select name="movementType" id="movementType"><option value="OUT">Out</option><option value="IN">In</option></select></label>
-      <label>DSC<select name="dscId" id="movementDsc" required><option value="">Select DSC</option>${records.map((row)=>`<option value="${row.id}">${esc(row.entity_name||row.client_name)} — ${esc(row.holder_name)} — ${esc(row.token_name||row.token_serial||"")}</option>`).join("")}</select></label>
+      <label>DSC NAME<select name="dscId" id="movementDsc" required><option value="">Select DSC</option>${records.map((row)=>`<option value="${row.id}" data-organization="${esc(row.entity_name||row.client_name||"")}" data-dsc-type="${esc(row.certificate_class||"Class III")}" data-token="${esc(row.token_name||"")}" data-mobile="${esc(row.mobile||"")}" data-box="${esc(row.box_type||"")}" data-slot="${esc(row.slot_position||"")}" data-expiry="${esc(row.expiry_date||"")}">${esc(row.holder_name)} — ${esc(row.entity_name||row.client_name)} — ${esc(row.token_name||row.token_serial||"")}</option>`).join("")}</select></label>
       <label>DATE & TIME<input name="movementAt" type="datetime-local" value="${movementAt}" required></label>
       <label data-movement-out>APPROVED HANDOVER REQUEST<select name="handoverRequestId" id="movementRequest"><option value="">Select if approval is enabled</option>${approved.map((request)=>`<option value="${request.id}" data-dsc="${request.dsc?.id||request.dsc_id}">${esc(request.request_no)} — ${esc(request.dsc?.holder_name||"")} — ${esc(request.handover_to)}</option>`).join("")}</select></label>
       <label data-movement-out>ISSUED TO<input name="issuedTo"></label>
       <label data-movement-out>PURPOSE<input name="purpose"></label>
       <label data-movement-out>EXPECTED RETURN DATE<input name="expectedReturnDate" type="date"></label>
-      <label data-movement-in hidden>RETURNED BOX<select name="boxId"><option value="">Select Box</option>${boxes.map((box)=>`<option value="${box.id}">${esc(box.box_name||box.box_code)} — ${esc(box.location||"")}</option>`).join("")}</select></label>
-      <label data-movement-in hidden>SLOT POSITION<input name="slotPosition"></label>
-      <label data-movement-in hidden>CONDITION<select name="condition"><option value="Good">Good</option><option value="Damaged">Damaged</option><option value="Needs Inspection">Needs Inspection</option></select></label>
+      <label data-movement-in hidden>ORGANISATION<input name="organization" readonly></label>
+      <label data-movement-in hidden>DSC TYPE<select name="certificateClass"><option value="Class II">Class II</option><option value="Class III">Class III</option></select></label>
+      <label data-movement-in hidden><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" data-dsc-option-target="#movementTokenName" aria-label="Add Token Name">+</button></span><select name="tokenName" id="movementTokenName"><option value="">Select Token</option>${options(tokenNames)}</select></label>
+      <label data-movement-in hidden>RECEIVED FROM<input name="receivedFrom"></label>
+      <label data-movement-in hidden>MOBILE NO<input name="mobile" type="tel"></label>
+      <label data-movement-in hidden><span class="dsc-label-row">BOX NAME<button type="button" data-dsc-add-option="box_name" data-dsc-option-target="#movementBoxName" aria-label="Add Box Name">+</button></span><select name="boxName" id="movementBoxName"><option value="">Select Box</option>${options(boxNames)}</select></label>
+      <label data-movement-in hidden>SLOT NO<input name="slotPosition"></label>
+      <label data-movement-in hidden><span class="dsc-label-row">PW<button type="button" class="pw-visibility-toggle" data-toggle-movement-pw>Show</button></span><input name="password" type="password" autocomplete="new-password"></label>
+      <label data-movement-in hidden>EXPIRY DATE<input name="expiryDate" type="date"></label>
       <input type="hidden" name="requestId">
       <label class="form-span-2">REMARKS<textarea name="remarks" rows="3"></textarea></label>
       <div class="form-span-2 register-error" data-movement-error role="alert" hidden></div>
       <div class="modal-actions form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save Movement</button></div>
     </form>`);
     const form=document.querySelector("#dscMovementForm"),outFields=[...form.querySelectorAll("[data-movement-out]")],inFields=[...form.querySelectorAll("[data-movement-in]")];
-    const updateRequirements=()=>{const isOut=form.elements.movementType.value==="OUT",hasRequest=Boolean(form.elements.handoverRequestId.value);outFields.forEach((field)=>field.hidden=!isOut);inFields.forEach((field)=>field.hidden=isOut);form.elements.issuedTo.required=isOut&&!hasRequest;form.elements.purpose.required=isOut&&!hasRequest;form.elements.boxId.required=!isOut;form.elements.slotPosition.required=!isOut;if(!isOut){const match=handed.find((request)=>(request.dsc?.id||request.dsc_id)===form.elements.dscId.value);form.elements.requestId.value=match?.id||"";}else form.elements.requestId.value="";};
-    form.elements.movementType.onchange=updateRequirements;form.elements.handoverRequestId.onchange=()=>{const selected=form.elements.handoverRequestId.selectedOptions[0];if(selected?.dataset.dsc)form.elements.dscId.value=selected.dataset.dsc;updateRequirements();};form.elements.dscId.onchange=updateRequirements;updateRequirements();
+    const fillInDetails=()=>{const selected=form.elements.dscId.selectedOptions[0];if(!selected?.value)return;form.elements.organization.value=selected.dataset.organization||"";form.elements.certificateClass.value=selected.dataset.dscType||"Class III";form.elements.tokenName.value=selected.dataset.token||"";form.elements.mobile.value=selected.dataset.mobile||"";form.elements.boxName.value=selected.dataset.box||"";form.elements.slotPosition.value=selected.dataset.slot||"";form.elements.expiryDate.value=selected.dataset.expiry||"";};
+    const updateRequirements=()=>{const isOut=form.elements.movementType.value==="OUT",hasRequest=Boolean(form.elements.handoverRequestId.value);outFields.forEach((field)=>field.hidden=!isOut);inFields.forEach((field)=>field.hidden=isOut);form.elements.issuedTo.required=isOut&&!hasRequest;form.elements.purpose.required=isOut&&!hasRequest;form.elements.receivedFrom.required=!isOut;form.elements.boxName.required=!isOut;form.elements.slotPosition.required=!isOut;form.elements.expiryDate.required=!isOut;if(!isOut){const match=handed.find((request)=>(request.dsc?.id||request.dsc_id)===form.elements.dscId.value);form.elements.requestId.value=match?.id||"";fillInDetails();}else form.elements.requestId.value="";};
+    form.elements.movementType.onchange=updateRequirements;form.elements.handoverRequestId.onchange=()=>{const selected=form.elements.handoverRequestId.selectedOptions[0];if(selected?.dataset.dsc)form.elements.dscId.value=selected.dataset.dsc;updateRequirements();};form.elements.dscId.onchange=updateRequirements;form.querySelectorAll("[data-dsc-add-option]").forEach((button)=>button.onclick=()=>addDscFormOption(button,form));form.querySelector("[data-toggle-movement-pw]").onclick=(event)=>{const input=form.elements.password,showing=input.type==="text";input.type=showing?"password":"text";event.currentTarget.textContent=showing?"Show":"Hide";};updateRequirements();
     form.onsubmit=async(event)=>{event.preventDefault();const submit=form.querySelector('[type="submit"]'),errorBox=form.querySelector("[data-movement-error]");submit.disabled=true;submit.textContent="Saving…";errorBox.hidden=true;try{await submitJson("/api/dsc/movements","POST",formObject(form));closeModal();toast("DSC movement recorded.");window.renderDscRegisterPage();}catch(error){errorBox.textContent=error.message||"Unable to save the DSC movement.";errorBox.hidden=false;submit.disabled=false;submit.textContent="Save Movement";}};
   }
 

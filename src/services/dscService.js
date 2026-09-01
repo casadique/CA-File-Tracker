@@ -128,7 +128,7 @@ function dscPayload(input, req, existing = {}) {
     issued_date: issuedDate, valid_from: validFrom, expiry_date: expiryDate, status,
     current_custody: text(input.currentCustody ?? input.current_custody, 160) || existing.current_custody || "Office",
     current_location: text(input.currentLocation ?? input.current_location, 240) || null,
-    box_id: input.boxId || input.box_id || null, box_type: ["Blue","Black"].includes(input.boxType || input.box_type) ? (input.boxType || input.box_type) : null,
+    box_id: input.boxId || input.box_id || null, box_type: text(input.boxType || input.box_type, 160) || null,
     slot_position: text(input.slotPosition ?? input.slot_position, 80) || null,
     assigned_user_id: input.assignedUserId || input.assigned_user_id || null, remarks: remarks || null,
     updated_by: req.user.id, updated_at: new Date().toISOString(),
@@ -304,12 +304,16 @@ async function recordOut(id, input, req) {
 async function recordReturn(id, input, req) {
   assertManage(req.profile);
   const { data: record, error } = await supabaseAdmin.from("dsc_master").select("*").eq("id", id).single(); if (error) throw error;
-  if (record.status !== "Issued Out") throw fail("Only an Issued Out DSC can be marked Returned.", 409);
-  if (!input.boxId || !text(input.slotPosition)) throw fail("Returned Box and Slot are required.");
-  const movement = { dsc_id: id, handover_request_id: input.requestId || null, movement_type: "RETURN", movement_at: input.returnAt || new Date().toISOString(), handled_by: req.user.id, condition: text(input.condition, 120) || "Good", to_box_id: input.boxId, to_slot: text(input.slotPosition, 80), remarks: text(input.remarks, 2000) || null };
+  if (["Lost / Missing","Revoked","Closed"].includes(record.status)) throw fail("This DSC cannot be received in its current status.", 409);
+  const boxName = input.boxName ? await acceptedFormOption("box_name", input.boxName, ["Blue","Black",record.box_type].filter(Boolean)) : null;
+  const tokenName = input.tokenName ? await acceptedFormOption("token_name", input.tokenName, ["Hyperkey","Prox Key","Other",record.token_name].filter(Boolean)) : record.token_name;
+  if ((!input.boxId && !boxName) || !text(input.slotPosition)) throw fail("Box Name and Slot No. are required.");
+  const movement = { dsc_id: id, handover_request_id: input.requestId || null, movement_type: "RETURN", movement_at: input.returnAt || new Date().toISOString(), received_from: text(input.receivedFrom, 240) || null, received_mobile: text(input.mobile, 40) || null, handled_by: req.user.id, condition: text(input.condition, 120) || "Good", to_box_id: input.boxId || null, box_name: boxName, to_slot: text(input.slotPosition, 80), remarks: text(input.remarks, 2000) || null };
   const { data, error: movementError } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (movementError) throw movementError;
   const now = new Date().toISOString();
-  await supabaseAdmin.from("dsc_master").update({ status: "In Office", current_custody: "Office", current_location: "Office Storage", box_id: input.boxId, slot_position: text(input.slotPosition, 80), updated_by: req.user.id, updated_at: now }).eq("id", id);
+  const update = { status: "In Office", current_custody: "Office", current_location: "Office Storage", box_id: input.boxId || null, box_type: boxName || record.box_type, slot_position: text(input.slotPosition, 80), mobile: text(input.mobile, 40) || record.mobile, certificate_class: ["Class II","Class III"].includes(input.certificateClass) ? input.certificateClass : record.certificate_class, token_name: tokenName, token_make: tokenName, expiry_date: /^\d{4}-\d{2}-\d{2}$/.test(String(input.expiryDate || "")) ? input.expiryDate : record.expiry_date, updated_by: req.user.id, updated_at: now };
+  if (String(input.password || "")) update.password_encrypted = encryptPassword(input.password);
+  await supabaseAdmin.from("dsc_master").update(update).eq("id", id);
   if (input.requestId) await supabaseAdmin.from("dsc_handover_requests").update({ status: "Returned", updated_at: now }).eq("id", input.requestId);
   await audit(id, "Returned", req, record, movement, input.remarks);
   return { movement: data };
