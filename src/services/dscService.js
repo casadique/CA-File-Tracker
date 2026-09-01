@@ -123,7 +123,7 @@ function dscPayload(input, req, existing = {}) {
     pan: text(input.pan, 40) || null, entity_name: entityName,
     holder_name: holderName, holder_designation: text(input.holderDesignation ?? input.holder_designation, 160) || null,
     care_of: text(input.careOf ?? input.care_of, 160) || null,
-    mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null,
+    mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null, authority: text(input.authority ?? existing.authority, 160) || null,
     dsc_type: ["Token","Other file"].includes(input.dscType ?? input.dsc_type) ? (input.dscType ?? input.dsc_type) : (existing.dsc_type || "Token"), certificate_class: text(input.certificateClass ?? input.certificate_class, 120) || null,
     holder_type: ["Individual","Organisation"].includes(input.holderType || input.holder_type) ? (input.holderType || input.holder_type) : null,
     token_name: tokenName, token_make: tokenName, token_serial: text(input.tokenSerial ?? input.token_serial ?? existing.token_serial, 240) || null,
@@ -292,7 +292,8 @@ async function recordOut(id, input, req) {
   const config = await settings();
   if (config.approval_levels > 0 && request.status !== "Approved") throw fail("Approved handover permission is required before marking this DSC Issued Out.", 409);
   if (["Issued Out","Lost / Missing"].includes(request.dsc.status)) throw fail("This DSC cannot be issued out in its current status.", 409);
-  const movement = { dsc_id: request.dsc_id, handover_request_id: id, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: request.handover_to, purpose: request.purpose, related_file_id: request.related_file_id, expected_return_date: request.expected_return_date, approved_by: request.approved_by, handled_by: req.user.id, from_box_id: request.dsc.box_id, from_slot: request.dsc.slot_position, remarks: text(input.remarks, 2000) || null };
+  const permissionMode = ["Whatsapp","Email","Call","Direct"].includes(input.permissionMode) ? input.permissionMode : null;
+  const movement = { dsc_id: request.dsc_id, handover_request_id: id, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: request.handover_to, issued_mobile: text(input.issuedMobile, 40) || null, relation: text(input.relation, 160) || null, permission_sought: input.permissionSought === true || input.permissionSought === "Yes", permission_mode: permissionMode, purpose: request.purpose, related_file_id: request.related_file_id, expected_return_date: request.expected_return_date, approved_by: request.approved_by, handled_by: req.user.id, from_box_id: request.dsc.box_id, from_box_name: request.dsc.box_type || null, from_slot: request.dsc.slot_position, remarks: text(input.remarks, 2000) || null };
   const { data, error: movementError } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (movementError) throw movementError;
   const now = new Date().toISOString();
   await Promise.all([
@@ -325,14 +326,26 @@ async function recordReturn(id, input, req) {
 async function addMovement(input, req) {
   assertManage(req.profile);
   const type = String(input.movementType || input.movement_type || "").toUpperCase();
-  const dscId = input.dscId || input.dsc_id;
-  if (!dscId || !["OUT","IN"].includes(type)) throw fail("Select a DSC and movement type.");
-  if (type === "IN") return recordReturn(dscId, { ...input, returnAt: input.movementAt || input.returnAt }, req);
+  let dscId = input.dscId || input.dsc_id;
+  if (!["OUT","IN","TRANSFER"].includes(type)) throw fail("Select a movement type.");
+  if (type === "IN") {
+    if (!dscId) {
+      const manualName = text(input.manualDscName, 240), organization = text(input.organization, 240), tokenName = text(input.tokenName, 160);
+      if (!manualName || !organization || !tokenName) throw fail("Select a DSC or enter DSC Name, Organisation and Token Name.");
+      if (!input.boxName || !text(input.slotPosition, 80) || !input.expiryDate) throw fail("Box Name, Slot No. and Expiry Date are required.");
+      const movementDate = String(input.movementAt || new Date().toISOString()).slice(0,10);
+      const created = await createDsc({ entityName: organization, clientName: organization, holderName: manualName, tokenName, certificateClass: input.certificateClass, authority: input.authority, issuedDate: movementDate, validFrom: movementDate, expiryDate: input.expiryDate, mobile: input.mobile, status: "Active" }, req);
+      dscId = created.record.id;
+    }
+    return recordReturn(dscId, { ...input, returnAt: input.movementAt || input.returnAt }, req);
+  }
+  if (!dscId) throw fail(type === "TRANSFER" ? "Select a DSC to transfer." : "Select a DSC before recording an Out movement.");
+  if (type === "TRANSFER") return transferDsc(dscId, input, req);
   if (input.handoverRequestId) {
     const { data: request, error } = await supabaseAdmin.from("dsc_handover_requests").select("id,dsc_id,status").eq("id", input.handoverRequestId).maybeSingle();
     if (error) throw error;
     if (!request || request.dsc_id !== dscId) throw fail("The approved handover request does not match the selected DSC.");
-    return recordOut(request.id, { movementAt: input.movementAt, remarks: input.remarks }, req);
+    return recordOut(request.id, { ...input, movementAt: input.movementAt, remarks: input.remarks }, req);
   }
   const config = await settings();
   if (config.approval_levels > 0) throw fail("Select an Approved Handover Request before recording an Out movement.", 409);
@@ -340,10 +353,26 @@ async function addMovement(input, req) {
   if (["Issued Out","Lost / Missing"].includes(record.status)) throw fail("This DSC cannot be issued out in its current status.", 409);
   const issuedTo = text(input.issuedTo, 240); const purpose = text(input.purpose, 1000);
   if (!issuedTo || !purpose) throw fail("Issued To and Purpose are required for an Out movement.");
-  const movement = { dsc_id: dscId, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: issuedTo, purpose, expected_return_date: input.expectedReturnDate || null, handled_by: req.user.id, from_box_id: record.box_id, from_slot: record.slot_position, remarks: text(input.remarks, 2000) || null };
+  const permissionMode = ["Whatsapp","Email","Call","Direct"].includes(input.permissionMode) ? input.permissionMode : null;
+  const movement = { dsc_id: dscId, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: issuedTo, issued_mobile: text(input.issuedMobile, 40) || null, relation: text(input.relation, 160) || null, permission_sought: input.permissionSought === true || input.permissionSought === "Yes", permission_mode: permissionMode, purpose, expected_return_date: input.expectedReturnDate || null, handled_by: req.user.id, from_box_id: record.box_id, from_box_name: record.box_type || null, from_slot: record.slot_position, remarks: text(input.remarks, 2000) || null };
   const { data, error } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (error) throw error;
   const { error: updateError } = await supabaseAdmin.from("dsc_master").update({ status: "Issued Out", current_custody: issuedTo, current_location: "Outside Office", box_id: null, slot_position: null, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", dscId); if (updateError) throw updateError;
   await audit(dscId, "Issued out", req, record, movement, input.remarks);
+  return { movement: data };
+}
+
+async function transferDsc(id, input, req) {
+  assertManage(req.profile);
+  const { record } = await getDsc(id, req.profile, req.user.id);
+  if (["Issued Out","Lost / Missing","Revoked","Closed"].includes(record.status)) throw fail("This DSC cannot be transferred in its current status.", 409);
+  const destinationBox = await acceptedFormOption("box_name", input.transferBoxName, ["Blue","Black",record.box_type].filter(Boolean));
+  const destinationSlot = text(input.transferSlotPosition, 80);
+  if (!destinationBox || !destinationSlot) throw fail("Destination Box and Slot are required.");
+  if (destinationBox === record.box_type && destinationSlot === record.slot_position) throw fail("Select a different Box or Slot for the transfer.");
+  const movement = { dsc_id: id, movement_type: "BOX_CHANGE", movement_at: input.movementAt || new Date().toISOString(), handled_by: req.user.id, from_box_id: record.box_id, from_box_name: record.box_type || null, from_slot: record.slot_position, box_name: destinationBox, to_slot: destinationSlot, remarks: text(input.remarks, 2000) || null };
+  const { data, error } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (error) throw error;
+  const { error: updateError } = await supabaseAdmin.from("dsc_master").update({ box_id: null, box_type: destinationBox, slot_position: destinationSlot, current_custody: "Office", current_location: "Office Storage", updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", id); if (updateError) throw updateError;
+  await audit(id, "Box changed", req, { box_type: record.box_type, slot_position: record.slot_position }, { box_type: destinationBox, slot_position: destinationSlot }, input.remarks);
   return { movement: data };
 }
 
