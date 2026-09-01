@@ -372,6 +372,15 @@ async function listGeneric(table, filters, req, dateColumn = "created_at") {
   return { records, total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
 }
 
+async function activeStaffId(value) {
+  const id = text(value, 80);
+  if (!id) return null;
+  const { data, error } = await supabaseAdmin.from("app_users").select("id").eq("id", id).eq("is_active", true).maybeSingle();
+  if (error) throw error;
+  if (!data) throw fail("Select an active staff member for Work By.");
+  return data.id;
+}
+
 async function createFresh(input, req) {
   assertManage(req.profile);
   const applicationNo = text(input.applicationId ?? input.applicationNo, 120);
@@ -381,6 +390,8 @@ async function createFresh(input, req) {
   const keepInCustody = input.keepInCustody === true || input.keepInCustody === "true" || input.keepInCustody === "Yes";
   const tokenName = await acceptedFormOption("token_name", input.tokenName, ["HyperKey","Proxkey","Others"]);
   const authority = await acceptedFormOption("authority", input.authority, ["XtraTrust","Vsign","Emudhra"]);
+  const workByUserId = await activeStaffId(input.workByUserId ?? input.assignedUserId);
+  if (!workByUserId) throw fail("Work By is required.");
   let custodyBoxName = null;
   if (keepInCustody) {
     if (!input.boxName || !text(input.slotPosition, 80)) throw fail("Box Name and Slot Position are required when the DSC is kept in custody.");
@@ -399,7 +410,7 @@ async function createFresh(input, req) {
     password_encrypted: Object.prototype.hasOwnProperty.call(input, "password") ? encryptPassword(input.password) : null,
     actual_issue_date: issuedDate, valid_from: validFrom, valid_to: validTo, keep_in_custody: keepInCustody,
     box_id: null, box_name: custodyBoxName,
-    slot_position: keepInCustody ? text(input.slotPosition, 80) : null, remarks: text(input.remarks),
+    slot_position: keepInCustody ? text(input.slotPosition, 80) : null, assigned_user_id: workByUserId, remarks: text(input.remarks),
     created_by: req.user.id, updated_by: req.user.id,
   };
   const { data, error } = await supabaseAdmin.from("dsc_fresh_issues").insert(payload).select("*").single();

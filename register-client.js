@@ -240,7 +240,9 @@
 
   async function freshList() {
     const result = await api("/api/dsc/fresh-issues?page=1&pageSize=100");
-    return `<section class="register-card"><div class="register-card-head"><div><h3>Fresh DSC Issue Tracker</h3><p>Application, issue, validity and custody tracking.</p></div>${canManageDsc() ? `<button class="primary-button" id="newFreshIssue">+ New Fresh Issue</button>` : ""}</div>${genericRows(result.records || [], ["application_no","holder_name","organization_name","application_date","status","keep_in_custody"])}</section>`;
+    const rows=result.records||[];
+    const table=!rows.length?`<div class="register-empty">No Fresh DSC Issue records found.</div>`:`<div class="register-table-wrap"><table class="register-table fresh-issue-table"><thead><tr><th>SN</th><th>Client Name</th><th>Organisation Name</th><th>DSC Class</th><th>Authority</th><th>Issue Date</th><th>Expiry Date</th><th>Status</th><th>Kept with Us</th><th>Actions</th></tr></thead><tbody>${rows.map((row,index)=>`<tr><td>${index+1}</td><td><strong>${esc(row.holder_name||"—")}</strong></td><td>${esc(row.organization_name||row.client_name||"—")}</td><td>${esc(row.class_type||"—")}</td><td>${esc(row.authority||"—")}</td><td>${date(row.actual_issue_date)}</td><td>${date(row.valid_to)}</td><td>${badge(row.status)}</td><td><strong>${row.keep_in_custody?"Yes":"No"}</strong></td><td>${canManageDsc()&&row.status==="DSC Received"&&!row.linked_dsc_id?`<button class="mini-button" data-add-fresh-master="${row.id}">Add to DSC Master</button>`:"—"}</td></tr>`).join("")}</tbody></table></div>`;
+    return `<section class="register-card"><div class="register-card-head"><div><h3>Fresh DSC Issue Tracker</h3><p>Application, issue, validity and custody tracking.</p></div>${canManageDsc() ? `<button class="primary-button" id="newFreshIssue">+ New Fresh Issue</button>` : ""}</div>${table}</section>`;
   }
 
   async function renewalList() {
@@ -279,6 +281,7 @@
     root.querySelector("#addDscBox")?.addEventListener("click", addBoxForm);
     root.querySelectorAll("[data-view-box]").forEach((b) => b.onclick = () => viewBox(b.dataset.viewBox));
     root.querySelector("#newFreshIssue")?.addEventListener("click", freshIssueForm);
+    root.querySelectorAll("[data-add-fresh-master]").forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await submitJson(`/api/dsc/fresh-issues/${button.dataset.addFreshMaster}/add-to-master`,"POST",{});toast("Fresh DSC added to DSC Master.");window.renderDscRegisterPage();}catch(error){toast(error.message);button.disabled=false;}});
     root.querySelector("#dscSettingsForm")?.addEventListener("submit", async (event) => { event.preventDefault(); const values = formObject(event.currentTarget); values.reminderDays = String(values.reminderDays).split(",").map((n) => Number(n.trim())).filter((n) => n >= 0); values.approverUserIds = [...event.currentTarget.elements.approverUserIds.selectedOptions].map((o) => o.value); await submitJson("/api/dsc/settings","PUT",values); toast("DSC settings saved."); window.renderDscRegisterPage(); });
   }
 
@@ -423,9 +426,10 @@
   function addBoxForm() { simplePrompt("Add Storage Box", `${inputField("Box Code","boxCode","",true)}${inputField("Box Name","boxName")}${inputField("Cabinet","cabinet")}${inputField("Shelf","shelf")}${inputField("Location","location","",true)}${numberField("Capacity","capacity",20)}`, async(values)=>{ await submitJson("/api/dsc/boxes","POST",values); toast("Storage box added."); window.renderDscRegisterPage(); }); }
   async function viewBox(id) { const result=await api(`/api/dsc/boxes/${id}`); showModal(`Box ${result.box.box_code}`, `<div class="detail-summary-grid"><span><small>Location</small><strong>${esc(result.box.location)}</strong></span><span><small>Capacity</small><strong>${result.box.capacity}</strong></span><span><small>Occupied</small><strong>${result.box.occupied}</strong></span><span><small>Available</small><strong>${result.box.available}</strong></span></div>${genericRows(result.records,["slot_position","client_name","holder_name","token_name","expiry_date","status"])}<div class="modal-actions"><button class="secondary-button" onclick="window.print()">Print Box List</button></div>`); }
   async function freshIssueForm(){
-    const [clientResult, optionResult]=await Promise.all([api("/api/clients/search?limit=50"),api("/api/dsc/form-options")]);
+    const directoryRequest=ui.users.length?Promise.resolve({users:ui.users}):api("/api/users/directory");
+    const [clientResult, optionResult, directoryResult]=await Promise.all([api("/api/clients/search?limit=50"),api("/api/dsc/form-options"),directoryRequest]);
     const uniqueValues=(defaults,custom)=>[...new Set([...defaults,...(custom||[]).map((item)=>item.value)].filter(Boolean))];
-    const clients=clientResult.clients||[],customEntities=optionResult.entityNames||[];
+    const clients=clientResult.clients||[],customEntities=optionResult.entityNames||[],activeStaff=(directoryResult.users||ui.users).filter((user)=>user.is_active!==false);ui.users=directoryResult.users||ui.users;
     const designations=uniqueValues(["Director","Designated Partner","Owner","Auth Representative"],optionResult.designations);
     const tokenNames=uniqueValues(["HyperKey","Proxkey","Others"],optionResult.tokenNames);
     const authorities=uniqueValues(["XtraTrust","Vsign","Emudhra"],optionResult.authorities);
@@ -442,6 +446,7 @@
       <label>EMAIL ID<input name="email" type="email"></label>
       <label>AADHAAR NO<input name="aadhaarNo" inputmode="numeric" maxlength="14"></label>
       <label>WORK DATE<input name="workDate" type="date" value="${workDate}" required></label>
+      <label>WORK BY<select name="workByUserId" required><option value="">Select active staff</option>${activeStaff.map((user)=>`<option value="${user.id}">${esc(user.name||user.email)} — ${esc(user.role||"Staff")}</option>`).join("")}</select></label>
       <label>STATUS<select name="status">${options(statuses,"New Request")}</select></label>
       <label>APPLICATION ID<input name="applicationId" maxlength="120" required></label>
       <label><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" data-dsc-option-target="#freshTokenName" aria-label="Add Token Name">+</button></span><select name="tokenName" id="freshTokenName" required><option value="">Select token</option>${options(tokenNames)}</select></label>

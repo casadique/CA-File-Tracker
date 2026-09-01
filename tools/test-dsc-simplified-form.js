@@ -37,7 +37,7 @@ assert(styles.includes("grid-template-columns:repeat(20") && styles.includes(".d
 const freshStart = client.indexOf('showModal("New Fresh DSC Issue"');
 const freshEnd = client.indexOf("async function", freshStart + 20);
 const freshForm = client.slice(freshStart, freshEnd > freshStart ? freshEnd : undefined);
-for (const label of ["CLIENT NAME","ORGANIZATION NAME","DESIGNATION","PAN","MOBILE NO","EMAIL ID","AADHAAR NO","WORK DATE","STATUS","APPLICATION ID","TOKEN NAME","AUTHORITY","CLASS TYPE","PW","ISSUE DATE","VALID FROM","VALID TO","KEEP IN CUSTODY","BOX NAME","SLOT POSITION","REMARKS"]) assert(freshForm.includes(label), `Fresh DSC form is missing ${label}`);
+for (const label of ["CLIENT NAME","ORGANIZATION NAME","DESIGNATION","PAN","MOBILE NO","EMAIL ID","AADHAAR NO","WORK DATE","WORK BY","STATUS","APPLICATION ID","TOKEN NAME","AUTHORITY","CLASS TYPE","PW","ISSUE DATE","VALID FROM","VALID TO","KEEP IN CUSTODY","BOX NAME","SLOT POSITION","REMARKS"]) assert(freshForm.includes(label), `Fresh DSC form is missing ${label}`);
 for (const value of ["XtraTrust","Vsign","Emudhra","HyperKey","Proxkey","Others","Blue","Black"]) assert(client.slice(client.indexOf("async function freshIssueForm"), freshEnd).includes(value), `Fresh DSC dropdown is missing ${value}`);
 for (const value of ["Class II","Class III"]) assert(freshForm.includes(value), `Fresh DSC dropdown is missing ${value}`);
 for (const [kind,target] of [["entity_name","#freshOrganization"],["token_name","#freshTokenName"],["authority","#freshAuthority"],["box_name","#freshBoxName"]]) assert(freshForm.includes(`data-dsc-add-option="${kind}" data-dsc-option-target="${target}"`), `Fresh DSC + button is missing for ${kind}`);
@@ -50,5 +50,8 @@ assert(freshClassMigration.includes("class_type") && freshClassMigration.include
 assert(formOptionTypeMigration.includes("authority") && formOptionTypeMigration.includes("box_name"), "Persistent Fresh DSC Authority/Box options are missing.");
 assert(service.includes('acceptedFormOption("token_name"') && service.includes('acceptedFormOption("authority"') && service.includes('acceptedFormOption("box_name"'), "Fresh DSC custom dropdown values must be validated by the server.");
 assert(service.includes("certificateClass: fresh.class_type"), "Fresh DSC Class Type must carry into DSC Master.");
+for (const heading of ["SN","Client Name","Organisation Name","DSC Class","Authority","Issue Date","Expiry Date","Status","Kept with Us","Actions"]) assert(client.includes(`<th>${heading}</th>`), `Fresh Issue Tracker is missing ${heading}`);
+assert(client.includes('row.keep_in_custody?"Yes":"No"') && client.includes("data-add-fresh-master"), "Fresh Issue Tracker needs Yes/No custody and Actions.");
+assert(service.includes("activeStaffId") && service.includes("assigned_user_id: workByUserId"), "Fresh DSC Work By must be validated and stored.");
 assert(styles.includes(".dsc-fresh-form-layout{grid-template-columns:repeat(4"), "Fresh DSC desktop layout must use four columns.");
 console.log("Simplified Add DSC form, protected PW, Excel import and date rules passed.");
