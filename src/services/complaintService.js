@@ -37,18 +37,20 @@ function addWorkingMinutes(start, minutes) {
 }
 
 function complaintPayload(input, context, existing = {}) {
-  const subject = text(input.subject, 240);
   const description = text(input.description, 10000);
-  const clientName = text(input.clientName ?? input.client_name, 240);
-  if (!subject || !description || !clientName) throw fail("Client Name, Subject and Complaint Description are required.");
+  const clientName = text(input.clientName ?? input.client_name ?? existing.client_name, 240);
+  if (!description || !clientName) throw fail("Client Name and Complaint Description are required.");
+  const categoryName = text(input.categoryName ?? input.category_name ?? existing.category_name, 160) || "Other";
+  const subject = text(input.subject, 240) || text(`${categoryName} — ${description.replace(/\s+/g, " ")}`, 240);
   const priority = PRIORITIES.includes(input.priority) ? input.priority : (existing.priority || "Normal");
   const status = STATUSES.includes(input.status) ? input.status : (existing.status || "New");
-  const clientType = input.clientType === "Non-Client / General" ? "Non-Client / General" : "Existing Client";
-  if (clientType === "Existing Client" && !(input.clientId || input.client_id || existing.client_id)) throw fail("Select an existing client from Client Master.");
+  const clientId = input.clientId || input.client_id || existing.client_id || null;
+  const clientType = input.clientType === "Non-Client / General" || (!input.clientType && !clientId) ? "Non-Client / General" : "Existing Client";
+  if (clientType === "Existing Client" && !clientId) throw fail("Select an existing client from Client Master.");
   return {
     complaint_at: input.complaintAt || input.complaint_at || existing.complaint_at || new Date().toISOString(),
     client_type: clientType,
-    client_id: input.clientId || input.client_id || existing.client_id || null,
+    client_id: clientId,
     client_name: clientName,
     pan_reg_no: text(input.panRegNo ?? input.pan_reg_no, 40) || null,
     contact_person: text(input.contactPerson ?? input.contact_person, 160) || null,
@@ -56,7 +58,7 @@ function complaintPayload(input, context, existing = {}) {
     email: text(input.email, 240).toLowerCase() || null,
     source: SOURCES.includes(input.source) ? input.source : "Other",
     category_id: input.categoryId || input.category_id || null,
-    category_name: text(input.categoryName ?? input.category_name, 160) || "Other",
+    category_name: categoryName,
     service_type: text(input.serviceType ?? input.service_type, 160) || null,
     related_file_id: input.relatedFileId || input.related_file_id || null,
     subject,
@@ -137,8 +139,10 @@ async function createComplaint(input, req) {
   }
   const { data, error } = await supabaseAdmin.from("complaints").insert(payload).select("*").single();
   if (error) throw error;
-  await addActivity(data.id, "Complaint created", data.subject, req, null, { status: data.status });
-  if (data.assigned_user_id) await sendAssignment(data, req);
+  const sideEffects = [addActivity(data.id, "Complaint created", data.subject, req, null, { status: data.status })];
+  if (data.assigned_user_id) sideEffects.push(sendAssignment(data, req));
+  const sideEffectResults = await Promise.allSettled(sideEffects);
+  sideEffectResults.filter((result) => result.status === "rejected").forEach((result) => console.error("Complaint post-save action failed:", result.reason?.message || result.reason));
   return getComplaint(data.id, req.profile, req.user.id);
 }
 

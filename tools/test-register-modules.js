@@ -29,6 +29,12 @@ assert.match(dscService, /A DSC with this Token or Certificate Serial already ex
 assert.match(complaintService, /A complaint must be Resolved before it can be Closed/, "resolution and closure must remain separate");
 assert.match(complaintService, /Resolution Summary.*required when resolving/s, "complaint resolution fields must be mandatory");
 assert.match(complaintService, /addWorkingMinutes/, "complaint SLA must use working-time calculation");
+assert.match(complaintService, /Client Name and Complaint Description are required/, "simplified complaint form must not require a hidden Subject field");
+assert.match(complaintService, /categoryName.*description\.replace/s, "complaint subject must be generated from visible form values");
+assert.match(complaintService, /Promise\.allSettled\(sideEffects\)/, "notification or activity failure must not falsely report that a saved complaint failed");
+for (const label of ["Client Master","Client Name","Contact Person","Contact No","Email","Complaint Source","Complaint Category","Complaint Date & Time","Priority","Severity","Assigned To","Target Resolution","Follow Up","Complaint Description"]) assert.match(client, new RegExp(label), `New Complaint is missing ${label}`);
+for (const removed of ["Client Type","PAN / Registration No.","Service Type","Related File / Work","Assigned Team / Department","Complaint Subject","Attachment","Internal Remarks"]) assert.doesNotMatch(client.slice(client.indexOf('showModal("New Complaint"'), client.indexOf("async function openComplaintDetail")), new RegExp(removed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `New Complaint must not show ${removed}`);
+assert.match(client, /data-complaint-save-error[\s\S]+Saving…[\s\S]+catch \(error\)/, "New Complaint must show a stable inline save error and prevent double saves");
 assert.match(reminderService, /Complaint SLA Breached/, "complaint SLA breach alerts are required");
 assert.match(reminderService, /dsc:expiry:/, "DSC expiry reminders are required");
 assert.match(reminderService, /dsc:return-overdue:/, "DSC overdue return alerts are required");

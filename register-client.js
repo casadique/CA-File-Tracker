@@ -125,26 +125,36 @@
   }
 
   async function openComplaintForm(existing = null) {
-    const [clientResult, categoryResult, fileResult] = await Promise.all([api("/api/clients/search?limit=50"), api("/api/complaints/categories"), api("/api/files?page=1&pageSize=100")]);
-    ui.clients = clientResult.clients || []; ui.categories = categoryResult.categories || [];
-    const files = fileResult.files || [];
-    const today = new Date().toISOString().slice(0, 16);
+    const directoryRequest = ui.users.length ? Promise.resolve({ users: ui.users }) : api("/api/users/directory");
+    const [clientResult, categoryResult, directoryResult] = await Promise.all([api("/api/clients/search?limit=50"), api("/api/complaints/categories"), directoryRequest]);
+    ui.clients = clientResult.clients || []; ui.categories = categoryResult.categories || []; ui.users = directoryResult.users || ui.users;
+    const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 16);
     showModal("New Complaint", `<form id="complaintForm" class="register-form-grid register-form-wide">
-      ${selectField("Client Type","clientType",["Existing Client","Non-Client / General"],"Existing Client")}
       <label>Client Master<select name="clientId" id="complaintClient"><option value="">Select client</option>${ui.clients.map((c) => `<option value="${c.id}" data-pan="${esc(c.pan_reg_no || "")}" data-contact="${esc(c.contact_person || "")}" data-phone="${esc(c.contact_number || "")}" data-email="${esc(c.email || "")}" data-name="${esc(c.client_name)}">${esc(c.client_name)}${c.pan_reg_no ? ` — ${esc(c.pan_reg_no)}` : ""}</option>`).join("")}</select></label>
-      ${inputField("Client Name","clientName","",true)}${inputField("PAN / Registration No.","panRegNo")}${inputField("Contact Person","contactPerson")}${inputField("Contact Number","contactNumber","","", "tel")}${inputField("Email","email","","", "email")}
+      ${inputField("Client Name","clientName","",true)}${inputField("Contact Person","contactPerson")}${inputField("Contact No","contactNumber","","", "tel")}${inputField("Email","email","","", "email")}
       ${selectField("Complaint Source","source",["Phone","WhatsApp","Email","Office Visit","Website","Client Portal","Staff Reported","Other"])}
       <label>Complaint Category<select name="categoryId" id="complaintCategory" required><option value="">Select category</option>${ui.categories.map((c) => `<option value="${c.id}" data-name="${esc(c.name)}">${esc(c.name)}</option>`).join("")}</select></label>
-      ${inputField("Service Type","serviceType")}
-      <label>Related File / Work<select name="relatedFileId"><option value="">Not linked</option>${files.map((f) => `<option value="${esc(f.id)}">${esc(f.name || f.clientName)} — ${esc(f.serviceType || "")}</option>`).join("")}</select></label>
       ${inputField("Complaint Date & Time","complaintAt",today,true,"datetime-local")}${selectField("Priority","priority",["Low","Normal","High","Critical"],"Normal")}${selectField("Severity","severity",["Low","Medium","High","Critical"],"Medium")}
       <label>Assigned To<select name="assignedUserId"><option value="">Unassigned</option>${ui.users.map((u) => `<option value="${u.id}">${esc(u.name)} — ${esc(u.role)}</option>`).join("")}</select></label>
-      ${inputField("Assigned Team / Department","assignedTeam")}${inputField("Target Resolution Date","targetResolutionAt","","","datetime-local")}${inputField("Follow-up Date","followUpAt","","","datetime-local")}
-      <label class="form-span-2">Complaint Subject<input name="subject" maxlength="240" required></label><label class="form-span-2">Complaint Description<textarea name="description" rows="4" required></textarea></label><label>Attachment<input name="attachmentFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"></label><label class="form-span-2">Internal Remarks<textarea name="internalRemarks" rows="2"></textarea></label>
+      ${inputField("Target Resolution","targetResolutionAt","","","datetime-local")}${inputField("Follow Up","followUpAt","","","datetime-local")}
+      <label class="form-span-2">Complaint Description<textarea name="description" rows="5" required></textarea></label>
+      <div class="form-span-2 register-error" data-complaint-save-error role="alert" hidden></div>
       <div class="modal-actions form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save Complaint</button></div></form>`);
     const form = document.querySelector("#complaintForm");
-    form.querySelector("#complaintClient").onchange = (event) => { const option = event.target.selectedOptions[0]; if (!option?.value) return; form.elements.clientName.value = option.dataset.name; form.elements.panRegNo.value = option.dataset.pan; form.elements.contactPerson.value = option.dataset.contact; form.elements.contactNumber.value = option.dataset.phone; form.elements.email.value = option.dataset.email; };
-    form.onsubmit = async (event) => { event.preventDefault(); const values = formObject(form); delete values.attachmentFile; const file = form.elements.attachmentFile.files?.[0]; if (file) values.attachments = [await uploadAttachment(file)]; const cat = form.querySelector("#complaintCategory").selectedOptions[0]; values.categoryName = cat?.dataset.name || "Other"; await submitJson("/api/complaints", "POST", values); closeModal(); toast("Complaint registered."); window.renderComplaintRegisterPage(); };
+    form.querySelector("#complaintClient").onchange = (event) => { const option = event.target.selectedOptions[0]; if (!option?.value) return; form.elements.clientName.value = option.dataset.name; form.elements.contactPerson.value = option.dataset.contact; form.elements.contactNumber.value = option.dataset.phone; form.elements.email.value = option.dataset.email; };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('[type="submit"]'); const errorBox = form.querySelector("[data-complaint-save-error]");
+      submit.disabled = true; submit.textContent = "Saving…"; errorBox.hidden = true; errorBox.textContent = "";
+      try {
+        const values = formObject(form); values.clientType = values.clientId ? "Existing Client" : "Non-Client / General";
+        const cat = form.querySelector("#complaintCategory").selectedOptions[0]; values.categoryName = cat?.dataset.name || "Other";
+        await submitJson("/api/complaints", "POST", values); closeModal(); toast("Complaint registered."); window.renderComplaintRegisterPage();
+      } catch (error) {
+        errorBox.textContent = error.message || "Unable to save the complaint. Please check the entered details."; errorBox.hidden = false;
+        submit.disabled = false; submit.textContent = "Save Complaint";
+      }
+    };
   }
 
   async function openComplaintDetail(id) {
