@@ -8,6 +8,7 @@ const APPROVE_PERMISSION = "approve_dsc_handover";
 const EXPORT_PERMISSION = "export_dsc";
 const DSC_STATUSES = ["Fresh Issue Pending","Application in Progress","Verification Pending","Issued","Active","Expiring Soon","Renewal Initiated","Renewal in Progress","Renewed","Expired","In Office","Issued Out","Returned","Lost / Missing","Damaged","Revoked","Closed"];
 const FRESH_STATUSES = ["New Request","Documents Pending","Documents Received","Application Prepared","Application Submitted","Payment Pending","Verification Pending","Video Verification Pending","Under Processing","Approved","Token Awaited","DSC Received","Handed Over","Completed","Rejected","Cancelled"];
+const FORM_OPTION_TYPES = ["entity_name", "designation", "token_name"];
 
 function text(value, max = 5000) { return String(value ?? "").trim().slice(0, max); }
 function fail(message, status = 400) { const error = new Error(message); error.status = status; return error; }
@@ -121,7 +122,7 @@ function dscPayload(input, req, existing = {}) {
     holder_name: holderName, holder_designation: text(input.holderDesignation ?? input.holder_designation, 160) || null,
     care_of: text(input.careOf ?? input.care_of, 160) || null,
     mobile: text(input.mobile, 40) || null, email: text(input.email, 240).toLowerCase() || null,
-    dsc_type: text(input.dscType ?? input.dsc_type, 120) || null, certificate_class: text(input.certificateClass ?? input.certificate_class, 120) || null,
+    dsc_type: ["Token","Other file"].includes(input.dscType ?? input.dsc_type) ? (input.dscType ?? input.dsc_type) : (existing.dsc_type || "Token"), certificate_class: text(input.certificateClass ?? input.certificate_class, 120) || null,
     holder_type: ["Individual","Organisation"].includes(input.holderType || input.holder_type) ? (input.holderType || input.holder_type) : null,
     token_name: tokenName, token_make: tokenName, token_serial: text(input.tokenSerial ?? input.token_serial ?? existing.token_serial, 240) || null,
     issued_date: issuedDate, valid_from: validFrom, expiry_date: expiryDate, status,
@@ -181,6 +182,25 @@ async function importDscRows(rows, req) {
     }
   }
   return { total: rows.length, created: results.filter((item) => item.created).length, failed: results.filter((item) => !item.created).length, results };
+}
+
+async function formOptions() {
+  const { data, error } = await supabaseAdmin.from("dsc_form_options").select("id,option_type,value").eq("is_active", true).order("value");
+  if (error) throw error;
+  const result = { entityNames: [], designations: [], tokenNames: [] };
+  const keys = { entity_name: "entityNames", designation: "designations", token_name: "tokenNames" };
+  for (const option of data || []) result[keys[option.option_type]].push({ id: option.id, value: option.value });
+  return result;
+}
+
+async function addFormOption(kind, input, req) {
+  assertManage(req.profile);
+  if (!FORM_OPTION_TYPES.includes(kind)) throw fail("Select a valid DSC option type.");
+  const value = text(input.value, 160);
+  if (!value) throw fail("Enter a value to add.");
+  const { data, error } = await supabaseAdmin.from("dsc_form_options").upsert({ option_type: kind, value, is_active: true, created_by: req.user.id }, { onConflict: "option_type,normalized_value" }).select("id,option_type,value").single();
+  if (error) throw error;
+  return data;
 }
 
 async function boxes(includeInactive = false) {
@@ -315,4 +335,4 @@ async function dashboard(profile, userId) {
   return { totalActive: rows.filter((r) => !["Expired","Revoked","Closed"].includes(r.status)).length, inOffice: rows.filter((r) => r.current_custody === "Office").length, issuedOut: rows.filter((r) => r.status === "Issued Out").length, returnOverdue: activeHandovers.requests.filter((r) => r.expected_return_date && r.expected_return_date < todayText).length, expiring30: rows.filter((r) => r.expiry_date >= todayText && r.expiry_date <= in30).length, expired: rows.filter((r) => r.expiry_date && r.expiry_date < todayText).length, renewalPending: rows.filter((r) => ["Renewal Initiated","Renewal in Progress"].includes(r.status)).length, freshPending: freshIssues.records.filter((r) => !["Completed","Rejected","Cancelled"].includes(r.status)).length, approvalPending: pendingHandovers.total, missingDamaged: rows.filter((r) => ["Lost / Missing","Damaged"].includes(r.status)).length, upcoming: rows.filter((r) => r.expiry_date >= todayText).slice(0,8) };
 }
 
-module.exports = { APPROVE_PERMISSION, EXPORT_PERMISSION, MANAGE_PERMISSION, addFreshToMaster, boxContents, boxes, canApprove, canExport, canManage, createDsc, createFresh, createHandover, dashboard, decideHandover, getDsc, importDscRows, listDsc, listGeneric, listHandovers, markMissing, recordOut, recordReturn, saveBox, saveSettings, settings, startRenewal, updateDsc };
+module.exports = { APPROVE_PERMISSION, EXPORT_PERMISSION, MANAGE_PERMISSION, addFormOption, addFreshToMaster, boxContents, boxes, canApprove, canExport, canManage, createDsc, createFresh, createHandover, dashboard, decideHandover, formOptions, getDsc, importDscRows, listDsc, listGeneric, listHandovers, markMissing, recordOut, recordReturn, saveBox, saveSettings, settings, startRenewal, updateDsc };

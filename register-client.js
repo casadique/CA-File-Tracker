@@ -297,36 +297,59 @@
   function dscAddYears(value,years){const d=new Date(`${value}T00:00:00`);d.setFullYear(d.getFullYear()+years);return d.toISOString().slice(0,10);}
 
   async function openDscForm(existing = null) {
-    const [clientResult, masterResult] = await Promise.all([api("/api/clients/search?limit=50"), api("/api/clients/masters")]);
+    const [clientResult, masterResult, optionResult] = await Promise.all([api("/api/clients/search?limit=50"), api("/api/clients/masters"), api("/api/dsc/form-options")]);
     ui.clients = clientResult.clients || [];
-    const careOfValues = [...new Set((masterResult.careOf || []).map((value) => String(value || "").trim()).filter(Boolean))];
-    showModal(existing ? "Edit DSC" : "Add DSC", `<form id="dscForm" class="register-form-grid register-form-wide">
-      ${inputField("DSC HOLDER NAME","holderName",existing?.holder_name || "",true)}
-      <label>ENTITY NAME<select name="clientId" id="dscEntity" required><option value="">Select from Client Master</option>${ui.clients.map((c) => `<option value="${c.id}" data-name="${esc(c.client_name)}" data-pan="${esc(c.pan_reg_no || "")}" data-phone="${esc(c.contact_number || "")}" data-email="${esc(c.email || "")}" data-careof="${esc(c.care_of || "")}">${esc(c.client_name)}${c.pan_reg_no ? ` — ${esc(c.pan_reg_no)}` : ""}</option>`).join("")}</select><input type="hidden" name="entityName"></label>
-      ${selectField("DESIGNATION","holderDesignation",["Director","Designated Partner","Owner","Auth Representative"],existing?.holder_designation || "Director")}
-      <label>C/O<select name="careOf"><option value="">Select C/O</option>${careOfValues.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`).join("")}</select></label>
-      ${inputField("PAN","pan",existing?.pan || "")}
-      ${inputField("PW","password","",false,"password")}
-      ${inputField("MOBILE NO","mobile",existing?.mobile || "",false,"tel")}
-      ${inputField("EMAIL","email",existing?.email || "",false,"email")}
-      ${inputField("DSC TYPE","dscType",existing?.dsc_type || "")}
-      ${selectField("DSC CLASS","certificateClass",["Class II","Class III","Class I"],existing?.certificate_class || "Class III")}
-      ${selectField("TOKEN NAME","tokenName",["Extratrust","Vsign","Emudhra"],existing?.token_name || existing?.token_make || "Extratrust")}
-      ${selectField("BOX TYPE","boxType",["Blue","Black"],existing?.box_type || "Blue")}
-      ${inputField("SLOT POSITION","slotPosition",existing?.slot_position || "")}
-      ${inputField("ISSUE DATE","issuedDate",existing?.issued_date || "",false,"date")}
-      ${inputField("VALID FROM","validFrom",existing?.valid_from || "",false,"date")}
-      ${inputField("VALID TO","expiryDate",existing?.expiry_date || "",false,"date")}
-      <label class="form-span-2">REMARKS<textarea name="remarks" rows="3">${esc(existing?.remarks || "")}</textarea></label>
-      <div class="security-callout form-span-2">PW is encrypted and masked. It is never included in DSC lists, reports, exports, notifications or QR codes.</div>
-      <div class="modal-actions form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save DSC</button></div>
+    const cleanValues = (defaults, custom, current) => [...new Set([...defaults, ...(custom || []).map((item) => item.value), current].map((value) => String(value || "").trim()).filter(Boolean))];
+    const careOfValues = cleanValues([], (masterResult.careOf || []).map((value) => ({ value })), existing?.care_of);
+    const designationValues = cleanValues(["Director","Designated Partner","Owner","Auth Representative"], optionResult.designations, existing?.holder_designation);
+    const tokenValues = cleanValues(["Extratrust","Vsign","Emudhra"], optionResult.tokenNames, existing?.token_name || existing?.token_make);
+    const entityName = existing?.entity_name || existing?.client_name || "";
+    const clients = [...ui.clients];
+    if (existing?.client_id && !clients.some((client) => client.id === existing.client_id)) clients.push({ id: existing.client_id, client_name: entityName, pan_reg_no: existing.pan, contact_number: existing.mobile, email: existing.email, care_of: existing.care_of });
+    const customEntities = [...(optionResult.entityNames || [])];
+    if (entityName && !clients.some((client) => client.client_name?.toLowerCase() === entityName.toLowerCase()) && !customEntities.some((option) => option.value.toLowerCase() === entityName.toLowerCase())) customEntities.push({ id: "existing", value: entityName });
+    const optionHtml = (values, selected) => values.map((value) => `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(value)}</option>`).join("");
+    showModal(existing ? "Edit DSC" : "Add DSC", `<form id="dscForm" class="register-form-grid dsc-form-layout">
+      <label class="dsc-span-6">DSC HOLDER NAME<input name="holderName" value="${esc(existing?.holder_name || "")}" required></label>
+      <label class="dsc-span-8"><span class="dsc-label-row">ENTITY NAME<button type="button" data-dsc-add-option="entity_name" aria-label="Add Entity Name">+</button></span><select name="clientId" id="dscEntity" required><option value="">Select from Client Master</option>${clients.map((c) => `<option value="${c.id}" data-name="${esc(c.client_name)}" data-pan="${esc(c.pan_reg_no || "")}" data-phone="${esc(c.contact_number || "")}" data-email="${esc(c.email || "")}" data-careof="${esc(c.care_of || "")}" ${existing?.client_id === c.id ? "selected" : ""}>${esc(c.client_name)}${c.pan_reg_no ? ` — ${esc(c.pan_reg_no)}` : ""}</option>`).join("")}${customEntities.map((item) => `<option value="custom:${item.id}" data-custom="true" data-name="${esc(item.value)}" ${!existing?.client_id && item.value.toLowerCase() === entityName.toLowerCase() ? "selected" : ""}>${esc(item.value)}</option>`).join("")}</select><input type="hidden" name="entityName" value="${esc(entityName)}"></label>
+      <label class="dsc-span-6"><span class="dsc-label-row">DESIGNATION<button type="button" data-dsc-add-option="designation" aria-label="Add Designation">+</button></span><select name="holderDesignation" id="dscDesignation">${optionHtml(designationValues,existing?.holder_designation || "Director")}</select></label>
+      <label class="dsc-span-5">C/O<select name="careOf"><option value="">Select C/O</option>${optionHtml(careOfValues,existing?.care_of || "")}</select></label>
+      <label class="dsc-span-5">PAN<input name="pan" value="${esc(existing?.pan || "")}"></label>
+      <label class="dsc-span-5">PW<input name="password" type="password" autocomplete="new-password"></label>
+      <label class="dsc-span-5">MOBILE NO<input name="mobile" type="tel" value="${esc(existing?.mobile || "")}"></label>
+      <label class="dsc-span-4">EMAIL<input name="email" type="email" value="${esc(existing?.email || "")}"></label>
+      <label class="dsc-span-4">DSC TYPE<select name="dscType"><option value="Token" ${(existing?.dsc_type || "Token") === "Token" ? "selected" : ""}>Token</option><option value="Other file" ${existing?.dsc_type === "Other file" ? "selected" : ""}>Other file</option></select></label>
+      <label class="dsc-span-4">DSC CLASS<select name="certificateClass">${optionHtml(["Class II","Class III","Class I"],existing?.certificate_class || "Class III")}</select></label>
+      <label class="dsc-span-4"><span class="dsc-label-row">TOKEN NAME<button type="button" data-dsc-add-option="token_name" aria-label="Add Token Name">+</button></span><select name="tokenName" id="dscTokenName">${optionHtml(tokenValues,existing?.token_name || existing?.token_make || "Extratrust")}</select></label>
+      <label class="dsc-span-4">BOX TYPE<select name="boxType">${optionHtml(["Blue","Black"],existing?.box_type || "Blue")}</select></label>
+      <label class="dsc-span-5">SLOT POSITION<input name="slotPosition" value="${esc(existing?.slot_position || "")}"></label>
+      <label class="dsc-span-5">ISSUE DATE<input name="issuedDate" type="date" value="${esc(existing?.issued_date || "")}"></label>
+      <label class="dsc-span-5">VALID FROM<input name="validFrom" type="date" value="${esc(existing?.valid_from || "")}"></label>
+      <label class="dsc-span-5">VALID TO<input name="expiryDate" type="date" value="${esc(existing?.expiry_date || "")}"></label>
+      <label class="dsc-span-20 form-span-2">REMARKS<textarea name="remarks" rows="2">${esc(existing?.remarks || "")}</textarea></label>
+      <div class="security-callout dsc-span-20 form-span-2">PW is encrypted and masked. It is never included in DSC lists, reports, exports, notifications or QR codes.</div>
+      <div class="modal-actions dsc-span-20 form-span-2"><button type="button" class="secondary-button" data-close-register-modal>Cancel</button><button type="submit" class="primary-button">Save DSC</button></div>
     </form>`);
     const form = document.querySelector("#dscForm");
     const setValidTo = () => { const value=form.elements.validFrom.value; if(!value)return; const d=new Date(`${value}T00:00:00`); d.setFullYear(d.getFullYear()+2); form.elements.expiryDate.value=d.toISOString().slice(0,10); };
     form.elements.issuedDate.onchange = () => { form.elements.validFrom.value=form.elements.issuedDate.value; setValidTo(); };
     form.elements.validFrom.onchange = setValidTo;
-    form.querySelector("#dscEntity").onchange = (event) => { const o=event.target.selectedOptions[0]; if(!o?.value)return; form.elements.entityName.value=o.dataset.name; form.elements.pan.value=o.dataset.pan; form.elements.mobile.value=o.dataset.phone; form.elements.email.value=o.dataset.email; if(o.dataset.careof)form.elements.careOf.value=o.dataset.careof; };
-    form.onsubmit = async (event) => { event.preventDefault(); const body=formObject(form); const path=existing ? `/api/dsc/${existing.id}` : "/api/dsc"; await submitJson(path,existing ? "PUT" : "POST",body); closeModal(); toast(existing ? "DSC updated." : "DSC added to Master."); window.renderDscRegisterPage(); };
+    form.querySelector("#dscEntity").onchange = (event) => { const o=event.target.selectedOptions[0]; if(!o?.value)return; form.elements.entityName.value=o.dataset.name; if(o.dataset.custom === "true"){form.elements.pan.value="";form.elements.mobile.value="";form.elements.email.value="";return;} form.elements.pan.value=o.dataset.pan; form.elements.mobile.value=o.dataset.phone; form.elements.email.value=o.dataset.email; if(o.dataset.careof)form.elements.careOf.value=o.dataset.careof; };
+    form.querySelectorAll("[data-dsc-add-option]").forEach((button) => button.onclick = () => addDscFormOption(button, form));
+    form.onsubmit = async (event) => { event.preventDefault(); const body=formObject(form); if(String(body.clientId).startsWith("custom:"))body.clientId=""; const path=existing ? `/api/dsc/${existing.id}` : "/api/dsc"; await submitJson(path,existing ? "PUT" : "POST",body); closeModal(); toast(existing ? "DSC updated." : "DSC added to Master."); window.renderDscRegisterPage(); };
+  }
+
+  async function addDscFormOption(button, form) {
+    const config = { entity_name: ["Entity Name","#dscEntity"], designation: ["Designation","#dscDesignation"], token_name: ["Token Name","#dscTokenName"] }[button.dataset.dscAddOption];
+    const value = window.prompt(`Enter new ${config[0]}:`)?.trim(); if(!value)return;
+    button.disabled=true;
+    try {
+      const result=await submitJson(`/api/dsc/form-options/${button.dataset.dscAddOption}`,"POST",{value}); const select=form.querySelector(config[1]);
+      let option=[...select.options].find((item)=>item.textContent.trim().toLowerCase()===result.option.value.toLowerCase());
+      if(!option){option=document.createElement("option");option.textContent=result.option.value;option.value=button.dataset.dscAddOption==="entity_name"?`custom:${result.option.id}`:result.option.value;select.appendChild(option);}
+      if(button.dataset.dscAddOption==="entity_name"){option.dataset.custom="true";option.dataset.name=result.option.value;form.elements.entityName.value=result.option.value;}
+      select.value=option.value; toast(`${config[0]} added.`);
+    } catch(error){toast(error.message);} finally {button.disabled=false;}
   }
   async function openDscDetail(id) {
     const result = await api(`/api/dsc/${id}`); const r=result.record;

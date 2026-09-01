@@ -10,6 +10,8 @@ router.use(requireAuth);
 router.get("/dashboard", async (req, res, next) => { try { res.json(await dsc.dashboard(req.profile, req.user.id)); } catch (error) { next(error); } });
 router.get("/settings", async (req, res, next) => { try { if (req.profile.role !== "Admin") return res.status(403).json({ error: "Admin permission is required." }); res.json({ settings: await dsc.settings() }); } catch (error) { next(error); } });
 router.put("/settings", async (req, res, next) => { try { res.json({ settings: await dsc.saveSettings(req.body || {}, req) }); } catch (error) { next(error); } });
+router.get("/form-options", async (_req, res, next) => { try { res.json(await dsc.formOptions()); } catch (error) { next(error); } });
+router.post("/form-options/:kind", async (req, res, next) => { try { res.status(201).json({ option: await dsc.addFormOption(req.params.kind, req.body || {}, req) }); } catch (error) { next(error); } });
 router.get("/boxes", async (req, res, next) => { try { res.json({ boxes: await dsc.boxes(req.query.all === "true") }); } catch (error) { next(error); } });
 router.post("/boxes", async (req, res, next) => { try { res.status(201).json({ box: await dsc.saveBox(req.body || {}, req) }); } catch (error) { next(error); } });
 router.put("/boxes/:id", async (req, res, next) => { try { res.json({ box: await dsc.saveBox({ ...req.body, id: req.params.id }, req) }); } catch (error) { next(error); } });
