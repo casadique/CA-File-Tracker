@@ -88,11 +88,11 @@ async function buildExportReport(req) {
     const mapped = rows.map((row, index) => ({
       SN: index + 1, "Date & Time": row.movement_at || "", Movement: movementName(row.movement_type), "DSC Name": row.dsc?.holder_name || "",
       Organisation: row.dsc?.entity_name || row.dsc?.client_name || "", "Token Name": row.dsc?.token_name || "", Authority: row.authority || "",
-      "Issued To / Received From": row.issued_to || row.received_from || "", "Mobile No": row.issued_mobile || row.received_mobile || "", Relation: row.relation || "",
+      "Issued To / Received From": row.issued_to || row.received_from || "", "Mobile No": row.issued_mobile || row.received_mobile || "", Relation: row.relation || "", "Returned By": row.returned_by?.name || "",
       "Permission Sought": row.permission_sought == null ? "" : (row.permission_sought ? "Yes" : "No"), "Permission Mode": row.permission_mode || "",
       "From Box": row.from_box_name || "", "From Slot": row.from_slot || "", "To Box": row.box_name || "", "To Slot": row.to_slot || "", Remarks: row.remarks || "",
     }));
-    return { title: "DSC In & Out Register", fileName: "DSC-In-Out-Register", sheetName: "DSC In Out", rows: mapped, emptyRow: { SN: "", "Date & Time": "", Movement: "", "DSC Name": "", Organisation: "", "Token Name": "", Authority: "", "Issued To / Received From": "", "Mobile No": "", Relation: "", "Permission Sought": "", "Permission Mode": "", "From Box": "", "From Slot": "", "To Box": "", "To Slot": "", Remarks: "" } };
+    return { title: "DSC In & Out Register", fileName: "DSC-In-Out-Register", sheetName: "DSC In Out", rows: mapped, emptyRow: { SN: "", "Date & Time": "", Movement: "", "DSC Name": "", Organisation: "", "Token Name": "", Authority: "", "Issued To / Received From": "", "Mobile No": "", Relation: "", "Returned By": "", "Permission Sought": "", "Permission Mode": "", "From Box": "", "From Slot": "", "To Box": "", "To Slot": "", Remarks: "" } };
   }
   if (type === "expiry") {
     const today = new Date();

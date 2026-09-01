@@ -60,6 +60,14 @@ function sanitizeActivity(activity) {
   };
 }
 
+function auditSnapshot(value) {
+  if (Array.isArray(value)) return value.map(auditSnapshot);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !["password_encrypted", "password_saved", "password", "pw", "pin"].includes(String(key).toLowerCase()))
+    .map(([key, item]) => [key, auditSnapshot(item)]));
+}
+
 function applyVisibility(query, profile, userId) {
   if (canViewAll(profile)) return query;
   return query.or(`assigned_user_id.eq.${profile.id},created_by.eq.${userId}`);
@@ -138,7 +146,7 @@ function dscPayload(input, req, existing = {}) {
 }
 
 async function audit(dscId, action, req, oldValue = null, newValue = null, remarks = "") {
-  const { error } = await supabaseAdmin.from("dsc_activity").insert({ dsc_id: dscId, action, old_value: oldValue, new_value: newValue, remarks: text(remarks, 5000) || null, actor_user_id: req.user.id, actor_name: req.profile?.name || req.profile?.email });
+  const { error } = await supabaseAdmin.from("dsc_activity").insert({ dsc_id: dscId, action, old_value: auditSnapshot(oldValue), new_value: auditSnapshot(newValue), remarks: text(remarks, 5000) || null, actor_user_id: req.user.id, actor_name: req.profile?.name || req.profile?.email });
   if (error) throw error;
 }
 
@@ -266,7 +274,7 @@ async function listHandovers(filters, req) {
 
 async function listMovements(filters, req) {
   const page = Math.max(1, Number(filters.page) || 1); const pageSize = Math.min(100, Math.max(10, Number(filters.pageSize) || 25));
-  let query = supabaseAdmin.from("dsc_movements").select("*,dsc:dsc_master(id,dsc_id,client_name,entity_name,holder_name,token_name)", { count: "exact" });
+  let query = supabaseAdmin.from("dsc_movements").select("*,dsc:dsc_master(id,dsc_id,client_name,entity_name,holder_name,token_name),returned_by:app_users!dsc_movements_returned_by_user_id_fkey(id,name,email)", { count: "exact" });
   if (!canViewAll(req.profile)) query = query.eq("handled_by", req.user.id);
   if (filters.type) query = query.eq("movement_type", filters.type);
   const from = (page - 1) * pageSize; const { data, error, count } = await query.order("movement_at", { ascending: false }).range(from, from + pageSize - 1);
@@ -293,7 +301,8 @@ async function recordOut(id, input, req) {
   if (config.approval_levels > 0 && request.status !== "Approved") throw fail("Approved handover permission is required before marking this DSC Issued Out.", 409);
   if (["Issued Out","Lost / Missing"].includes(request.dsc.status)) throw fail("This DSC cannot be issued out in its current status.", 409);
   const permissionMode = ["Whatsapp","Email","Call","Direct"].includes(input.permissionMode) ? input.permissionMode : null;
-  const movement = { dsc_id: request.dsc_id, handover_request_id: id, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: request.handover_to, issued_mobile: text(input.issuedMobile, 40) || null, relation: text(input.relation, 160) || null, permission_sought: input.permissionSought === true || input.permissionSought === "Yes", permission_mode: permissionMode, purpose: request.purpose, related_file_id: request.related_file_id, expected_return_date: request.expected_return_date, approved_by: request.approved_by, handled_by: req.user.id, from_box_id: request.dsc.box_id, from_box_name: request.dsc.box_type || null, from_slot: request.dsc.slot_position, remarks: text(input.remarks, 2000) || null };
+  const returnedByUserId = await activeStaffId(input.returnedByUserId) || req.profile.id;
+  const movement = { dsc_id: request.dsc_id, handover_request_id: id, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: request.handover_to, issued_mobile: text(input.issuedMobile, 40) || null, relation: text(input.relation, 160) || null, permission_sought: input.permissionSought === true || input.permissionSought === "Yes", permission_mode: permissionMode, purpose: request.purpose, related_file_id: request.related_file_id, expected_return_date: request.expected_return_date, returned_by_user_id: returnedByUserId, approved_by: request.approved_by, handled_by: req.user.id, from_box_id: request.dsc.box_id, from_box_name: request.dsc.box_type || null, from_slot: request.dsc.slot_position, remarks: text(input.remarks, 2000) || null };
   const { data, error: movementError } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (movementError) throw movementError;
   const now = new Date().toISOString();
   await Promise.all([
@@ -345,16 +354,19 @@ async function addMovement(input, req) {
     const { data: request, error } = await supabaseAdmin.from("dsc_handover_requests").select("id,dsc_id,status").eq("id", input.handoverRequestId).maybeSingle();
     if (error) throw error;
     if (!request || request.dsc_id !== dscId) throw fail("The approved handover request does not match the selected DSC.");
+    if (request.status !== "Approved") throw fail("Select an Approved Handover Request before recording an Out movement.", 409);
     return recordOut(request.id, { ...input, movementAt: input.movementAt, remarks: input.remarks }, req);
   }
   const config = await settings();
-  if (config.approval_levels > 0) throw fail("Select an Approved Handover Request before recording an Out movement.", 409);
+  const permissionSought = input.permissionSought === true || input.permissionSought === "Yes";
+  if (config.approval_levels > 0 && !permissionSought) throw fail("Set Permission Sought to Yes or select an Approved Handover Request before recording an Out movement.", 409);
   const { record } = await getDsc(dscId, req.profile, req.user.id);
   if (["Issued Out","Lost / Missing"].includes(record.status)) throw fail("This DSC cannot be issued out in its current status.", 409);
   const issuedTo = text(input.issuedTo, 240); const purpose = text(input.purpose, 1000);
   if (!issuedTo || !purpose) throw fail("Issued To and Purpose are required for an Out movement.");
   const permissionMode = ["Whatsapp","Email","Call","Direct"].includes(input.permissionMode) ? input.permissionMode : null;
-  const movement = { dsc_id: dscId, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: issuedTo, issued_mobile: text(input.issuedMobile, 40) || null, relation: text(input.relation, 160) || null, permission_sought: input.permissionSought === true || input.permissionSought === "Yes", permission_mode: permissionMode, purpose, expected_return_date: input.expectedReturnDate || null, handled_by: req.user.id, from_box_id: record.box_id, from_box_name: record.box_type || null, from_slot: record.slot_position, remarks: text(input.remarks, 2000) || null };
+  const returnedByUserId = await activeStaffId(input.returnedByUserId);
+  const movement = { dsc_id: dscId, movement_type: "OUT", movement_at: input.movementAt || new Date().toISOString(), issued_to: issuedTo, issued_mobile: text(input.issuedMobile, 40) || null, relation: text(input.relation, 160) || null, permission_sought: permissionSought, permission_mode: permissionMode, purpose, expected_return_date: input.expectedReturnDate || null, returned_by_user_id: returnedByUserId, handled_by: req.user.id, from_box_id: record.box_id, from_box_name: record.box_type || null, from_slot: record.slot_position, remarks: text(input.remarks, 2000) || null };
   const { data, error } = await supabaseAdmin.from("dsc_movements").insert(movement).select("*").single(); if (error) throw error;
   const { error: updateError } = await supabaseAdmin.from("dsc_master").update({ status: "Issued Out", current_custody: issuedTo, current_location: "Outside Office", box_id: null, slot_position: null, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq("id", dscId); if (updateError) throw updateError;
   await audit(dscId, "Issued out", req, record, movement, input.remarks);

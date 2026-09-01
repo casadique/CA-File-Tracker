@@ -8,6 +8,7 @@ const migration = read("database/migrations/20260830_complaints_dsc_registers.sq
 const movementInMigration = read("database/migrations/20260901_dsc_movement_in_fields.sql");
 const movementAuthorityMigration = read("database/migrations/20260901_dsc_movement_authority.sql");
 const movementPermissionMigration = read("database/migrations/20260901_dsc_movement_permission_details.sql");
+const movementReturnedByMigration = read("database/migrations/20260901_dsc_movement_returned_by.sql");
 const complaintService = read("src/services/complaintService.js");
 const dscService = read("src/services/dscService.js");
 const reminderService = read("src/services/registerReminderService.js");
@@ -31,6 +32,11 @@ assert.match(dscService, /Authorized DSC Custodian permission is required/, "DSC
 assert.match(dscService, /Approved handover permission is required/, "DSC out must require configured approval");
 assert.match(dscService, /async function addMovement[\s\S]+\["OUT","IN","TRANSFER"\]/, "DSC Movement must support Out, In and Transfer");
 assert.match(dscService, /Select an Approved Handover Request before recording an Out movement/, "Manual Out movement must preserve configured handover approval");
+assert.match(dscService, /approval_levels > 0 && !permissionSought/, "Manual Out movement must save when Permission Sought is Yes");
+assert.ok(client.indexOf("RETURNED BY") < client.indexOf("EXPECTED RETURN DATE"), "Returned By must appear before Expected Return Date");
+assert.match(client, /RETURNED BY<select name="returnedByUserId"[\s\S]+ui\.users\.map/, "Returned By must list the active staff directory");
+assert.match(dscService, /returned_by_user_id: returnedByUserId/, "DSC Out movement must store Returned By staff");
+assert.match(movementReturnedByMigration, /returned_by_user_id uuid[\s\S]+references public\.app_users\(id\)/, "Returned By migration must link to Staff Master");
 assert.match(dscRoutes, /router\.post\("\/movements"/, "DSC Movement save route is missing");
 for (const report of ["movements", "expiry", "fresh"]) {
   assert.ok(client.includes(`/api/dsc/export/pdf?report=${report}`), `${report} PDF export button is missing`);
@@ -80,6 +86,9 @@ assert.match(client, /server-side|pageSize: 25|pageSize", 25/i, "register pages 
 assert.match(client, /PW is encrypted and masked.*never included/is, "DSC UI must explain protected credential handling");
 assert.match(dscService, /aes-256-gcm/, "DSC PW must use authenticated encryption");
 assert.match(dscService, /withoutPassword/, "DSC PW must be removed from browser responses");
+assert.match(dscService, /function auditSnapshot[\s\S]+password_encrypted[\s\S]+old_value: auditSnapshot\(oldValue\)[\s\S]+new_value: auditSnapshot\(newValue\)/, "DSC audit history must strip protected PW metadata");
+assert.doesNotMatch(client, /if\(e\.target===modal\)closeModal\(\)/, "Register data-entry windows must not close when the backdrop is clicked");
+assert.match(client, /passwordEdited[\s\S]+if\(existing&&!passwordEdited\)delete body\.password/, "Edit DSC must not submit an autofilled PW unless the PW field was deliberately edited");
 assert.match(app, /complaints: \(\) => window\.renderComplaintRegisterPage/, "Complaint Register must be integrated in navigation");
 assert.match(app, /dsc: \(\) => window\.renderDscRegisterPage/, "DSC Register must be integrated in navigation");
 assert.match(index, /register-client\.js/, "register client must load independently");
