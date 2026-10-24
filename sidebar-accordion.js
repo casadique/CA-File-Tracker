@@ -1,7 +1,7 @@
 (function modernSidebarAccordion() {
   "use strict";
 
-  const OPEN_GROUP_KEY = "ca-file-tracker-sidebar-open-group-v2";
+  const OPEN_GROUP_KEY = "ca-file-tracker-sidebar-open-group-v3";
   const GROUP_ICONS = {
     main: "dashboard", files: "folder", billing: "rupee", complaints: "chat",
     dsc: "lock", recurring: "task", reports: "chart", admin: "briefcase",
