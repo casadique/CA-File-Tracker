@@ -72,7 +72,8 @@
         const countsPromise = api(`/api/complaints/counts?${complaintQuery(false)}`);
         body = await complaintList();
         ui.complaintCounts = (await countsPromise).counts || {};
-        root.querySelector(".complaint-view-tabs")?.replaceWith(complaintTabStrip());
+        const tabStrip = root.querySelector(".complaint-view-tabs");
+        if (tabStrip) tabStrip.outerHTML = complaintTabStrip();
       }
       root.querySelector(".register-content").innerHTML = body; bindTabs(root, "complaint"); bindComplaintActions(root);
     } catch (error) { root.querySelector(".register-content").innerHTML = errorCard(error); }

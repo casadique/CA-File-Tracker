@@ -17,6 +17,8 @@ assert(client.includes("Track, assign and resolve client concerns."), "Compact h
 assert(client.includes("Export Excel") && client.includes("Export PDF") && client.includes("+ New Complaint"), "Hero actions are incomplete");
 assert(client.includes("Search complaint no., client, PAN or subject"), "Search placeholder is incomplete");
 assert(client.includes("complaintQuery(true)"), "Exports/list must retain the current filters and view");
+assert(client.includes("tabStrip.outerHTML = complaintTabStrip()"), "Live tab counts must replace markup as HTML, not visible text");
+assert(!client.includes('replaceWith(complaintTabStrip())'), "Do not insert the tab HTML as a text node");
 assert(routes.includes('router.get("/counts"'), "Filtered complaint counts endpoint is missing");
 assert(service.includes('head: true') && service.includes('complaintCounts'), "Counts must use server-side head queries");
 assert(service.includes('.in("complaint_id", ids)') && service.includes("attachLastFollowUps"), "Last follow-up must use one batched lookup");
@@ -24,6 +26,6 @@ assert(service.includes("description.ilike"), "Complaint description must be sea
 assert(sidebar.includes('new Set(["complaints-all", "complaints-settings"])'), "Complaint sidebar must contain only All Complaints and Settings");
 assert(css.includes(".complaint-table th{position:sticky") && css.includes(".complaint-table th:last-child"), "Sticky table header/actions are missing");
 assert(css.includes(".complaint-floating-menu{position:fixed"), "Row menu must escape the scroll container");
-assert(index.includes("20261102-complaint-modern-v130"), "Complaint assets need a release cache key");
+assert(index.includes("20261102-complaint-tabs-fix-v131"), "Complaint assets need a release cache key");
 
 console.log("Complaint Register modernization checks passed.");
