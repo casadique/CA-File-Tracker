@@ -1,4 +1,4 @@
-const CACHE_NAME = "ca-file-tracker-shell-v2";
+const CACHE_NAME = "ca-file-tracker-shell-v3";
 const OFFLINE_URL = "/offline.html";
 const NOTIFICATION_ICON = "/assets/ca-india-logo.png";
 
@@ -15,6 +15,8 @@ self.addEventListener("activate", (event) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+      .then((windows) => windows.forEach((client) => client.postMessage({ type: "CHECK_APP_RELEASE" })))
   );
 });
 

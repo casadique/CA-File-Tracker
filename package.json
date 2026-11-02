@@ -39,6 +39,7 @@
     "test:checking-permissions": "node tools/test-checking-permissions.js",
     "test:due-date-permissions": "node tools/test-due-date-permissions.js",
     "test:asset-cache": "node tools/test-first-party-cache-policy.js",
+    "test:app-updates": "node tools/test-application-update-banner.js",
     "test:minified-client": "node tools/test-minified-client-bundle.js",
     "test:registers": "node tools/test-register-modules.js",
     "test:dsc-simplified": "node tools/test-dsc-simplified-form.js",

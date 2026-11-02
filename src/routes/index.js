@@ -19,6 +19,7 @@ const complaintRoutes = require("./complaintRoutes");
 const dscRoutes = require("./dscRoutes");
 const recurringWorkRoutes = require("./recurringWorkRoutes");
 const { env } = require("../config/env");
+const { applicationRelease } = require("../services/releaseService");
 
 const router = express.Router();
 
@@ -29,6 +30,10 @@ router.get("/health", (_req, res) => {
     envReady: env.isConfigured,
     missingEnv: env.missing,
   });
+});
+router.get("/release", (_req, res) => {
+  res.set("Cache-Control", "no-store, max-age=0");
+  res.json(applicationRelease());
 });
 router.use("/", legacyRoutes);
 router.use("/auth", authRoutes);
