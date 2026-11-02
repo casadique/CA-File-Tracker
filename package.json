@@ -42,6 +42,7 @@
     "test:app-updates": "node tools/test-application-update-banner.js",
     "test:minified-client": "node tools/test-minified-client-bundle.js",
     "test:registers": "node tools/test-register-modules.js",
+    "test:complaint-modern": "node tools/test-complaint-modernization.js",
     "test:dsc-simplified": "node tools/test-dsc-simplified-form.js",
     "test:recurring-work": "node tools/test-recurring-work.js",
     "test:correction-required": "node tools/test-correction-required-modernization.js",

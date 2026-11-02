@@ -5,6 +5,8 @@ const OPEN_STATUSES = ["New","Acknowledged","Assigned","Under Review","Action in
 const STATUSES = [...OPEN_STATUSES, "Resolved", "Closed"];
 const PRIORITIES = ["Low", "Normal", "High", "Critical"];
 const SOURCES = ["Phone","WhatsApp","Email","Office Visit","Website","Client Portal","Staff Reported","Other"];
+const FOLLOW_UP_ACTIVITY_TYPES = ["Follow-up", "Client contacted", "WhatsApp sent", "Email sent"];
+const COMPLAINT_LIST_SELECT = "*,assigned:app_users!complaints_assigned_user_id_fkey(id,name,email,role),category:complaint_categories(id,name)";
 
 function text(value, max = 4000) { return String(value ?? "").trim().slice(0, max); }
 function fail(message, status = 400) { const error = new Error(message); error.status = status; return error; }
@@ -77,22 +79,23 @@ function complaintPayload(input, context, existing = {}) {
   };
 }
 
-function applyVisibility(query, profile, userId, view = "") {
+function applyVisibility(query, profile, userId) {
   if (isManager(profile)) return query;
-  if (view === "assigned") return query.eq("assigned_user_id", profile.id);
   return query.or(`assigned_user_id.eq.${profile.id},created_by.eq.${userId}`);
 }
 
-async function listComplaints(filters, profile, userId) {
-  const page = Math.max(1, Number(filters.page) || 1);
-  const pageSize = Math.min(100, Math.max(10, Number(filters.pageSize) || 25));
-  let query = supabaseAdmin.from("complaints").select("*,assigned:app_users!complaints_assigned_user_id_fkey(id,name,email,role),category:complaint_categories(id,name)", { count: "exact" });
-  query = applyVisibility(query, profile, userId, filters.view);
-  if (filters.view === "open") query = query.in("status", OPEN_STATUSES);
-  if (filters.view === "pending-client") query = query.eq("status", "Waiting for Client");
-  if (filters.view === "escalated") query = query.eq("status", "Escalated");
-  if (filters.view === "resolved") query = query.eq("status", "Resolved");
-  if (filters.view === "closed") query = query.eq("status", "Closed");
+function applyView(query, view, profile) {
+  if (view === "open") return query.in("status", OPEN_STATUSES);
+  if (view === "assigned") return query.eq("assigned_user_id", profile.id);
+  if (view === "pending-client") return query.eq("status", "Waiting for Client");
+  if (view === "escalated") return query.eq("status", "Escalated");
+  if (view === "resolved") return query.eq("status", "Resolved");
+  if (view === "closed") return query.eq("status", "Closed");
+  return query;
+}
+
+function applyListFilters(query, filters, profile, userId, view = filters.view) {
+  query = applyView(applyVisibility(query, profile, userId), view, profile);
   if (filters.status) query = query.eq("status", filters.status);
   if (filters.priority) query = query.eq("priority", filters.priority);
   if (filters.assignedTo) query = query.eq("assigned_user_id", filters.assignedTo);
@@ -100,15 +103,48 @@ async function listComplaints(filters, profile, userId) {
   if (filters.from) query = query.gte("complaint_at", `${filters.from}T00:00:00`);
   if (filters.to) query = query.lte("complaint_at", `${filters.to}T23:59:59`);
   const search = text(filters.q, 120).replace(/[,%()]/g, " ");
-  if (search) query = query.or(`complaint_no.ilike.%${search}%,client_name.ilike.%${search}%,subject.ilike.%${search}%,pan_reg_no.ilike.%${search}%`);
+  if (search) query = query.or(`complaint_no.ilike.%${search}%,client_name.ilike.%${search}%,subject.ilike.%${search}%,description.ilike.%${search}%,pan_reg_no.ilike.%${search}%`);
+  return query;
+}
+
+async function attachLastFollowUps(rows) {
+  const ids = rows.map((row) => row.id).filter(Boolean);
+  if (!ids.length) return rows;
+  const { data, error } = await supabaseAdmin.from("complaint_activity")
+    .select("complaint_id,created_at,activity_type").in("complaint_id", ids)
+    .in("activity_type", FOLLOW_UP_ACTIVITY_TYPES).order("created_at", { ascending: false });
+  if (error) throw error;
+  const latest = new Map();
+  (data || []).forEach((activity) => { if (!latest.has(activity.complaint_id)) latest.set(activity.complaint_id, activity.created_at); });
+  return rows.map((row) => ({ ...row, last_follow_up_at: latest.get(row.id) || row.follow_up_at || null }));
+}
+
+async function listComplaints(filters, profile, userId) {
+  const page = Math.max(1, Number(filters.page) || 1);
+  const pageSize = Math.min(100, Math.max(10, Number(filters.pageSize) || 25));
+  let query = supabaseAdmin.from("complaints").select(COMPLAINT_LIST_SELECT, { count: "exact" });
+  query = applyListFilters(query, filters, profile, userId);
   const from = (page - 1) * pageSize;
   const { data, error, count } = await query.order("created_at", { ascending: false }).range(from, from + pageSize - 1);
   if (error) throw error;
-  return { complaints: data || [], total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
+  const complaints = await attachLastFollowUps(data || []);
+  return { complaints, total: count || 0, page, pageSize, pageCount: Math.max(1, Math.ceil((count || 0) / pageSize)) };
+}
+
+async function complaintCounts(filters, profile, userId) {
+  const views = ["all", "open", "assigned", "pending-client", "escalated", "resolved", "closed"];
+  const values = await Promise.all(views.map(async (view) => {
+    let query = supabaseAdmin.from("complaints").select("id", { count: "exact", head: true });
+    query = applyListFilters(query, filters, profile, userId, view);
+    const { count, error } = await query;
+    if (error) throw error;
+    return [view, count || 0];
+  }));
+  return Object.fromEntries(values);
 }
 
 async function getComplaint(id, profile, userId) {
-  let query = supabaseAdmin.from("complaints").select("*,assigned:app_users!complaints_assigned_user_id_fkey(id,name,email,role),category:complaint_categories(id,name)").eq("id", id);
+  let query = supabaseAdmin.from("complaints").select(COMPLAINT_LIST_SELECT).eq("id", id);
   query = applyVisibility(query, profile, userId);
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
@@ -193,7 +229,7 @@ async function changeStatus(id, input, req) {
 
 async function addNote(id, input, req) {
   await getComplaint(id, req.profile, req.user.id);
-  const type = ["Client contacted","WhatsApp sent","Email sent","Attachment uploaded","Note added"].includes(input.type) ? input.type : "Note added";
+  const type = ["Follow-up","Client contacted","WhatsApp sent","Email sent","Attachment uploaded","Note added"].includes(input.type) ? input.type : "Note added";
   await addActivity(id, type, input.remarks, req, null, null, { channel: input.channel, recipient: input.recipient });
   return getComplaint(id, req.profile, req.user.id);
 }
@@ -266,4 +302,4 @@ async function saveSettings(input, req) {
   if (error) throw error; return data;
 }
 
-module.exports = { OPEN_STATUSES, addNote, categories, changeStatus, createComplaint, dashboard, getComplaint, isManager, listComplaints, saveCategory, saveSettings, settings, updateComplaint };
+module.exports = { OPEN_STATUSES, addNote, categories, changeStatus, complaintCounts, createComplaint, dashboard, getComplaint, isManager, listComplaints, saveCategory, saveSettings, settings, updateComplaint };

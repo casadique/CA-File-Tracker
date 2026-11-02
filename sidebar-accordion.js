@@ -52,6 +52,12 @@
     const button = group.querySelector(".nav-section-title");
     const items = group.querySelector(".nav-group-items");
     if (!button || !items) return;
+    if (key === "complaints") {
+      const allowed = new Set(["complaints-all", "complaints-settings"]);
+      items.querySelectorAll(".nav-item").forEach((item) => { if (!allowed.has(item.dataset.page || "")) item.remove(); });
+      const activeTab = window.getCurrentRegisterTab?.("complaint") || "all";
+      items.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === (activeTab === "settings" ? "complaints-settings" : "complaints-all")));
+    }
     const label = button.querySelector("span");
     if (label && GROUP_LABELS[key]) label.textContent = GROUP_LABELS[key];
     if (label) label.classList.add("nav-section-label");

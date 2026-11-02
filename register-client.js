@@ -2,15 +2,16 @@
   "use strict";
 
   const ui = {
-    complaintTab: "dashboard", complaintPage: 1, complaintSearch: "", complaints: [], complaintDashboard: null,
+    complaintTab: "all", complaintPage: 1, complaintSearch: "", complaints: [], complaintDashboard: null,
+    complaintFilters: { q: "", priority: "", assignedTo: "", from: "", to: "", status: "" }, complaintCounts: {}, complaintMoreFilters: false,
     dscTab: "dashboard", dscPage: 1, dscSearch: "", dscRecords: [], dscDashboard: null,
     categories: [], boxes: [], users: [], clients: [], loading: false,
   };
 
   const complaintTabs = [
-    ["dashboard","Dashboard"],["all","All Complaints"],["open","Open Complaints"],["assigned","Assigned to Me"],
-    ["pending-client","Pending Client Response"],["escalated","Escalated"],["resolved","Resolved"],["closed","Closed"],
-    ["reports","Complaint Reports"],["settings","Complaint Settings"],
+    ["all","All Complaints","inbox"],["open","Open","folder"],["assigned","Assigned to Me","user"],
+    ["pending-client","Pending Client Response","clock"],["escalated","Escalated","alert"],
+    ["resolved","Resolved","check"],["closed","Closed","archive"],
   ];
   const dscTabs = [
     ["dashboard","DSC Dashboard"],["master","DSC Master"],["movements","DSC In & Out"],["fresh","Fresh Issue Tracker"],
@@ -26,8 +27,9 @@
   const canManageDsc = () => role() === "Admin" || perms().includes("manage_dsc");
   const canApproveDsc = () => role() === "Admin" || perms().includes("approve_dsc_handover");
   const canManageComplaintSettings = () => role() === "Admin";
+  const canExportComplaints = () => ["Admin", "Manager", "Staff Manager"].includes(role());
   const toast = (message) => window.toast?.(message);
-  window.openComplaintTab = function openComplaintTab(tab) { ui.complaintTab = tab || "dashboard"; ui.complaintPage = 1; };
+  window.openComplaintTab = function openComplaintTab(tab) { ui.complaintTab = tab || "all"; ui.complaintPage = 1; };
   window.openDscTab = function openDscTab(tab) { ui.dscTab = tab || "dashboard"; ui.dscPage = 1; };
   window.getCurrentRegisterTab = function getCurrentRegisterTab(kind) { return kind === "complaint" ? ui.complaintTab : ui.dscTab; };
   window.openDscForClient = function openDscForClient(clientName) { ui.dscTab = "master"; ui.dscSearch = String(clientName || ""); ui.dscPage = 1; };
@@ -58,18 +60,49 @@
 
   window.renderComplaintRegisterPage = async function renderComplaintRegisterPage() {
     const root = document.querySelector("#complaints"); if (!root) return;
-    root.innerHTML = moduleShell("complaint", complaintTabs, ui.complaintTab, loadingCard("Loading Complaint Register…"), `<button class="primary-button register-primary" id="newComplaint">+ New Complaint</button>`);
-    bindTabs(root, "complaint"); root.querySelector("#newComplaint")?.addEventListener("click", openComplaintForm);
+    root.innerHTML = complaintShell(loadingCard("Loading Complaint Register…"));
+    bindComplaintShell(root);
     try {
       await loadDirectory();
       let body;
       if (ui.complaintTab === "dashboard") body = await complaintDashboard();
       else if (ui.complaintTab === "reports") body = complaintReports();
       else if (ui.complaintTab === "settings") body = await complaintSettings();
-      else body = await complaintList();
-      root.querySelector(".register-content").innerHTML = body; bindComplaintActions(root);
+      else {
+        const countsPromise = api(`/api/complaints/counts?${complaintQuery(false)}`);
+        body = await complaintList();
+        ui.complaintCounts = (await countsPromise).counts || {};
+        root.querySelector(".complaint-view-tabs")?.replaceWith(complaintTabStrip());
+      }
+      root.querySelector(".register-content").innerHTML = body; bindTabs(root, "complaint"); bindComplaintActions(root);
     } catch (error) { root.querySelector(".register-content").innerHTML = errorCard(error); }
   };
+
+  function complaintShell(body) {
+    const exports = canExportComplaints() ? `<button class="complaint-export excel" data-complaint-export="xlsx">${complaintIcon("sheet")} Export Excel</button><button class="complaint-export pdf" data-complaint-export="pdf">${complaintIcon("pdf")} Export PDF</button>` : "";
+    return `<section class="register-module complaint-module">
+      <header class="complaint-hero"><div class="complaint-hero-title"><span class="complaint-hero-icon">${complaintIcon("message")}</span><div><h1>Complaints &amp; Service Issues</h1><p>Track, assign and resolve client concerns.</p></div></div><div class="complaint-hero-actions">${exports}<button class="primary-button" id="newComplaint">+ New Complaint</button><button class="complaint-more-button" id="complaintMore" aria-haspopup="menu" aria-expanded="false" title="More complaint views">•••</button></div></header>
+      <div class="complaint-more-menu" id="complaintMoreMenu" role="menu" hidden><button data-special-complaint-tab="dashboard">Dashboard</button><button data-special-complaint-tab="reports">Complaint Reports</button>${canManageComplaintSettings() ? `<button data-special-complaint-tab="settings">Complaint Settings</button>` : ""}</div>
+      ${complaintTabStrip()}<div class="register-content">${body}</div></section>`;
+  }
+
+  function complaintTabStrip() {
+    return `<div class="complaint-view-tabs" role="tablist" aria-label="Complaint views">${complaintTabs.map(([id,label,icon]) => `<button type="button" role="tab" aria-selected="${ui.complaintTab === id}" data-register-tab="complaint:${id}" class="complaint-tab complaint-tab-${id} ${ui.complaintTab === id ? "active" : ""}">${complaintIcon(icon)}<span>${esc(label)}</span><b>${Number(ui.complaintCounts[id] || 0)}</b></button>`).join("")}</div>`;
+  }
+
+  function complaintIcon(name) {
+    const paths = { inbox:"M4 5h16v14H4zM4 14h5l2 2h2l2-2h5", folder:"M3 6h7l2 2h9v11H3z", clock:"M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0", user:"M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8m-7 8a7 7 0 0 1 14 0", message:"M4 5h16v12H8l-4 3z", alert:"M12 3 2 20h20zM12 9v4m0 4h.01", check:"m5 12 4 4L19 6", archive:"M4 7h16v13H4zM3 4h18v3H3zm6 7h6", sheet:"M6 3h9l3 3v15H6zM9 11h6m-6 4h6", pdf:"M6 3h9l3 3v15H6zM9 13h6", eye:"M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12m10-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4" };
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[name] || paths.inbox}"/></svg>`;
+  }
+
+  function bindComplaintShell(root) {
+    bindTabs(root, "complaint");
+    root.querySelector("#newComplaint")?.addEventListener("click", openComplaintForm);
+    root.querySelectorAll("[data-complaint-export]").forEach((button) => button.onclick = () => secureDownload(`/api/complaints/export/${button.dataset.complaintExport}?${complaintQuery(true)}`));
+    const more = root.querySelector("#complaintMore"), menu = root.querySelector("#complaintMoreMenu");
+    more?.addEventListener("click", () => { menu.hidden = !menu.hidden; more.setAttribute("aria-expanded", String(!menu.hidden)); });
+    root.querySelectorAll("[data-special-complaint-tab]").forEach((button) => button.onclick = () => { ui.complaintTab = button.dataset.specialComplaintTab; ui.complaintPage = 1; window.renderComplaintRegisterPage(); });
+  }
 
   async function complaintDashboard() {
     ui.complaintDashboard = await api("/api/complaints/dashboard"); const d = ui.complaintDashboard;
@@ -84,24 +117,40 @@
   }
 
   async function complaintList() {
-    const params = new URLSearchParams({ page: ui.complaintPage, pageSize: 25, q: ui.complaintSearch });
-    if (ui.complaintTab !== "all") params.set("view", ui.complaintTab);
+    const params = complaintQuery(true); params.set("page", ui.complaintPage); params.set("pageSize", 25);
     const result = await api(`/api/complaints?${params}`); ui.complaints = result.complaints || [];
-    return `<section class="register-card"><div class="register-filter-row"><input id="complaintSearch" value="${esc(ui.complaintSearch)}" placeholder="Search complaint no., client, PAN or subject"><button class="secondary-button" id="complaintSearchButton">Search</button><span>${result.total} complaint(s)</span></div>
-      ${complaintRows(ui.complaints)}${pagination("complaint", result)}</section>`;
+    const f = ui.complaintFilters;
+    return `<section class="complaint-filter-card" aria-label="Complaint filters"><div class="complaint-filter-grid"><label class="complaint-search-field"><span>Search Complaints</span><input id="complaintSearch" value="${esc(f.q)}" placeholder="Search complaint no., client, PAN or subject"></label>
+      <label><span>Priority</span><select id="complaintPriority"><option value="">All priorities</option>${["Low","Normal","High","Critical"].map((v)=>`<option ${f.priority===v?"selected":""}>${v}</option>`).join("")}</select></label>
+      <label><span>Assigned To</span><select id="complaintAssigned"><option value="">All staff</option>${ui.users.map((u)=>`<option value="${u.id}" ${f.assignedTo===u.id?"selected":""}>${esc(u.name)}</option>`).join("")}</select></label>
+      <label><span>From Date</span><input id="complaintFrom" type="date" value="${esc(f.from)}"></label><label><span>To Date</span><input id="complaintTo" type="date" value="${esc(f.to)}"></label></div>
+      <div class="complaint-more-filters" ${ui.complaintMoreFilters ? "" : "hidden"}><label><span>Status</span><select id="complaintStatus"><option value="">All statuses</option>${["New","Acknowledged","Assigned","Under Review","Action in Progress","Waiting for Client","Waiting for Third Party","Escalated","Resolution Proposed","Resolved","Closed","Reopened"].map((v)=>`<option ${f.status===v?"selected":""}>${v}</option>`).join("")}</select></label></div>
+      <p class="complaint-filter-basis">From Date and To Date use the complaint creation date.</p><div class="complaint-filter-actions"><button class="complaint-apply" id="complaintApply">Apply</button><button class="complaint-clear" id="complaintClear">Clear</button><button class="complaint-more-filter" id="complaintMoreFilters">More Filters</button><span class="complaint-total">${complaintIcon("inbox")}<small>Total Complaints</small><strong>${result.total}</strong></span></div></section>
+      <section class="register-card complaint-list-card">${complaintRows(ui.complaints, false, result)}${complaintPagination(result)}</section>`;
   }
 
-  function complaintRows(rows, compact = false) {
-    if (!rows.length) return `<div class="register-empty">No complaints found.</div>`;
-    return `<div class="register-table-wrap"><table class="register-table"><thead><tr><th>Complaint</th><th>Client / Subject</th><th>Priority</th><th>Status</th>${compact ? "" : "<th>Assigned To</th><th>SLA Due</th>"}<th>Action</th></tr></thead><tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.complaint_no)}</strong><small>${date(row.complaint_at, true)}</small></td><td><strong>${esc(row.client_name)}</strong><small>${esc(row.subject)}</small></td>
-      <td>${badge(row.priority)}</td><td>${badge(row.status)}</td>${compact ? "" : `<td>${esc(row.assigned?.name || row.assigned_team || "Unassigned")}</td><td class="${isBreached(row) ? "register-danger" : ""}">${date(row.sla_due_at, true)}</td>`}
-      <td><button class="mini-button" data-view-complaint="${row.id}">View</button></td></tr>`).join("")}</tbody></table></div>`;
+  function complaintQuery(includeView) {
+    const params = new URLSearchParams(); const f = ui.complaintFilters;
+    Object.entries(f).forEach(([key,value]) => { if (value) params.set(key, value); });
+    if (includeView && !["all","dashboard","reports","settings"].includes(ui.complaintTab)) params.set("view", ui.complaintTab);
+    return params;
   }
+
+  function complaintRows(rows, compact = false, result = null) {
+    if (!rows.length) return `<div class="register-empty"><strong>No matching complaints found.</strong><span>Try changing the active tab or clearing the filters.</span><button class="secondary-button" id="complaintEmptyClear">Clear Filters</button></div>`;
+    if (compact) return `<div class="register-table-wrap"><table class="register-table"><thead><tr><th>Complaint</th><th>Client / Subject</th><th>Priority</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.map((row)=>`<tr><td><strong>${esc(row.complaint_no)}</strong><small>${date(row.complaint_at,true)}</small></td><td><strong>${esc(row.client_name)}</strong><small>${esc(row.subject)}</small></td><td>${badge(row.priority)}</td><td>${badge(row.status)}</td><td><button class="mini-button" data-view-complaint="${row.id}">View</button></td></tr>`).join("")}</tbody></table></div>`;
+    const start = ((result?.page || 1) - 1) * (result?.pageSize || 25);
+    return `<div class="register-table-wrap complaint-table-wrap"><table class="register-table complaint-table"><thead><tr><th>SN</th><th>Complaint No. / Date</th><th>Client Name</th><th>Subject / Issue</th><th>Priority</th><th>Status</th><th>Assigned To</th><th>SLA Due</th><th>Last Follow-up</th><th>Actions</th></tr></thead><tbody>${rows.map((row,index) => { const assigned=row.assigned?.name||row.assigned_team||"Unassigned"; return `<tr><td>${start+index+1}</td><td><strong>${esc(row.complaint_no)}</strong><small>${complaintDate(row.complaint_at,true)}</small></td><td><strong title="${esc(row.client_name)}">${esc(row.client_name)}</strong></td><td><span class="complaint-subject" title="${esc(row.subject)}">${esc(row.subject)}</span></td><td>${badge(row.priority)}</td><td>${badge(row.status)}</td><td><span class="complaint-assignee"><i>${esc(initials(assigned))}</i>${esc(assigned)}</span></td><td class="${isBreached(row)?"register-danger":""}"><strong>${complaintDate(row.sla_due_at)}</strong><small>${timeOnly(row.sla_due_at)} ${isBreached(row)?'<b class="overdue-badge">Overdue</b>':""}</small></td><td>${complaintDate(row.last_follow_up_at,true)}</td><td><div class="complaint-row-actions"><button class="complaint-view" data-view-complaint="${row.id}" aria-label="View ${esc(row.complaint_no)}">${complaintIcon("eye")} View</button><button class="complaint-kebab" data-complaint-menu="${row.id}" aria-label="More actions for ${esc(row.complaint_no)}">⋮</button></div></td></tr>`; }).join("")}</tbody></table></div>`;
+  }
+
+  function initials(name) { return String(name||"U").split(/\s+/).slice(0,2).map((part)=>part[0]||"").join("").toUpperCase(); }
+  function complaintDate(value, includeTime=false) { if(!value)return "—"; const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kolkata",day:"2-digit",month:"2-digit",year:"numeric",...(includeTime?{hour:"2-digit",minute:"2-digit",hour12:true}:{})}).formatToParts(new Date(value)).reduce((out,part)=>(out[part.type]=part.value,out),{}); return `${parts.day}-${parts.month}-${parts.year}${includeTime?`, ${parts.hour}:${parts.minute} ${parts.dayPeriod||""}`:""}`.trim(); }
+  function timeOnly(value) { return value ? new Date(value).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit"}) : ""; }
+  function complaintPagination(result) { const from=result.total?((result.page-1)*result.pageSize)+1:0,to=Math.min(result.total,result.page*result.pageSize); return `<nav class="complaint-pagination" aria-label="Complaint pages"><span>Showing ${from}–${to} of ${result.total} complaints</span><div><button data-complaint-page="${result.page-1}" ${result.page<=1?"disabled":""}>Previous</button>${Array.from({length:result.pageCount},(_,i)=>i+1).filter((p)=>p===1||p===result.pageCount||Math.abs(p-result.page)<=1).map((p)=>`<button data-complaint-page="${p}" class="${p===result.page?"active":""}">${p}</button>`).join("")}<button data-complaint-page="${result.page+1}" ${result.page>=result.pageCount?"disabled":""}>Next</button></div></nav>`; }
 
   function complaintReports() {
     const reports = ["Complaint Register","Open Complaint Report","SLA Breach Report","Staff-wise Complaints","Service-wise Complaints","Client-wise Complaints","Root Cause Analysis","Resolution Time Report","Reopened Complaint Report"];
-    return `<section class="register-card"><div class="register-card-head"><div><h3>Complaint Reports</h3><p>Management-ready complaint and resolution analysis.</p></div><div><button class="secondary-button" data-download="/api/complaints/export/pdf">Export PDF</button> <button class="primary-button" data-download="/api/complaints/export/xlsx">Export Excel</button></div></div><div class="report-tile-grid">${reports.map((name) => `<article><strong>${esc(name)}</strong><span>Uses the current complaint filters and role access.</span></article>`).join("")}</div></section>`;
+    const query=complaintQuery(false); return `<section class="register-card"><div class="register-card-head"><div><h3>Complaint Reports</h3><p>Management-ready complaint and resolution analysis.</p></div><div><button class="secondary-button" data-download="/api/complaints/export/pdf?${query}">Export PDF</button> <button class="primary-button" data-download="/api/complaints/export/xlsx?${query}">Export Excel</button></div></div><div class="report-tile-grid">${reports.map((name) => `<article><strong>${esc(name)}</strong><span>Uses the current complaint filters and role access.</span></article>`).join("")}</div></section>`;
   }
 
   async function complaintSettings() {
@@ -116,12 +165,26 @@
 
   function bindComplaintActions(root) {
     root.querySelectorAll("[data-view-complaint]").forEach((button) => button.onclick = () => openComplaintDetail(button.dataset.viewComplaint));
-    root.querySelector("#complaintSearchButton")?.addEventListener("click", () => { ui.complaintSearch = root.querySelector("#complaintSearch")?.value || ""; ui.complaintPage = 1; window.renderComplaintRegisterPage(); });
-    root.querySelector("#complaintSearch")?.addEventListener("keydown", (event) => { if (event.key === "Enter") root.querySelector("#complaintSearchButton")?.click(); });
-    bindPagination(root, "complaint", (page) => { ui.complaintPage = page; window.renderComplaintRegisterPage(); });
+    const applyFilters = () => { ui.complaintFilters = { q:root.querySelector("#complaintSearch")?.value.trim()||"", priority:root.querySelector("#complaintPriority")?.value||"", assignedTo:root.querySelector("#complaintAssigned")?.value||"", from:root.querySelector("#complaintFrom")?.value||"", to:root.querySelector("#complaintTo")?.value||"", status:root.querySelector("#complaintStatus")?.value||ui.complaintFilters.status||"" }; ui.complaintSearch=ui.complaintFilters.q; ui.complaintPage=1; window.renderComplaintRegisterPage(); };
+    root.querySelector("#complaintApply")?.addEventListener("click", applyFilters);
+    root.querySelector("#complaintSearch")?.addEventListener("keydown", (event) => { if (event.key === "Enter") applyFilters(); });
+    root.querySelector("#complaintClear")?.addEventListener("click", () => { ui.complaintFilters={q:"",priority:"",assignedTo:"",from:"",to:"",status:""}; ui.complaintSearch=""; ui.complaintPage=1; window.renderComplaintRegisterPage(); });
+    root.querySelector("#complaintEmptyClear")?.addEventListener("click", () => { ui.complaintFilters={q:"",priority:"",assignedTo:"",from:"",to:"",status:""}; ui.complaintSearch=""; ui.complaintPage=1; window.renderComplaintRegisterPage(); });
+    root.querySelector("#complaintMoreFilters")?.addEventListener("click", () => { ui.complaintMoreFilters=!ui.complaintMoreFilters; root.querySelector(".complaint-more-filters").hidden=!ui.complaintMoreFilters; });
+    root.querySelectorAll("[data-complaint-page]").forEach((button)=>button.onclick=()=>{ if(button.disabled)return; ui.complaintPage=Number(button.dataset.complaintPage); window.renderComplaintRegisterPage(); });
+    root.querySelectorAll("[data-complaint-menu]").forEach((button)=>button.onclick=(event)=>openComplaintRowMenu(event,button.dataset.complaintMenu));
     root.querySelectorAll("[data-download]").forEach((button) => button.onclick = () => secureDownload(button.dataset.download));
     root.querySelector("#complaintSettingsForm")?.addEventListener("submit", async (event) => { event.preventDefault(); await submitJson("/api/complaints/settings", "PUT", formObject(event.currentTarget)); toast("Complaint SLA settings saved."); window.renderComplaintRegisterPage(); });
     root.querySelector("#addComplaintCategory")?.addEventListener("click", () => simplePrompt("Add Complaint Category", `<label>Category Name<input name="name" required></label><label>Display Order<input name="displayOrder" type="number" value="100"></label>`, async (values) => { await submitJson("/api/complaints/categories", "POST", values); toast("Complaint category added."); window.renderComplaintRegisterPage(); }));
+  }
+
+  function openComplaintRowMenu(event, id) {
+    document.querySelector(".complaint-floating-menu")?.remove(); const row=ui.complaints.find((item)=>String(item.id)===String(id)); if(!row)return;
+    const menu=document.createElement("div"); menu.className="complaint-floating-menu"; menu.setAttribute("role","menu");
+    menu.innerHTML=`<button data-action="view">View complaint</button><button data-action="follow-up">Add follow-up</button><button data-action="status">Update status</button>`;
+    document.body.appendChild(menu); const rect=event.currentTarget.getBoundingClientRect(); menu.style.top=`${Math.min(rect.bottom+6,window.innerHeight-menu.offsetHeight-8)}px`; menu.style.left=`${Math.max(8,rect.right-menu.offsetWidth)}px`;
+    menu.onclick=(click)=>{ const action=click.target.dataset.action; if(!action)return; menu.remove(); if(action==="view")openComplaintDetail(id); else if(action==="status")complaintStatusPrompt(row); else simplePrompt("Add Follow-up",`<label>Follow-up note<textarea name="remarks" rows="4" required></textarea></label>`,async(values)=>{await submitJson(`/api/complaints/${id}/activity`,"POST",{...values,type:"Follow-up"});closeModal();toast("Follow-up added.");window.renderComplaintRegisterPage();}); };
+    setTimeout(()=>document.addEventListener("click",function closeOutside(click){if(!menu.contains(click.target)){menu.remove();document.removeEventListener("click",closeOutside);}}, {capture:true}),0);
   }
 
   async function openComplaintForm(existing = null) {

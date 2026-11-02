@@ -14,6 +14,7 @@ router.put("/categories/:id", requireRole("Admin"), async (req, res, next) => { 
 router.get("/settings", requireRole("Admin", "Manager", "Staff Manager"), async (_req, res, next) => { try { res.json({ settings: await complaints.settings() }); } catch (error) { next(error); } });
 router.put("/settings", requireRole("Admin"), async (req, res, next) => { try { res.json({ settings: await complaints.saveSettings(req.body || {}, req) }); } catch (error) { next(error); } });
 router.get("/export/:format", requireRole("Admin", "Manager", "Staff Manager"), exportComplaints);
+router.get("/counts", async (req, res, next) => { try { res.json({ counts: await complaints.complaintCounts(req.query || {}, req.profile, req.user.id) }); } catch (error) { next(error); } });
 router.get("/", async (req, res, next) => { try { res.json(await complaints.listComplaints(req.query || {}, req.profile, req.user.id)); } catch (error) { next(error); } });
 router.post("/", async (req, res, next) => { try { res.status(201).json(await complaints.createComplaint(req.body || {}, req)); } catch (error) { next(error); } });
 router.get("/:id", async (req, res, next) => { try { res.json(await complaints.getComplaint(req.params.id, req.profile, req.user.id)); } catch (error) { next(error); } });
@@ -34,6 +35,7 @@ async function exportComplaints(req, res, next) {
       PAN: row.pan_reg_no || "", Source: row.source, Category: row.category_name, Service: row.service_type || "",
       Subject: row.subject, Priority: row.priority, Severity: row.severity, Status: row.status,
       "Assigned To": row.assigned?.name || row.assigned_team || "", "SLA Due": formatDate(row.sla_due_at),
+      "Last Follow-up": formatDate(row.last_follow_up_at),
       "Resolution Date": row.resolution_date || "", "Root Cause": row.root_cause || "", "Resolution Summary": row.resolution_summary || "",
     }));
     if (req.params.format === "xlsx") return sendWorkbook(res, exportRows, "Complaint Register", "complaint-register.xlsx");
